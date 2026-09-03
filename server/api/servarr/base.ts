@@ -2,6 +2,7 @@ import ExternalAPI from '@server/api/externalapi';
 import type { AvailableCacheIds } from '@server/lib/cache';
 import cacheManager from '@server/lib/cache';
 import { getSettings, type DVRSettings } from '@server/lib/settings';
+import axios from 'axios';
 
 export interface SystemStatus {
   version: string;
@@ -304,19 +305,38 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
   ): Promise<void> {
     const deadline = Date.now() + timeoutMs;
 
-    while (Date.now() <= deadline) {
+    while (true) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+
+      const axiosTimeout = this.axios.defaults.timeout;
+      const requestTimeout =
+        axiosTimeout && axiosTimeout > 0
+          ? Math.min(axiosTimeout, remainingMs)
+          : remainingMs;
       let command: CommandResponse;
       try {
         const response = await this.axios.get<CommandResponse>(
-          `/command/${commandId}`
+          `/command/${commandId}`,
+          { timeout: requestTimeout }
         );
         command = response.data;
       } catch (e) {
+        if (
+          requestTimeout === remainingMs &&
+          axios.isAxiosError(e) &&
+          (e.code === 'ECONNABORTED' || e.code === 'ETIMEDOUT')
+        ) {
+          break;
+        }
+
         throw new Error(
           `[${this.apiName}] Failed to retrieve command ${commandId}: ${e.message}`,
           { cause: e }
         );
       }
+
+      if (Date.now() >= deadline) break;
 
       if (command.status === 'completed' && command.result === 'successful') {
         return;
@@ -336,10 +356,10 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
         );
       }
 
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) break;
+      const delayRemainingMs = deadline - Date.now();
+      if (delayRemainingMs <= 0) break;
       await new Promise((resolve) =>
-        setTimeout(resolve, Math.min(pollIntervalMs, remainingMs))
+        setTimeout(resolve, Math.min(pollIntervalMs, delayRemainingMs))
       );
     }
 
