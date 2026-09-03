@@ -157,4 +157,33 @@ describe('ServarrBase command completion', () => {
       /timed out/
     );
   });
+
+  it('rejects when a command poll completes after the deadline', async () => {
+    const sonarr = buildSonarr();
+    mock.method(getAxios(sonarr), 'post', async () => ({
+      data: { id: 45, status: 'queued', result: 'unknown' },
+    }));
+    const get = mock.method(
+      getAxios(sonarr),
+      'get',
+      async (_path: string, config?: AxiosRequestConfig) => {
+        assert.ok(config?.timeout);
+        assert.ok(config.timeout <= 20);
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        return {
+          data: { id: 45, status: 'completed', result: 'successful' },
+        };
+      }
+    );
+
+    await assert.rejects(
+      () =>
+        sonarr.refreshMonitoredDownloads({
+          pollIntervalMs: 1,
+          timeoutMs: 20,
+        }),
+      /Command 45 timed out after 20ms/
+    );
+    assert.strictEqual(get.mock.callCount(), 1);
+  });
 });
