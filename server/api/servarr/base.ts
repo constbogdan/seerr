@@ -78,6 +78,24 @@ interface QueueResponse<QueueItemAppendT> {
   records: (QueueItem & QueueItemAppendT)[];
 }
 
+interface CommandResponse {
+  id: number;
+  status:
+    | 'queued'
+    | 'started'
+    | 'completed'
+    | 'failed'
+    | 'aborted'
+    | 'cancelled'
+    | 'orphaned';
+  result: 'unknown' | 'successful' | 'unsuccessful';
+  exception?: string;
+}
+
+const QUEUE_PAGE_SIZE = 100;
+const COMMAND_POLL_INTERVAL_MS = 1000;
+const COMMAND_TIMEOUT_MS = 30000;
+
 class ServarrBase<QueueItemAppendT> extends ExternalAPI {
   static buildUrl(settings: DVRSettings, path?: string): string {
     return `${settings.useSsl ? 'https' : 'http'}://${settings.hostname}:${
@@ -163,16 +181,37 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
 
   public getQueue = async (): Promise<(QueueItem & QueueItemAppendT)[]> => {
     try {
-      const response = await this.axios.get<QueueResponse<QueueItemAppendT>>(
-        `/queue`,
-        {
-          params: {
-            includeEpisode: true,
-          },
-        }
-      );
+      const records: (QueueItem & QueueItemAppendT)[] = [];
+      let page = 1;
+      let totalRecords: number;
 
-      return response.data.records;
+      do {
+        const response = await this.axios.get<QueueResponse<QueueItemAppendT>>(
+          `/queue`,
+          {
+            params: {
+              includeEpisode: true,
+              page,
+              pageSize: QUEUE_PAGE_SIZE,
+            },
+          }
+        );
+
+        records.push(...response.data.records);
+        totalRecords = response.data.totalRecords;
+        page += 1;
+
+        if (
+          response.data.records.length === 0 &&
+          records.length < totalRecords
+        ) {
+          throw new Error(
+            `Queue pagination ended after ${records.length} of ${totalRecords} records`
+          );
+        }
+      } while (records.length < totalRecords);
+
+      return records;
     } catch (e) {
       throw new Error(
         `[${this.apiName}] Failed to retrieve queue: ${e.message}`,
@@ -229,24 +268,84 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     }
   };
 
-  async refreshMonitoredDownloads(): Promise<void> {
-    await this.runCommand('RefreshMonitoredDownloads', {});
+  async refreshMonitoredDownloads({
+    pollIntervalMs = COMMAND_POLL_INTERVAL_MS,
+    timeoutMs = COMMAND_TIMEOUT_MS,
+  }: {
+    pollIntervalMs?: number;
+    timeoutMs?: number;
+  } = {}): Promise<void> {
+    const command = await this.runCommand('RefreshMonitoredDownloads', {});
+    await this.waitForCommand(command.id, pollIntervalMs, timeoutMs);
   }
 
   protected async runCommand(
     commandName: string,
     options: Record<string, unknown>
-  ): Promise<void> {
+  ): Promise<CommandResponse> {
     try {
-      await this.axios.post(`/command`, {
+      const response = await this.axios.post<CommandResponse>(`/command`, {
         name: commandName,
         ...options,
       });
+
+      return response.data;
     } catch (e) {
       throw new Error(`[${this.apiName}] Failed to run command: ${e.message}`, {
         cause: e,
       });
     }
+  }
+
+  private async waitForCommand(
+    commandId: number,
+    pollIntervalMs: number,
+    timeoutMs: number
+  ): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+
+    while (Date.now() <= deadline) {
+      let command: CommandResponse;
+      try {
+        const response = await this.axios.get<CommandResponse>(
+          `/command/${commandId}`
+        );
+        command = response.data;
+      } catch (e) {
+        throw new Error(
+          `[${this.apiName}] Failed to retrieve command ${commandId}: ${e.message}`,
+          { cause: e }
+        );
+      }
+
+      if (command.status === 'completed' && command.result === 'successful') {
+        return;
+      }
+
+      if (
+        command.status === 'failed' ||
+        command.status === 'aborted' ||
+        command.status === 'cancelled' ||
+        command.status === 'orphaned' ||
+        command.status === 'completed'
+      ) {
+        throw new Error(
+          `[${this.apiName}] Command ${commandId} ${command.status}: ${
+            command.exception ?? command.result
+          }`
+        );
+      }
+
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) break;
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(pollIntervalMs, remainingMs))
+      );
+    }
+
+    throw new Error(
+      `[${this.apiName}] Command ${commandId} timed out after ${timeoutMs}ms`
+    );
   }
 }
 
