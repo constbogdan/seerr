@@ -3,25 +3,31 @@ import { afterEach, describe, it, mock } from 'node:test';
 
 import type { AxiosInstance, AxiosRequestConfig } from 'axios';
 
+import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 
 function buildSonarr(): SonarrAPI {
   return new SonarrAPI({ url: 'http://localhost:8989/api/v3', apiKey: 'test' });
 }
 
-function getAxios(sonarr: SonarrAPI): AxiosInstance {
-  return (sonarr as unknown as { axios: AxiosInstance }).axios;
+function buildRadarr(): RadarrAPI {
+  return new RadarrAPI({ url: 'http://localhost:7878/api/v3', apiKey: 'test' });
+}
+
+function getAxios(servarr: SonarrAPI | RadarrAPI): AxiosInstance {
+  return (servarr as unknown as { axios: AxiosInstance }).axios;
 }
 
 function queueResponse(
   page: number,
   totalRecords: number,
-  records: Record<string, unknown>[]
+  records: Record<string, unknown>[],
+  pageSize = 100
 ) {
   return {
     data: {
       page,
-      pageSize: 100,
+      pageSize,
       sortKey: 'timeleft',
       sortDirection: 'ascending',
       totalRecords,
@@ -33,58 +39,192 @@ function queueResponse(
 describe('ServarrBase queue pagination', () => {
   afterEach(() => mock.restoreAll());
 
-  it('retrieves every queue page and preserves episode data', async () => {
+  it('defaults to 10 records and preserves episode data', async () => {
     const sonarr = buildSonarr();
-    const firstPage = Array.from({ length: 100 }, (_, index) => ({
+    const records = Array.from({ length: 10 }, (_, index) => ({
       id: index + 1,
+      downloadId: 'shared-season-pack',
       episode: { seasonNumber: 1, episodeNumber: index + 1 },
     }));
-    const secondPage = Array.from({ length: 14 }, (_, index) => ({
-      id: index + 101,
-      episode: { seasonNumber: 2, episodeNumber: index + 1 },
-    }));
-    const get = mock.method(
-      getAxios(sonarr),
-      'get',
-      async (_path: string, config?: AxiosRequestConfig) =>
-        config?.params?.page === 1
-          ? queueResponse(1, 114, firstPage)
-          : queueResponse(2, 114, secondPage)
+    const get = mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(1, 20, records, 10)
     );
 
     const queue = await sonarr.getQueue();
 
-    assert.strictEqual(queue.length, 114);
-    assert.deepStrictEqual(queue[113].episode, {
-      seasonNumber: 2,
-      episodeNumber: 14,
+    assert.strictEqual(queue.length, 10);
+    assert.deepStrictEqual(queue[9].episode, {
+      seasonNumber: 1,
+      episodeNumber: 10,
     });
-    assert.strictEqual(get.mock.callCount(), 2);
+    assert.strictEqual(
+      queue.filter((item) => item.downloadId === 'shared-season-pack').length,
+      10
+    );
+    assert.strictEqual(get.mock.callCount(), 1);
     assert.deepStrictEqual(get.mock.calls[0].arguments[1]?.params, {
       includeEpisode: true,
       page: 1,
-      pageSize: 100,
+      pageSize: 10,
     });
   });
 
-  it('rejects the whole queue fetch when a later page fails', async () => {
+  it('returns a custom limit smaller than the available queue', async () => {
     const sonarr = buildSonarr();
-    let page = 0;
-    mock.method(getAxios(sonarr), 'get', async () => {
-      page += 1;
-      if (page === 1) {
-        return queueResponse(
-          1,
-          101,
-          Array.from({ length: 100 }, (_, index) => ({ id: index + 1 }))
-        );
-      }
+    const get = mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(
+        1,
+        20,
+        Array.from({ length: 5 }, (_, index) => ({ id: index + 1 })),
+        5
+      )
+    );
 
-      throw new Error('second page unavailable');
-    });
-
-    await assert.rejects(() => sonarr.getQueue(), /Failed to retrieve queue/);
+    assert.strictEqual((await sonarr.getQueue(5)).length, 5);
+    assert.strictEqual(get.mock.callCount(), 1);
   });
+
+  it('uses the configured limit as the stable Servarr page size', async () => {
+    const sonarr = buildSonarr();
+    const get = mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(
+        1,
+        250,
+        Array.from({ length: 250 }, (_, index) => ({
+          id: index + 1,
+          episode: { seasonNumber: 2, episodeNumber: index + 1 },
+        })),
+        250
+      )
+    );
+
+    const queue = await sonarr.getQueue(250);
+
+    assert.strictEqual(queue.length, 250);
+    assert.deepStrictEqual(queue[249].episode, {
+      seasonNumber: 2,
+      episodeNumber: 250,
+    });
+    assert.strictEqual(get.mock.callCount(), 1);
+    assert.deepStrictEqual(get.mock.calls[0].arguments[1]?.params, {
+      includeEpisode: true,
+      page: 1,
+      pageSize: 250,
+    });
+  });
+
+  it('stops when the queue is smaller than the limit', async () => {
+    const sonarr = buildSonarr();
+    const get = mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(1, 3, [{ id: 1 }, { id: 2 }, { id: 3 }], 20)
+    );
+
+    assert.strictEqual((await sonarr.getQueue(20)).length, 3);
+    assert.strictEqual(get.mock.callCount(), 1);
+  });
+
+  it('does not fetch another page at the exact limit', async () => {
+    const sonarr = buildSonarr();
+    const get = mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(
+        1,
+        20,
+        Array.from({ length: 10 }, (_, index) => ({ id: index + 1 })),
+        10
+      )
+    );
+
+    assert.strictEqual((await sonarr.getQueue(10)).length, 10);
+    assert.strictEqual(get.mock.callCount(), 1);
+  });
+
+  it('truncates an oversized final page to the configured limit', async () => {
+    const sonarr = buildSonarr();
+    mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(
+        1,
+        12,
+        Array.from({ length: 12 }, (_, index) => ({ id: index + 1 })),
+        12
+      )
+    );
+
+    const queue = await sonarr.getQueue(10);
+    assert.deepStrictEqual(
+      queue.map((item) => item.id),
+      Array.from({ length: 10 }, (_, index) => index + 1)
+    );
+  });
+
+  it('rejects an empty page before the expected range is satisfied', async () => {
+    const sonarr = buildSonarr();
+    mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(1, 20, [], 10)
+    );
+
+    await assert.rejects(() => sonarr.getQueue(), /contained 0 of 10/);
+  });
+
+  it('rejects an incomplete non-empty response atomically', async () => {
+    const sonarr = buildSonarr();
+    mock.method(getAxios(sonarr), 'get', async () =>
+      queueResponse(
+        1,
+        11,
+        Array.from({ length: 10 }, (_, index) => ({ id: index + 1 })),
+        11
+      )
+    );
+
+    await assert.rejects(() => sonarr.getQueue(11), /contained 10 of 11/);
+  });
+
+  it('retrieves a bounded Radarr queue without episode-specific assumptions', async () => {
+    const radarr = buildRadarr();
+    const get = mock.method(getAxios(radarr), 'get', async () =>
+      queueResponse(1, 2, [
+        { id: 1, movieId: 101 },
+        { id: 2, movieId: 102 },
+      ])
+    );
+
+    const queue = await radarr.getQueue(2);
+
+    assert.deepStrictEqual(
+      queue.map((item) => item.movieId),
+      [101, 102]
+    );
+    assert.deepStrictEqual(get.mock.calls[0].arguments[1]?.params, {
+      includeEpisode: true,
+      page: 1,
+      pageSize: 2,
+    });
+  });
+
+  for (const limit of [
+    0,
+    -1,
+    1.5,
+    1001,
+    Number.NaN,
+    Infinity,
+    '10',
+    true,
+    false,
+  ]) {
+    it(`rejects invalid queue limit ${String(limit)}`, async () => {
+      const sonarr = buildSonarr();
+      const get = mock.method(getAxios(sonarr), 'get', async () =>
+        queueResponse(1, 0, [])
+      );
+
+      await assert.rejects(
+        () => sonarr.getQueue(limit as number),
+        /integer between/
+      );
+      assert.strictEqual(get.mock.callCount(), 0);
+    });
+  }
 });
 
 describe('ServarrBase command completion', () => {
