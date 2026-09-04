@@ -1,3 +1,7 @@
+import {
+  DEFAULT_DOWNLOAD_QUEUE_SIZE,
+  validateDownloadQueueSize,
+} from '@server/api/servarr/base';
 import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import { MediaType } from '@server/constants/media';
@@ -81,28 +85,45 @@ export class DownloadTracker {
     const settings = getSettings();
 
     // Remove duplicate servers
-    const filteredServers = uniqWith(settings.radarr, (radarrA, radarrB) => {
-      return (
-        radarrA.hostname === radarrB.hostname &&
-        radarrA.port === radarrB.port &&
-        radarrA.baseUrl === radarrB.baseUrl
-      );
-    });
+    const filteredServers = uniqWith(
+      settings.radarr.filter((radarr) => radarr.syncEnabled),
+      (radarrA, radarrB) => {
+        return (
+          radarrA.hostname === radarrB.hostname &&
+          radarrA.port === radarrB.port &&
+          radarrA.baseUrl === radarrB.baseUrl
+        );
+      }
+    );
 
     // Load downloads from Radarr servers
     await Promise.all(
       filteredServers.map(async (server) => {
         if (server.syncEnabled) {
+          const matchingServers = settings.radarr.filter(
+            (rs) =>
+              rs.hostname === server.hostname &&
+              rs.port === server.port &&
+              rs.baseUrl === server.baseUrl &&
+              rs.id !== server.id &&
+              rs.syncEnabled
+          );
           const radarr = new RadarrAPI({
             apiKey: server.apiKey,
             url: RadarrAPI.buildUrl(server, '/api/v3'),
           });
-
           try {
+            const physicalServerQueueSize = Math.max(
+              ...[server, ...matchingServers].map((rs) =>
+                validateDownloadQueueSize(
+                  rs.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
+                )
+              )
+            );
             await radarr.refreshMonitoredDownloads();
-            const queueItems = await radarr.getQueue();
+            const queueItems = await radarr.getQueue(physicalServerQueueSize);
 
-            this.radarrServers[server.id] = queueItems.map((item) => ({
+            const serverDownloads = queueItems.map((item) => ({
               externalId: item.movieId,
               estimatedCompletionTime: new Date(item.estimatedCompletionTime),
               mediaType: MediaType.MOVIE,
@@ -113,6 +134,22 @@ export class DownloadTracker {
               title: item.title,
               downloadId: item.downloadId,
             }));
+
+            this.radarrServers[server.id] = serverDownloads.slice(
+              0,
+              validateDownloadQueueSize(
+                server.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
+              )
+            );
+
+            matchingServers.forEach((ms) => {
+              this.radarrServers[ms.id] = serverDownloads.slice(
+                0,
+                validateDownloadQueueSize(
+                  ms.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
+                )
+              );
+            });
 
             if (queueItems.length > 0) {
               logger.debug(
@@ -129,27 +166,12 @@ export class DownloadTracker {
             );
           }
 
-          // Duplicate this data to matching servers
-          const matchingServers = settings.radarr.filter(
-            (rs) =>
-              rs.hostname === server.hostname &&
-              rs.port === server.port &&
-              rs.baseUrl === server.baseUrl &&
-              rs.id !== server.id
-          );
-
           if (matchingServers.length > 0) {
             logger.debug(
               `Matching download data to ${matchingServers.length} other Radarr server(s)`,
               { label: 'Download Tracker' }
             );
           }
-
-          matchingServers.forEach((ms) => {
-            if (ms.syncEnabled) {
-              this.radarrServers[ms.id] = this.radarrServers[server.id];
-            }
-          });
         }
       })
     );
@@ -159,28 +181,45 @@ export class DownloadTracker {
     const settings = getSettings();
 
     // Remove duplicate servers
-    const filteredServers = uniqWith(settings.sonarr, (sonarrA, sonarrB) => {
-      return (
-        sonarrA.hostname === sonarrB.hostname &&
-        sonarrA.port === sonarrB.port &&
-        sonarrA.baseUrl === sonarrB.baseUrl
-      );
-    });
+    const filteredServers = uniqWith(
+      settings.sonarr.filter((sonarr) => sonarr.syncEnabled),
+      (sonarrA, sonarrB) => {
+        return (
+          sonarrA.hostname === sonarrB.hostname &&
+          sonarrA.port === sonarrB.port &&
+          sonarrA.baseUrl === sonarrB.baseUrl
+        );
+      }
+    );
 
     // Load downloads from Sonarr servers
     await Promise.all(
       filteredServers.map(async (server) => {
         if (server.syncEnabled) {
+          const matchingServers = settings.sonarr.filter(
+            (ss) =>
+              ss.hostname === server.hostname &&
+              ss.port === server.port &&
+              ss.baseUrl === server.baseUrl &&
+              ss.id !== server.id &&
+              ss.syncEnabled
+          );
           const sonarr = new SonarrAPI({
             apiKey: server.apiKey,
             url: SonarrAPI.buildUrl(server, '/api/v3'),
           });
-
           try {
+            const physicalServerQueueSize = Math.max(
+              ...[server, ...matchingServers].map((ss) =>
+                validateDownloadQueueSize(
+                  ss.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
+                )
+              )
+            );
             await sonarr.refreshMonitoredDownloads();
-            const queueItems = await sonarr.getQueue();
+            const queueItems = await sonarr.getQueue(physicalServerQueueSize);
 
-            this.sonarrServers[server.id] = queueItems.map((item) => ({
+            const serverDownloads = queueItems.map((item) => ({
               externalId: item.seriesId,
               estimatedCompletionTime: new Date(item.estimatedCompletionTime),
               mediaType: MediaType.TV,
@@ -192,6 +231,22 @@ export class DownloadTracker {
               episode: item.episode,
               downloadId: item.downloadId,
             }));
+
+            this.sonarrServers[server.id] = serverDownloads.slice(
+              0,
+              validateDownloadQueueSize(
+                server.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
+              )
+            );
+
+            matchingServers.forEach((ms) => {
+              this.sonarrServers[ms.id] = serverDownloads.slice(
+                0,
+                validateDownloadQueueSize(
+                  ms.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
+                )
+              );
+            });
 
             if (queueItems.length > 0) {
               logger.debug(
@@ -208,27 +263,12 @@ export class DownloadTracker {
             );
           }
 
-          // Duplicate this data to matching servers
-          const matchingServers = settings.sonarr.filter(
-            (ss) =>
-              ss.hostname === server.hostname &&
-              ss.port === server.port &&
-              ss.baseUrl === server.baseUrl &&
-              ss.id !== server.id
-          );
-
           if (matchingServers.length > 0) {
             logger.debug(
               `Matching download data to ${matchingServers.length} other Sonarr server(s)`,
               { label: 'Download Tracker' }
             );
           }
-
-          matchingServers.forEach((ms) => {
-            if (ms.syncEnabled) {
-              this.sonarrServers[ms.id] = this.sonarrServers[server.id];
-            }
-          });
         }
       })
     );

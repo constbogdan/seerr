@@ -93,9 +93,26 @@ interface CommandResponse {
   exception?: string;
 }
 
-const QUEUE_PAGE_SIZE = 100;
+export const DEFAULT_DOWNLOAD_QUEUE_SIZE = 10;
+export const MAX_DOWNLOAD_QUEUE_SIZE = 1000;
 const COMMAND_POLL_INTERVAL_MS = 1000;
 const COMMAND_TIMEOUT_MS = 30000;
+
+export const validateDownloadQueueSize = (queueSize: unknown): number => {
+  if (
+    typeof queueSize !== 'number' ||
+    !Number.isFinite(queueSize) ||
+    !Number.isInteger(queueSize) ||
+    queueSize < 1 ||
+    queueSize > MAX_DOWNLOAD_QUEUE_SIZE
+  ) {
+    throw new Error(
+      `Queue size must be an integer between 1 and ${MAX_DOWNLOAD_QUEUE_SIZE}`
+    );
+  }
+
+  return queueSize;
+};
 
 class ServarrBase<QueueItemAppendT> extends ExternalAPI {
   static buildUrl(settings: DVRSettings, path?: string): string {
@@ -180,46 +197,37 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     }
   };
 
-  public getQueue = async (): Promise<(QueueItem & QueueItemAppendT)[]> => {
+  public async getQueue(
+    maxRecords = DEFAULT_DOWNLOAD_QUEUE_SIZE
+  ): Promise<(QueueItem & QueueItemAppendT)[]> {
     try {
-      const records: (QueueItem & QueueItemAppendT)[] = [];
-      let page = 1;
-      let totalRecords: number;
-
-      do {
-        const response = await this.axios.get<QueueResponse<QueueItemAppendT>>(
-          `/queue`,
-          {
-            params: {
-              includeEpisode: true,
-              page,
-              pageSize: QUEUE_PAGE_SIZE,
-            },
-          }
-        );
-
-        records.push(...response.data.records);
-        totalRecords = response.data.totalRecords;
-        page += 1;
-
-        if (
-          response.data.records.length === 0 &&
-          records.length < totalRecords
-        ) {
-          throw new Error(
-            `Queue pagination ended after ${records.length} of ${totalRecords} records`
-          );
+      const queueSize = validateDownloadQueueSize(maxRecords);
+      const response = await this.axios.get<QueueResponse<QueueItemAppendT>>(
+        `/queue`,
+        {
+          params: {
+            includeEpisode: true,
+            page: 1,
+            pageSize: queueSize,
+          },
         }
-      } while (records.length < totalRecords);
+      );
+      const expectedRecords = Math.min(response.data.totalRecords, queueSize);
 
-      return records;
+      if (response.data.records.length < expectedRecords) {
+        throw new Error(
+          `Queue response contained ${response.data.records.length} of ${expectedRecords} requested records`
+        );
+      }
+
+      return response.data.records.slice(0, queueSize);
     } catch (e) {
       throw new Error(
         `[${this.apiName}] Failed to retrieve queue: ${e.message}`,
         { cause: e }
       );
     }
-  };
+  }
 
   public getTags = async (): Promise<Tag[]> => {
     try {

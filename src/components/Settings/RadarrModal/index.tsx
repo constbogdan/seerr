@@ -1,3 +1,4 @@
+import Alert from '@app/components/Common/Alert';
 import Modal from '@app/components/Common/Modal';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import type { RadarrTestResponse } from '@app/components/Settings/SettingsServices';
@@ -44,6 +45,11 @@ const messages = defineMessages('components.Settings.RadarrModal', {
   apiKey: 'API Key',
   baseUrl: 'URL Base',
   syncEnabled: 'Enable Scan',
+  downloadQueueSize: 'Download Queue Size',
+  downloadQueueSizeHelp:
+    'Maximum number of active queue items Seerr will retrieve from this server during Download Sync.',
+  downloadQueueSizeWarning:
+    'Increasing this value may impact performance on systems with limited CPU or I/O resources, or on servers with very large download queues.',
   externalUrl: 'External URL',
   qualityprofile: 'Quality Profile',
   rootfolder: 'Root Folder',
@@ -113,6 +119,7 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
     port: Yup.number()
       .nullable()
       .required(intl.formatMessage(messages.validationPortRequired)),
+    downloadQueueSize: Yup.number().integer().min(1).max(1000).required(),
     apiKey: Yup.string().required(
       intl.formatMessage(messages.validationApiKeyRequired)
     ),
@@ -240,6 +247,7 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
           is4k: radarr?.is4k ?? false,
           externalUrl: radarr?.externalUrl,
           syncEnabled: radarr?.syncEnabled ?? false,
+          downloadQueueSize: radarr?.downloadQueueSize ?? 10,
           enableSearch: !radarr?.preventSearch,
           tagRequests: radarr?.tagRequests ?? false,
         }}
@@ -266,6 +274,7 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
               isDefault: values.isDefault,
               externalUrl: values.externalUrl,
               syncEnabled: values.syncEnabled,
+              downloadQueueSize: Number(values.downloadQueueSize),
               preventSearch: !values.enableSearch,
               tagRequests: values.tagRequests,
             };
@@ -721,6 +730,32 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
                       )}
                   </div>
                 </div>
+                <div className="form-row">
+                  <label htmlFor="downloadQueueSize" className="text-label">
+                    {intl.formatMessage(messages.downloadQueueSize)}
+                    <span className="label-tip">
+                      {intl.formatMessage(messages.downloadQueueSizeHelp)}
+                    </span>
+                  </label>
+                  <div className="form-input-area">
+                    <div className="form-input-field">
+                      <Field
+                        id="downloadQueueSize"
+                        name="downloadQueueSize"
+                        type="number"
+                        min="1"
+                        max="1000"
+                        step="1"
+                      />
+                    </div>
+                    {errors.downloadQueueSize && touched.downloadQueueSize && (
+                      <div className="error">{errors.downloadQueueSize}</div>
+                    )}
+                  </div>
+                </div>
+                <Alert type="warning">
+                  {intl.formatMessage(messages.downloadQueueSizeWarning)}
+                </Alert>
                 <div className="form-row">
                   <label htmlFor="syncEnabled" className="checkbox-label">
                     {intl.formatMessage(messages.syncEnabled)}
