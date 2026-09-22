@@ -95,6 +95,7 @@ interface CommandResponse {
 
 export const DEFAULT_DOWNLOAD_QUEUE_SIZE = 10;
 export const MAX_DOWNLOAD_QUEUE_SIZE = 1000;
+const DOWNLOAD_QUEUE_PAGE_SIZE = 100;
 const COMMAND_POLL_INTERVAL_MS = 1000;
 const COMMAND_TIMEOUT_MS = 30000;
 
@@ -202,25 +203,50 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
   ): Promise<(QueueItem & QueueItemAppendT)[]> {
     try {
       const queueSize = validateDownloadQueueSize(maxRecords);
-      const response = await this.axios.get<QueueResponse<QueueItemAppendT>>(
-        `/queue`,
-        {
-          params: {
-            includeEpisode: true,
-            page: 1,
-            pageSize: queueSize,
-          },
-        }
-      );
-      const expectedRecords = Math.min(response.data.totalRecords, queueSize);
+      const records: (QueueItem & QueueItemAppendT)[] = [];
+      // Servarr offsets page N by (N - 1) * pageSize. Keep this fixed across
+      // requests and trim only the returned records at the configured cap.
+      const pageSize = Math.min(DOWNLOAD_QUEUE_PAGE_SIZE, queueSize);
+      let totalRecords: number | undefined;
 
-      if (response.data.records.length < expectedRecords) {
-        throw new Error(
-          `Queue response contained ${response.data.records.length} of ${expectedRecords} requested records`
+      for (let page = 1; records.length < queueSize; page++) {
+        const response = await this.axios.get<QueueResponse<QueueItemAppendT>>(
+          `/queue`,
+          {
+            params: { includeEpisode: true, page, pageSize },
+          }
         );
+        const queue = response.data;
+        if (
+          queue.page !== page ||
+          !Number.isSafeInteger(queue.totalRecords) ||
+          queue.totalRecords < 0 ||
+          (totalRecords !== undefined && queue.totalRecords !== totalRecords)
+        ) {
+          throw new Error('Queue pagination changed during retrieval');
+        }
+        totalRecords = queue.totalRecords;
+        const expected = Math.min(
+          pageSize,
+          totalRecords - records.length,
+          queueSize - records.length
+        );
+        if (queue.records.length < expected) {
+          throw new Error(
+            `Queue response contained ${queue.records.length} of ${expected} requested records`
+          );
+        }
+        if (
+          queue.records.length > pageSize &&
+          records.length + queue.records.length < queueSize
+        ) {
+          throw new Error('Queue response exceeded the requested page size');
+        }
+        records.push(...queue.records.slice(0, queueSize - records.length));
+        if (records.length >= totalRecords) break;
       }
 
-      return response.data.records.slice(0, queueSize);
+      return records;
     } catch (e) {
       throw new Error(
         `[${this.apiName}] Failed to retrieve queue: ${e.message}`,
