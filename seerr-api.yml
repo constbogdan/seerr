@@ -605,7 +605,7 @@ components:
           example: false
         downloadQueueSize:
           type: integer
-          minimum: 1
+          minimum: 10
           maximum: 1000
           default: 10
         preventSearch:
@@ -689,7 +689,7 @@ components:
           example: false
         downloadQueueSize:
           type: integer
-          minimum: 1
+          minimum: 10
           maximum: 1000
           default: 10
         preventSearch:

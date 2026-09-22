@@ -1,6 +1,7 @@
-import Alert from '@app/components/Common/Alert';
+import Badge from '@app/components/Common/Badge';
 import Modal from '@app/components/Common/Modal';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
+import Tooltip from '@app/components/Common/Tooltip';
 import type { RadarrTestResponse } from '@app/components/Settings/SettingsServices';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
@@ -48,7 +49,7 @@ const messages = defineMessages('components.Settings.RadarrModal', {
   downloadQueueSize: 'Download Queue Size',
   downloadQueueSizeHelp:
     'Maximum number of active queue items Seerr will retrieve from this server during Download Sync.',
-  downloadQueueSizeWarning:
+  downloadQueueSizeTooltip:
     'Increasing this value may impact performance on systems with limited CPU or I/O resources, or on servers with very large download queues.',
   externalUrl: 'External URL',
   qualityprofile: 'Quality Profile',
@@ -119,7 +120,7 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
     port: Yup.number()
       .nullable()
       .required(intl.formatMessage(messages.validationPortRequired)),
-    downloadQueueSize: Yup.number().integer().min(1).max(1000).required(),
+    downloadQueueSize: Yup.number().integer().min(10).max(1000).required(),
     apiKey: Yup.string().required(
       intl.formatMessage(messages.validationApiKeyRequired)
     ),
@@ -732,30 +733,37 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
                 </div>
                 <div className="form-row">
                   <label htmlFor="downloadQueueSize" className="text-label">
-                    {intl.formatMessage(messages.downloadQueueSize)}
+                    <span className="mr-2">
+                      {intl.formatMessage(messages.downloadQueueSize)}
+                    </span>
+                    <Tooltip
+                      content={intl.formatMessage(
+                        messages.downloadQueueSizeTooltip
+                      )}
+                    >
+                      <Badge badgeType="danger">
+                        {intl.formatMessage(globalMessages.advanced)}
+                      </Badge>
+                    </Tooltip>
                     <span className="label-tip">
                       {intl.formatMessage(messages.downloadQueueSizeHelp)}
                     </span>
                   </label>
                   <div className="form-input-area">
-                    <div className="form-input-field">
-                      <Field
-                        id="downloadQueueSize"
-                        name="downloadQueueSize"
-                        type="number"
-                        min="1"
-                        max="1000"
-                        step="1"
-                      />
-                    </div>
-                    {errors.downloadQueueSize && touched.downloadQueueSize && (
-                      <div className="error">{errors.downloadQueueSize}</div>
-                    )}
+                    <Field
+                      id="downloadQueueSize"
+                      name="downloadQueueSize"
+                      type="text"
+                      inputMode="numeric"
+                      className="short"
+                    />
+                    {errors.downloadQueueSize &&
+                      touched.downloadQueueSize &&
+                      typeof errors.downloadQueueSize === 'string' && (
+                        <div className="error">{errors.downloadQueueSize}</div>
+                      )}
                   </div>
                 </div>
-                <Alert type="warning">
-                  {intl.formatMessage(messages.downloadQueueSizeWarning)}
-                </Alert>
                 <div className="form-row">
                   <label htmlFor="syncEnabled" className="checkbox-label">
                     {intl.formatMessage(messages.syncEnabled)}
