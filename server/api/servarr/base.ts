@@ -94,6 +94,7 @@ interface CommandResponse {
 }
 
 export const DEFAULT_DOWNLOAD_QUEUE_SIZE = 10;
+export const MIN_DOWNLOAD_QUEUE_SIZE = 10;
 export const MAX_DOWNLOAD_QUEUE_SIZE = 1000;
 const DOWNLOAD_QUEUE_PAGE_SIZE = 100;
 const COMMAND_POLL_INTERVAL_MS = 1000;
@@ -104,11 +105,11 @@ export const validateDownloadQueueSize = (queueSize: unknown): number => {
     typeof queueSize !== 'number' ||
     !Number.isFinite(queueSize) ||
     !Number.isInteger(queueSize) ||
-    queueSize < 1 ||
+    queueSize < MIN_DOWNLOAD_QUEUE_SIZE ||
     queueSize > MAX_DOWNLOAD_QUEUE_SIZE
   ) {
     throw new Error(
-      `Queue size must be an integer between 1 and ${MAX_DOWNLOAD_QUEUE_SIZE}`
+      `Queue size must be an integer between ${MIN_DOWNLOAD_QUEUE_SIZE} and ${MAX_DOWNLOAD_QUEUE_SIZE}`
     );
   }
 

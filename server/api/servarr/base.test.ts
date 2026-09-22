@@ -75,12 +75,12 @@ describe('ServarrBase queue pagination', () => {
       queueResponse(
         1,
         20,
-        Array.from({ length: 5 }, (_, index) => ({ id: index + 1 })),
-        5
+        Array.from({ length: 15 }, (_, index) => ({ id: index + 1 })),
+        15
       )
     );
 
-    assert.strictEqual((await sonarr.getQueue(5)).length, 5);
+    assert.strictEqual((await sonarr.getQueue(15)).length, 15);
     assert.strictEqual(get.mock.callCount(), 1);
   });
 
@@ -262,7 +262,7 @@ describe('ServarrBase queue pagination', () => {
       ])
     );
 
-    const queue = await radarr.getQueue(2);
+    const queue = await radarr.getQueue(10);
 
     assert.deepStrictEqual(
       queue.map((item) => item.movieId),
@@ -271,7 +271,7 @@ describe('ServarrBase queue pagination', () => {
     assert.deepStrictEqual(get.mock.calls[0].arguments[1]?.params, {
       includeEpisode: true,
       page: 1,
-      pageSize: 2,
+      pageSize: 10,
     });
   });
 
@@ -308,6 +308,8 @@ describe('ServarrBase queue pagination', () => {
   for (const limit of [
     0,
     -1,
+    1,
+    9,
     1.5,
     1001,
     Number.NaN,
