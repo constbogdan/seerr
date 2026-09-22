@@ -152,6 +152,40 @@ describe('DownloadTracker updateDownloads', () => {
     assert.strictEqual(sonarrQueue.mock.calls[0].arguments[0], 10);
   });
 
+  it('starts Radarr and Sonarr updates in parallel', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [
+      {
+        id: 2,
+        name: 'Sonarr',
+        hostname: 'sonarr',
+        port: 8989,
+        syncEnabled: true,
+      } as SonarrSettings,
+    ];
+    let releaseRadarr: (() => void) | undefined;
+    mock.method(
+      RadarrAPI.prototype,
+      'refreshMonitoredDownloads',
+      () =>
+        new Promise<void>((resolve) => {
+          releaseRadarr = resolve;
+        })
+    );
+    const sonarrRefresh = mock.method(
+      SonarrAPI.prototype,
+      'refreshMonitoredDownloads',
+      async () => Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () => []);
+    mock.method(SonarrAPI.prototype, 'getQueue', async () => []);
+
+    const update = new DownloadTracker().updateDownloads();
+    assert.strictEqual(sonarrRefresh.mock.callCount(), 1);
+    releaseRadarr?.();
+    await update;
+  });
+
   it('fetches duplicate aliases once at the maximum and slices each snapshot', async () => {
     settings.radarr = [
       buildRadarrSettings({ id: 1, downloadQueueSize: 10 }),
