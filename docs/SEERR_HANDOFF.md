@@ -2,19 +2,21 @@
 
 ## Current checkpoint
 
-Establish the safe downstream workflow boundary before adding downstream features
-or publishing images.
+Complete the Strategy C source cleanup, then add the downstream-owned image
+publisher without changing inherited workflow sources.
 
 - Repository: `constbogdan/seerr`.
 - Upstream: `seerr-team/seerr`, branch `develop`.
 - Audited live upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- `origin/downstream-main`: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- Current branch: `chore/downstream-workflow-guards`, based at the same SHA.
-- Working tree before these documents: 14 modified inherited workflow files;
-  those edits are temporary bootstrap guards and are not the permanent model.
-- `.github/workflows/downstream-validation.yml` now defines the read-only
-  `Downstream validation` job and checks the expected workflow inventory. It has
-  not yet received hosted acceptance or been configured as a required check.
+- `origin/downstream-main`: `2202eec800ca6ec55d52f39257059835b8c6eb46`.
+- Current branch: `chore/restore-upstream-workflows`, based at that downstream
+  SHA.
+- The 14 temporary inherited-workflow guards are removed on this branch, making
+  those files source-identical to `upstream/develop` again.
+- Unsafe inherited workflows remain disabled externally in the fork; restoring
+  their source does not re-enable them.
+- `.github/workflows/downstream-validation.yml` defines the read-only required
+  `Downstream validation` job and checks the expected workflow inventory.
 
 ## Decisions that must survive
 
@@ -57,15 +59,12 @@ Keep it outside the Seerr source repository and outside hosted CI.
 
 ## Immediate next actions
 
-1. Review the temporary workflow guards, downstream validation, and continuity
-   documents.
-2. Merge the guarded bootstrap through a PR targeting `downstream-main` and
-   authenticate the first hosted `Downstream validation` result.
-3. Make `downstream-main` the default branch and let GitHub register workflows.
-4. Disable and reauthenticate unsafe inherited workflow states.
-5. Require the stable downstream validation check in branch protection.
-6. Restore all inherited workflow files to exact upstream content.
-7. Implement `downstream-image.yml`, then prove GHCR and Dockhand/NAS rollback.
+1. Review and merge the inherited-workflow restoration through a PR targeting
+   `downstream-main`.
+2. Reauthenticate that unsafe inherited workflow states remain disabled after
+   the source cleanup.
+3. Implement `downstream-image.yml`, then prove GHCR publication and
+   Dockhand/NAS deployment and rollback.
 
 ## Deferred
 

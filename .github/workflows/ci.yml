@@ -28,6 +28,11 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+      NUMBER: ${{ github.event.pull_request.number }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -61,7 +66,27 @@ jobs:
         run: pnpm install
 
       - name: i18n Check
-        run: node bin/check-i18n.js
+        shell: bash
+        env:
+          I18N_LABEL: i18n-out-of-sync
+          BODY: |
+            The i18n check failed because translation messages are out of sync.
+
+            This usually happens when you've added or modified translation strings in your code but haven't updated the translation file.
+
+            Please run `pnpm i18n:extract` and commit the changes.
+        run: |
+          retry() { n=0; until "$@"; do n=$((n+1)); [ $n -ge 3 ] && break; echo "retry $n: $*" >&2; sleep 2; done; }
+          check_failed=0; node bin/check-i18n.js || check_failed=$?
+          pr_labels=$(gh pr view "$NUMBER" -R "$GH_REPO" --json labels -q '.labels[].name' 2>/dev/null) || true
+          has_label=0
+          while IFS= read -r name; do [ -n "$name" ] && [ "$name" = "$I18N_LABEL" ] && has_label=1 && break; done <<< "$pr_labels"
+          if [ "$check_failed" -eq 1 ]; then
+            [ "$has_label" -eq 0 ] && { retry gh pr edit "$NUMBER" -R "$GH_REPO" --add-label "$I18N_LABEL" || true; retry gh pr comment "$NUMBER" -R "$GH_REPO" -b "$BODY" || true; }
+          else
+            [ "$has_label" -eq 1 ] && retry gh pr edit "$NUMBER" -R "$GH_REPO" --remove-label "$I18N_LABEL" || true
+          fi
+          exit $check_failed
   test:
     name: Lint & Test Build
     if: github.event_name == 'pull_request'
@@ -151,7 +176,7 @@ jobs:
 
   build:
     name: Build (per-arch, native runners)
-    if: github.repository == 'seerr-team/seerr' && github.ref == 'refs/heads/develop'
+    if: github.ref == 'refs/heads/develop'
     strategy:
       matrix:
         include:
@@ -261,7 +286,7 @@ jobs:
   discord:
     name: Send Discord Notification
     needs: publish
-    if: github.repository == 'seerr-team/seerr' && always() && github.event_name != 'pull_request'
+    if: always() && github.event_name != 'pull_request'
     runs-on: ubuntu-24.04
     steps:
       - name: Determine Workflow Status

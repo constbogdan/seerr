@@ -1,8 +1,9 @@
 # Seerr downstream maintenance
 
 This document defines the intended operating model for `constbogdan/seerr`. The
-model is partly implemented: downstream validation exists, image publication does
-not, and GitHub repository settings have not yet completed the transition.
+workflow boundary is in its intended Strategy C steady state: downstream
+validation and external workflow controls exist, while image publication does
+not yet exist.
 
 ## Authorities and branches
 
@@ -31,14 +32,11 @@ The permanent model is a minimal downstream workflow surface:
 - workflow enable/disable state and workflow-file inventory are verified after
   every upstream sync.
 
-The current edits to 14 inherited workflows are temporary bootstrap protection.
-They remain only until:
-
-1. `downstream-main` is the default branch;
-2. GitHub has registered the workflows;
-3. unsafe inherited workflows are disabled and their state is verified;
-4. branch protection requires downstream validation;
-5. a cleanup PR restores the inherited files exactly to upstream content.
+The temporary bootstrap guards previously carried in 14 inherited workflows have
+been removed. Those workflow files are source-identical to `upstream/develop`;
+their unsafe instances remain disabled through external repository configuration.
+Restoring source content does not re-enable a disabled workflow, and source
+changes must never be treated as a substitute for verifying its external state.
 
 Unsafe inherited workflows include upstream CI publication, release/preview/tag
 creation, Pages and Helm publication, Trivy's inherited image scan, and upstream
