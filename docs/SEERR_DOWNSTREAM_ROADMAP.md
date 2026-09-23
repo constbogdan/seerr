@@ -26,8 +26,8 @@ downstream home.
 ## Current baseline
 
 - Audited upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- `origin/downstream-main`: `2202eec800ca6ec55d52f39257059835b8c6eb46`.
-- Current cleanup branch: `chore/restore-upstream-workflows`.
+- `origin/downstream-main`: `6631cecf1fbfba59da045985a32b2b4d97e1c611`.
+- Current infrastructure branch: `chore/downstream-image-publication`.
 - Upstream queue-sync contribution: [seerr-team/seerr#3535](https://github.com/seerr-team/seerr/pull/3535), open against `develop`.
 - Fresh prototype: uncommitted work in `C:\Projects\Wholphin\seerr-discovery` on `feature/fresh`; it has not been transplanted downstream.
 - Local integration harness: `C:\Projects\Wholphin\seerr-harness`.
@@ -41,7 +41,7 @@ downstream home.
 - [x] Disable and verify unsafe inherited workflows in GitHub.
 - [x] Require downstream validation in branch protection.
 - [x] Restore inherited workflow files to upstream-identical content.
-- [ ] Add downstream-owned GHCR image publication.
+- [x] Add downstream-owned GHCR image publication.
 - [ ] Provide image and release metadata useful for Dockhand-visible updates.
 - [ ] Validate deployment and rollback against the NAS environment.
 

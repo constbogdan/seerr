@@ -6,6 +6,7 @@ cypress.yml
 detect-duplicate.yml
 docs-deploy.yml
 docs-link-check.yml
+downstream-image.yml
 downstream-validation.yml
 helm.yml
 lint-helm-charts.yml
