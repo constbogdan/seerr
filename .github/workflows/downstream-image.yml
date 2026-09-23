@@ -27,6 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Authenticate publication context
@@ -36,12 +37,21 @@ jobs:
           test "$GITHUB_REF" = 'refs/heads/downstream-main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
+      - name: Allocate downstream version
+        id: version
+        run: >-
+          python3 -B scripts/seerr_downstream_version.py
+          --publication
+          --github-output "$GITHUB_OUTPUT"
+
       - name: Set build metadata
         id: build_metadata
         shell: bash
+        env:
+          SOURCE_DATE_EPOCH: ${{ steps.version.outputs.source_date_epoch }}
         run: |
-          echo "created=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
-          echo "source_date_epoch=$(git show -s --format=%ct "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+          created="$(date -u --date="@${SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"
+          echo "created=$created" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
@@ -56,17 +66,31 @@ jobs:
       - name: Extract image metadata
         id: metadata
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
+        env:
+          DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
+            type=raw,value=${{ steps.version.outputs.version_tag }}
             type=raw,value=${{ github.sha }}
-            type=raw,value=downstream
+            type=raw,value=custom
           labels: |
-            org.opencontainers.image.title=Seerr downstream
-            org.opencontainers.image.description=Maintained downstream Seerr image
+            org.opencontainers.image.title=Seerr personal downstream
+            org.opencontainers.image.description=Personal downstream build of Seerr, tracking seerr-team/seerr with selected custom features and fixes. Not an official Seerr release. Official project: https://github.com/seerr-team/seerr
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}/blob/downstream-main/docs/SEERR_DOWNSTREAM_PACKAGE.md
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version_tag }}
+            org.opencontainers.image.created=${{ steps.build_metadata.outputs.created }}
+          annotations: |
+            org.opencontainers.image.title=Seerr personal downstream
+            org.opencontainers.image.description=Personal downstream build of Seerr, tracking seerr-team/seerr with selected custom features and fixes. Not an official Seerr release. Official project: https://github.com/seerr-team/seerr
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}/blob/downstream-main/docs/SEERR_DOWNSTREAM_PACKAGE.md
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ steps.version.outputs.version_tag }}
             org.opencontainers.image.created=${{ steps.build_metadata.outputs.created }}
 
       - name: Build and publish image
@@ -79,9 +103,10 @@ jobs:
           push: true
           build-args: |
             COMMIT_TAG=${{ github.sha }}
-            BUILD_VERSION=downstream
-            SOURCE_DATE_EPOCH=${{ steps.build_metadata.outputs.source_date_epoch }}
+            BUILD_VERSION=${{ steps.version.outputs.version_tag }}
+            SOURCE_DATE_EPOCH=${{ steps.version.outputs.source_date_epoch }}
           labels: ${{ steps.metadata.outputs.labels }}
+          annotations: ${{ steps.metadata.outputs.annotations }}
           tags: ${{ steps.metadata.outputs.tags }}
           cache-from: type=gha,scope=downstream-linux-amd64
           cache-to: type=gha,mode=max,scope=downstream-linux-amd64
@@ -91,12 +116,25 @@ jobs:
         shell: bash
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## Downstream image published
+          ## Seerr downstream ${{ steps.version.outputs.version_tag }} published
 
           - **Image:** \`${IMAGE_NAME}\`
+          - **Version:** \`${{ steps.version.outputs.version_tag }}\`
           - **Source SHA:** \`${GITHUB_SHA}\`
           - **Immutable tag:** \`${IMAGE_NAME}:${GITHUB_SHA}\`
-          - **Rolling tag:** \`${IMAGE_NAME}:downstream\`
+          - **Version tag:** \`${IMAGE_NAME}:${{ steps.version.outputs.version_tag }}\`
+          - **Rolling tag:** \`${IMAGE_NAME}:custom\`
           - **Digest:** \`${{ steps.publish.outputs.digest }}\`
           - **Build:** [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
+
+          ### Upstream synchronization
+
+          No authenticated upstream base/tip pair was recorded for this build. Future upstream-sync
+          automation must supply that durable provenance before this section claims upstream changes.
+
+          ### Downstream changes
+
+          [Compare the previous protected-main image with this version](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${{ steps.version.outputs.previous_sha }}...${GITHUB_SHA}).
+          Changes remain unclassified as direct-only until upstream-sync automation supplies the
+          authenticated base/tip pair needed to separate upstream and fork commits.
           EOF

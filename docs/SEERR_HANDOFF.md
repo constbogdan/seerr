@@ -8,9 +8,9 @@ Dockhand/NAS deployment and rollback path.
 - Repository: `constbogdan/seerr`.
 - Upstream: `seerr-team/seerr`, branch `develop`.
 - Audited live upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- `origin/downstream-main`: `6631cecf1fbfba59da045985a32b2b4d97e1c611`.
-- Current branch: `chore/downstream-image-publication`, based at that downstream
-  SHA.
+- `origin/downstream-main`: `f74657aa501e1fc28bf314673a0cedde167d47e6`.
+- Current branch: `chore/downstream-image-publication`; its published workflow
+  commit `60276f62` is the second parent of that downstream merge.
 - The inherited workflow files are source-identical to `upstream/develop`.
 - Unsafe inherited workflows remain disabled externally in the fork; restoring
   their source does not re-enable them.
@@ -18,8 +18,13 @@ Dockhand/NAS deployment and rollback path.
   `Downstream validation` job and checks the expected workflow inventory.
 - `.github/workflows/downstream-image.yml` publishes `linux/amd64` to
   `ghcr.io/constbogdan/seerr` only after a push to authenticated
-  `downstream-main`. It uses full-SHA and `downstream` tags and reports the
-  authoritative digest in the workflow summary.
+  `downstream-main`. It uses `custom-v1.0.N`, full-SHA, and rolling `custom`
+  tags and reports the authoritative digest in the workflow summary.
+- `N` is the protected-main first-parent distance from epoch `f74657aa`; this
+  adapts Mosaic's allocation model while the `custom-` namespace avoids official
+  Seerr version identity.
+- GHCR metadata and [package documentation](SEERR_DOWNSTREAM_PACKAGE.md) identify
+  the image as a personal downstream build, not an official Seerr release.
 
 ## Decisions that must survive
 
@@ -64,9 +69,10 @@ Keep it outside the Seerr source repository and outside hosted CI.
 
 1. Review and merge the image-publication workflow through a PR targeting
    `downstream-main`.
-2. Authenticate the first GHCR package, tags, OCI metadata, and digest.
-3. Verify package visibility and Dockhand detection of a changed `downstream`
+2. Authenticate the first versioned GHCR package tags, manifest annotations, and
    digest.
+3. Verify Dockhand detection of a changed `custom` digest and inspect which OCI
+   metadata/release links it actually presents.
 4. Prove NAS deployment and rollback using recorded immutable digests.
 
 ## Deferred

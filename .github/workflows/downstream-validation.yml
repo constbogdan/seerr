@@ -39,6 +39,9 @@ jobs:
             exit 1
           fi
 
+      - name: Test downstream version allocation
+        run: python3 -B scripts/test_seerr_downstream_version.py
+
       - name: Set up pnpm
         uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
 

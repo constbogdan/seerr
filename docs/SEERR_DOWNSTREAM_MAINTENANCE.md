@@ -72,16 +72,32 @@ The downstream-owned `.github/workflows/downstream-image.yml` publishes:
 
 - only on pushes to reviewed `downstream-main` state;
 - only after exact `constbogdan/seerr` repository and branch authentication;
+- `ghcr.io/constbogdan/seerr:custom-v1.0.N` as the human-readable immutable version tag;
 - `ghcr.io/constbogdan/seerr:<full-source-sha>` as the immutable source tag;
-- `ghcr.io/constbogdan/seerr:downstream` as the rolling update tag;
+- `ghcr.io/constbogdan/seerr:custom` as the rolling update tag;
 - `linux/amd64` using the inherited Seerr `Dockerfile`;
 - source, revision, version, and build-time OCI metadata;
 - the published digest and run link in the workflow summary.
 
 The immutable digest is deployment authority; tags are discovery and convenience
-identities. No Stable channel or GitHub Release is implied by this publisher.
-Dockhand update detection and useful release-detail presentation still require
-live verification against the first published image.
+identities. `N` is the protected `downstream-main` first-parent distance from the
+fixed image-publication epoch `f74657aa501e1fc28bf314673a0cedde167d47e6`.
+The epoch is not publishable; the first subsequent protected-main merge is
+`custom-v1.0.1`. Upstream side-history does not allocate extra versions, and the
+`custom-` namespace prevents confusion with official Seerr releases.
+
+The package description, manifest annotation, and [package documentation](SEERR_DOWNSTREAM_PACKAGE.md)
+identify this as a personal downstream build and link the official
+`seerr-team/seerr` project. The workflow summary is the current per-build release
+record: it includes version, source SHA, digest, build link, and comparison with
+the previous protected-main image. It keeps upstream-sync and downstream-change
+sections separate, but refuses to claim an upstream base/tip until future sync
+automation records that pair durably.
+
+No GitHub Release is created. A Release would require broader `contents: write`
+authority and Dockhand does not automatically associate one with the mutable
+`custom` tag. Reconsider a separate release step only after live Dockhand
+verification proves that a versioned Release link materially improves review.
 
 ## Local and NAS verification
 

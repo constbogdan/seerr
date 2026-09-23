@@ -26,7 +26,7 @@ downstream home.
 ## Current baseline
 
 - Audited upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- `origin/downstream-main`: `6631cecf1fbfba59da045985a32b2b4d97e1c611`.
+- `origin/downstream-main`: `f74657aa501e1fc28bf314673a0cedde167d47e6`.
 - Current infrastructure branch: `chore/downstream-image-publication`.
 - Upstream queue-sync contribution: [seerr-team/seerr#3535](https://github.com/seerr-team/seerr/pull/3535), open against `develop`.
 - Fresh prototype: uncommitted work in `C:\Projects\Wholphin\seerr-discovery` on `feature/fresh`; it has not been transplanted downstream.
@@ -42,7 +42,8 @@ downstream home.
 - [x] Require downstream validation in branch protection.
 - [x] Restore inherited workflow files to upstream-identical content.
 - [x] Add downstream-owned GHCR image publication.
-- [ ] Provide image and release metadata useful for Dockhand-visible updates.
+- [x] Add namespaced versions, GHCR package metadata, and per-build summaries.
+- [ ] Live-verify Dockhand update detection and release-detail presentation.
 - [ ] Validate deployment and rollback against the NAS environment.
 
 ## Phase 2 — downstream features and repeatable upkeep
