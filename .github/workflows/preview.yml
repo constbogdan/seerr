@@ -21,7 +21,6 @@ concurrency:
 jobs:
   build:
     name: Build (per-arch, native runners)
-    if: github.repository == 'seerr-team/seerr'
     strategy:
       matrix:
         include:

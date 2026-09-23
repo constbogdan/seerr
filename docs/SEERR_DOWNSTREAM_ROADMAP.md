@@ -26,8 +26,8 @@ downstream home.
 ## Current baseline
 
 - Audited upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- `origin/downstream-main`: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- Current bootstrap branch: `chore/downstream-workflow-guards`.
+- `origin/downstream-main`: `2202eec800ca6ec55d52f39257059835b8c6eb46`.
+- Current cleanup branch: `chore/restore-upstream-workflows`.
 - Upstream queue-sync contribution: [seerr-team/seerr#3535](https://github.com/seerr-team/seerr/pull/3535), open against `develop`.
 - Fresh prototype: uncommitted work in `C:\Projects\Wholphin\seerr-discovery` on `feature/fresh`; it has not been transplanted downstream.
 - Local integration harness: `C:\Projects\Wholphin\seerr-harness`.
@@ -35,12 +35,12 @@ downstream home.
 ## Phase 1 — safe downstream foundation
 
 - [x] Create `downstream-main` from the authenticated upstream tip.
-- [ ] Complete temporary inherited-workflow bootstrap guards.
+- [x] Complete the temporary inherited-workflow bootstrap guards.
 - [x] Add the downstream-owned validation workflow and workflow-inventory check.
-- [ ] Make `downstream-main` the fork default branch.
-- [ ] Disable and verify unsafe inherited workflows in GitHub.
-- [ ] Require downstream validation in branch protection.
-- [ ] Restore inherited workflow files to upstream-identical content.
+- [x] Make `downstream-main` the fork default branch.
+- [x] Disable and verify unsafe inherited workflows in GitHub.
+- [x] Require downstream validation in branch protection.
+- [x] Restore inherited workflow files to upstream-identical content.
 - [ ] Add downstream-owned GHCR image publication.
 - [ ] Provide image and release metadata useful for Dockhand-visible updates.
 - [ ] Validate deployment and rollback against the NAS environment.
