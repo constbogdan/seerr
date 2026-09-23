@@ -2,21 +2,24 @@
 
 ## Current checkpoint
 
-Complete the Strategy C source cleanup, then add the downstream-owned image
-publisher without changing inherited workflow sources.
+Validate the first downstream-owned image publication and then prove the
+Dockhand/NAS deployment and rollback path.
 
 - Repository: `constbogdan/seerr`.
 - Upstream: `seerr-team/seerr`, branch `develop`.
 - Audited live upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- `origin/downstream-main`: `2202eec800ca6ec55d52f39257059835b8c6eb46`.
-- Current branch: `chore/restore-upstream-workflows`, based at that downstream
+- `origin/downstream-main`: `6631cecf1fbfba59da045985a32b2b4d97e1c611`.
+- Current branch: `chore/downstream-image-publication`, based at that downstream
   SHA.
-- The 14 temporary inherited-workflow guards are removed on this branch, making
-  those files source-identical to `upstream/develop` again.
+- The inherited workflow files are source-identical to `upstream/develop`.
 - Unsafe inherited workflows remain disabled externally in the fork; restoring
   their source does not re-enable them.
 - `.github/workflows/downstream-validation.yml` defines the read-only required
   `Downstream validation` job and checks the expected workflow inventory.
+- `.github/workflows/downstream-image.yml` publishes `linux/amd64` to
+  `ghcr.io/constbogdan/seerr` only after a push to authenticated
+  `downstream-main`. It uses full-SHA and `downstream` tags and reports the
+  authoritative digest in the workflow summary.
 
 ## Decisions that must survive
 
@@ -59,12 +62,12 @@ Keep it outside the Seerr source repository and outside hosted CI.
 
 ## Immediate next actions
 
-1. Review and merge the inherited-workflow restoration through a PR targeting
+1. Review and merge the image-publication workflow through a PR targeting
    `downstream-main`.
-2. Reauthenticate that unsafe inherited workflow states remain disabled after
-   the source cleanup.
-3. Implement `downstream-image.yml`, then prove GHCR publication and
-   Dockhand/NAS deployment and rollback.
+2. Authenticate the first GHCR package, tags, OCI metadata, and digest.
+3. Verify package visibility and Dockhand detection of a changed `downstream`
+   digest.
+4. Prove NAS deployment and rollback using recorded immutable digests.
 
 ## Deferred
 

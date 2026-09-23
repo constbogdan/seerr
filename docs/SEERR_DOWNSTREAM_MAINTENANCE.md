@@ -2,8 +2,8 @@
 
 This document defines the intended operating model for `constbogdan/seerr`. The
 workflow boundary is in its intended Strategy C steady state: downstream
-validation and external workflow controls exist, while image publication does
-not yet exist.
+validation, image publication, and external workflow controls have explicit
+owners.
 
 ## Authorities and branches
 
@@ -68,18 +68,20 @@ formatting, lint, type checking, unit tests, and a production build. It also
 compares the workflow directory with `docs/downstream-workflow-inventory.txt` so
 an upstream workflow addition, removal, or rename requires explicit safety review.
 
-Image publication is not implemented. Its intended contract is:
+The downstream-owned `.github/workflows/downstream-image.yml` publishes:
 
-- only after reviewed integration into `downstream-main`;
-- exact `constbogdan/seerr` repository and branch authentication;
-- GHCR only;
-- an immutable source-SHA tag and a rolling downstream/development tag;
-- recorded source SHA, image digest, and incorporated upstream tip;
-- release notes/metadata suitable for Dockhand-visible updates;
-- deployment and rollback by a known digest where practical.
+- only on pushes to reviewed `downstream-main` state;
+- only after exact `constbogdan/seerr` repository and branch authentication;
+- `ghcr.io/constbogdan/seerr:<full-source-sha>` as the immutable source tag;
+- `ghcr.io/constbogdan/seerr:downstream` as the rolling update tag;
+- `linux/amd64` using the inherited Seerr `Dockerfile`;
+- source, revision, version, and build-time OCI metadata;
+- the published digest and run link in the workflow summary.
 
-Exact rolling and stable tag names remain undecided. No Stable channel is implied
-by the initial publisher.
+The immutable digest is deployment authority; tags are discovery and convenience
+identities. No Stable channel or GitHub Release is implied by this publisher.
+Dockhand update detection and useful release-detail presentation still require
+live verification against the first published image.
 
 ## Local and NAS verification
 
