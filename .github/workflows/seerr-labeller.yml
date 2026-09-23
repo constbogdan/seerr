@@ -13,6 +13,7 @@ permissions: {}
 jobs:
   ai-generated-support:
     if: >
+      github.repository == 'seerr-team/seerr' &&
       github.event_name == 'pull_request_target' &&
       (github.event.label.name == 'ai-generated' || (github.event.action == 'reopened' && contains(github.event.pull_request.labels.*.name, 'ai-generated')))
     runs-on: ubuntu-24.04
@@ -64,6 +65,7 @@ jobs:
 
   support:
     if: >
+      github.repository == 'seerr-team/seerr' &&
       github.event_name == 'issues' &&
       (github.event.label.name == 'support' ||
       (github.event.action == 'reopened' && contains(github.event.issue.labels.*.name, 'support')))

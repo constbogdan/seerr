@@ -1,0 +1,62 @@
+# Seerr downstream roadmap
+
+This roadmap tracks the maintained `constbogdan/seerr` product line. It does not
+replace the upstream Seerr roadmap or describe upstream contribution work.
+
+## Direction
+
+```text
+upstream/develop
+      ↓
+reviewed sync PR
+      ↓
+downstream-main
+      ↓
+downstream validation
+      ↓
+GHCR image
+      ↓
+Dockhand / NAS
+```
+
+The downstream should remain close to `seerr-team/seerr:develop`, preserve clean
+upstream contribution branches, and carry only features that need a maintained
+downstream home.
+
+## Current baseline
+
+- Audited upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
+- `origin/downstream-main`: `794743a45f17e3d6aba06d68e1716e8b15146673`.
+- Current bootstrap branch: `chore/downstream-workflow-guards`.
+- Upstream queue-sync contribution: [seerr-team/seerr#3535](https://github.com/seerr-team/seerr/pull/3535), open against `develop`.
+- Fresh prototype: uncommitted work in `C:\Projects\Wholphin\seerr-discovery` on `feature/fresh`; it has not been transplanted downstream.
+- Local integration harness: `C:\Projects\Wholphin\seerr-harness`.
+
+## Phase 1 — safe downstream foundation
+
+- [x] Create `downstream-main` from the authenticated upstream tip.
+- [ ] Complete temporary inherited-workflow bootstrap guards.
+- [x] Add the downstream-owned validation workflow and workflow-inventory check.
+- [ ] Make `downstream-main` the fork default branch.
+- [ ] Disable and verify unsafe inherited workflows in GitHub.
+- [ ] Require downstream validation in branch protection.
+- [ ] Restore inherited workflow files to upstream-identical content.
+- [ ] Add downstream-owned GHCR image publication.
+- [ ] Provide image and release metadata useful for Dockhand-visible updates.
+- [ ] Validate deployment and rollback against the NAS environment.
+
+## Phase 2 — downstream features and repeatable upkeep
+
+- [ ] Transplant Fresh onto a current `downstream-main` topic branch with focused tests.
+- [ ] Evaluate direct/on-demand Download Sync refresh as a separate downstream feature.
+- [ ] Add automated upstream change detection.
+- [ ] Add reusable upstream sync-PR generation if manual sync becomes costly.
+
+## Later, when justified
+
+- Stable downstream release channel.
+- Richer release provenance and changelog presentation.
+- Automated canary deployment and rollback.
+
+Do not copy Mosaic's full release or upstream-resolution machinery unless repeated
+Seerr maintenance demonstrates a concrete need.

@@ -20,6 +20,7 @@ env:
 jobs:
   changelog:
     name: Generate changelog
+    if: github.repository == 'seerr-team/seerr'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -62,6 +63,7 @@ jobs:
 
   build:
     name: Build (${{ matrix.arch }})
+    if: github.repository == 'seerr-team/seerr'
     strategy:
       matrix:
         include:

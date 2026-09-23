@@ -1,0 +1,70 @@
+---
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+name: Downstream Validation
+
+on:
+  pull_request:
+    branches:
+      - downstream-main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validation:
+    name: Downstream validation
+    if: github.repository == 'constbogdan/seerr'
+    runs-on: ubuntu-24.04
+    env:
+      CI: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify workflow inventory
+        shell: bash
+        run: |
+          actual="$(mktemp)"
+          find .github/workflows -maxdepth 1 -type f \( -name '*.yml' -o -name '*.yaml' \) \
+            -printf '%f\n' | LC_ALL=C sort > "$actual"
+          if ! diff -u docs/downstream-workflow-inventory.txt "$actual"; then
+            echo '::error::Workflow inventory changed. Review inherited workflow safety and update docs/downstream-workflow-inventory.txt explicitly.'
+            exit 1
+          fi
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6.0.10
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: package.json
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check translations
+        run: node bin/check-i18n.js
+
+      - name: Check formatting
+        run: pnpm format:check
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm typecheck
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
