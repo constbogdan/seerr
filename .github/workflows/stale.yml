@@ -15,6 +15,7 @@ concurrency:
 jobs:
   stale:
     name: Close stale issues and PRs
+    if: github.repository == 'seerr-team/seerr'
     runs-on: ubuntu-24.04
     permissions:
       actions: write
