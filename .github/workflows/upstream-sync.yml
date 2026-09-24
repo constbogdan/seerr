@@ -12,7 +12,7 @@ permissions:
 
 # Serializes attempts, including reruns. Never cancel publication halfway through.
 concurrency:
-  group: wholphin-upstream-sync
+  group: seerr-upstream-sync
   cancel-in-progress: false
 
 defaults:
@@ -23,9 +23,9 @@ jobs:
   observe:
     name: Observe upstream integration
     if: >-
-      github.repository == 'constbogdan/Mosaic' &&
-      github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+      github.repository == 'constbogdan/seerr' &&
+      github.ref == 'refs/heads/downstream-main'
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -45,6 +45,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Set up trusted maintenance runtime
+        uses: ./.github/actions/setup
       - name: Observe upstream changes with read-only access
         id: observe
         env:
@@ -64,10 +66,10 @@ jobs:
     name: Publish candidate
     needs: observe
     if: >-
-      github.repository == 'constbogdan/Mosaic' &&
-      github.ref == 'refs/heads/main' &&
+      github.repository == 'constbogdan/seerr' &&
+      github.ref == 'refs/heads/downstream-main' &&
       needs.observe.outputs.outcome != 'no_delta'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -78,6 +80,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Set up trusted maintenance runtime
+        uses: ./.github/actions/setup
       - name: Mint repository-scoped publication token
         # Only candidate publication paths need the App's Contents/PR authority.
         # An empty App output is expected when this step is skipped; it is not a binding failure.
@@ -88,7 +92,7 @@ jobs:
         with:
           client-id: ${{ vars.SYNC_BOT_CLIENT_ID }}
           private-key: ${{ secrets.SYNC_BOT_PRIVATE_KEY }}
-          # These event fields become targets only after the job's exact two-name repository guard.
+          # These event fields become targets only after the job's exact repository/ref guard.
           owner: ${{ github.repository_owner }}
           repositories: ${{ github.event.repository.name }}
           permission-contents: write

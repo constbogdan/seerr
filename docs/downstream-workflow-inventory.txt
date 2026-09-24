@@ -19,3 +19,4 @@ seerr-labeller.yml
 stale.yml
 test-docs.yml
 trivy-scan.yml
+upstream-sync.yml

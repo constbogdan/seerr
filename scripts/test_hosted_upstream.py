@@ -62,7 +62,7 @@ class HostedSyncTests(unittest.TestCase):
         token = patch.dict(os.environ, {"SYNC_PUBLISH_TOKEN": "fixture-only-never-sent"})
         token.start()
         self.addCleanup(token.stop)
-        self.temp = tempfile.TemporaryDirectory(prefix="wholphin-sync-test-")
+        self.temp = tempfile.TemporaryDirectory(prefix="seerr-sync-test-")
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.seed = self.root / "seed"
@@ -71,12 +71,13 @@ class HostedSyncTests(unittest.TestCase):
         self.env.update(GIT_CONFIG_GLOBAL=os.devnull, GIT_CONFIG_NOSYSTEM="1",
                         GIT_AUTHOR_NAME="Fixture", GIT_COMMITTER_NAME="Fixture",
                         GIT_AUTHOR_EMAIL="fixture@example.invalid", GIT_COMMITTER_EMAIL="fixture@example.invalid")
-        self.g("init", "-b", "main")
+        self.g("init", "-b", sync.PROTECTED_BRANCH)
         self.commit("base.txt", "base\n")
         self.anchor = self.g("rev-parse", "HEAD")
         self.remotes = {name: self.root / (name + ".git") for name in ("origin", "upstream")}
         for remote in self.remotes.values():
             self.g("clone", "--bare", str(self.seed), str(remote))
+        self.g("push", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         self.github = GitHubFake()
 
     def g(self, *args):
@@ -95,8 +96,12 @@ class HostedSyncTests(unittest.TestCase):
 
     def upstream(self, name="upstream.txt", content="incoming\n"):
         sha = self.commit(name, content)
-        self.g("push", str(self.remotes["upstream"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         return sha
+
+    def push_both_heads(self):
+        self.g("push", str(self.remotes["origin"]), f"HEAD:{sync.DOWNSTREAM_REF}")
+        self.g("push", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
 
     def instance(self):
         path = self.root / ("work-" + str(len(list(self.root.glob("work-*")))))
@@ -111,9 +116,9 @@ class HostedSyncTests(unittest.TestCase):
         return git, o
 
     def pr(self, o, state="open", head=None, draft=False, body=None):
-        return {"number": 123, "state": state, "html_url": "https://github.com/constbogdan/Mosaic/pull/123",
+        return {"number": 123, "state": state, "html_url": "https://github.com/constbogdan/seerr/pull/123",
                 "draft": draft, "body": body if body is not None else sync.description(o),
-                "base": {"ref": "main", "repo": {"full_name": sync.ORIGIN}},
+                "base": {"ref": sync.PROTECTED_BRANCH, "repo": {"full_name": sync.ORIGIN}},
                 "head": {"ref": o["branch"], "sha": head or o["candidate_sha"], "repo": {"full_name": sync.ORIGIN}}}
 
     def retain_pr(self, git, o, state="open", head=None, draft=False, body=None):
@@ -186,7 +191,7 @@ class HostedSyncTests(unittest.TestCase):
         up = self.upstream()
         self.g("checkout", "--detach", self.anchor)
         down = self.commit("custom.txt", "downstream\n")
-        self.g("push", str(self.remotes["origin"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["origin"]), f"HEAD:{sync.DOWNSTREAM_REF}")
         git, o = self.observe()
         self.assertEqual(o["downstream_sha"], down)
         self.assertTrue(git.ancestor(up, o["candidate_sha"]))
@@ -196,7 +201,7 @@ class HostedSyncTests(unittest.TestCase):
         self.upstream("base.txt", "upstream\n")
         self.g("checkout", "--detach", self.anchor)
         self.commit("base.txt", "downstream\n")
-        self.g("push", str(self.remotes["origin"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["origin"]), f"HEAD:{sync.DOWNSTREAM_REF}")
         git, o = self.instance(), {"downstream_repo": sync.ORIGIN}
         sync.inspect(git, self.github, o, self.anchor)
         self.assertEqual(o["outcome"], "semantic_conflict")
@@ -246,7 +251,7 @@ class HostedSyncTests(unittest.TestCase):
         self.g("checkout", "--detach", self.anchor)
         self.commit("replacement.txt", "rewritten\n")
         # Fixture-only rewrite simulates an upstream event; executor never does this.
-        self.g("push", "--force", str(self.remotes["upstream"]), "HEAD:refs/heads/main")
+        self.g("push", "--force", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         with self.assertRaisesRegex(sync.Blocked, "not a descendant.*" + first):
             self.observe()
 
@@ -256,7 +261,7 @@ class HostedSyncTests(unittest.TestCase):
         git.push(o["branch"], o["candidate_sha"])
         self.g("checkout", "--detach", self.anchor)
         self.commit("replacement.txt", "rewrite after interrupted publication\n")
-        self.g("push", "--force", str(self.remotes["upstream"]), "HEAD:refs/heads/main")
+        self.g("push", "--force", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         with self.assertRaisesRegex(sync.Blocked, "not a descendant"):
             self.observe()
 
@@ -296,7 +301,7 @@ class HostedSyncTests(unittest.TestCase):
     def advance_divergent_refs(self, old_upstream):
         self.g("checkout", "--detach", self.anchor)
         downstream = self.commit("downstream.txt", "current downstream\n")
-        self.g("push", str(self.remotes["origin"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["origin"]), f"HEAD:{sync.DOWNSTREAM_REF}")
         self.g("checkout", "--detach", old_upstream)
         upstream = self.upstream("current-upstream.txt", "current upstream\n")
         return downstream, upstream
@@ -337,7 +342,7 @@ class HostedSyncTests(unittest.TestCase):
         git, observation = self.observe()
         first = self.pr(observation)
         second = {**first, "number": 124,
-                  "html_url": "https://github.com/constbogdan/Mosaic/pull/124"}
+                  "html_url": "https://github.com/constbogdan/seerr/pull/124"}
         git.run(
             "push",
             str(self.remotes["origin"]),
@@ -378,7 +383,7 @@ class HostedSyncTests(unittest.TestCase):
         self.assertFalse(retry.pushes or self.github.created)
         summary = sync.upstream_summary(result, publication=True)
         self.assertIn("### Candidate ready", summary)
-        self.assertIn("PR #123  [open](https://github.com/constbogdan/Mosaic/pull/123)", summary)
+        self.assertIn("PR #123  [open](https://github.com/constbogdan/seerr/pull/123)", summary)
         self.assertIn("no duplicate was created", summary)
 
     def test_draft_pr_appearing_during_publish_remains_blocked_and_open(self):
@@ -439,7 +444,7 @@ class HostedSyncTests(unittest.TestCase):
         self.assertEqual(published_count, len(self.github.created))
         summary = sync.upstream_summary(waiting, publication=True)
         self.assertTrue(summary.startswith("## Waiting on PR #123"))
-        self.assertIn("PR #123  [open](https://github.com/constbogdan/Mosaic/pull/123)", summary)
+        self.assertIn("PR #123  [open](https://github.com/constbogdan/seerr/pull/123)", summary)
         self.assertIn("current newer upstream observation is retained", summary)
         self.assertIn("No duplicate candidate branch or PR was created", summary)
 
@@ -496,7 +501,7 @@ class HostedSyncTests(unittest.TestCase):
         old_git, old = self.observe()
         self.retain_pr(old_git, old, draft=True)
         second = {**self.github.records[0], "number": 124,
-                  "html_url": "https://github.com/constbogdan/Mosaic/pull/124"}
+                  "html_url": "https://github.com/constbogdan/seerr/pull/124"}
         old_git.run(
             "push", str(self.remotes["origin"]),
             f"{old['candidate_sha']}:refs/pull/124/head",
@@ -538,7 +543,7 @@ class HostedSyncTests(unittest.TestCase):
         self.assertNotIn("--force", git.pushes[0])
         self.assertNotIn("+", git.pushes[0][-1])
         self.assertTrue(git.pushes[0][-1].endswith(o["branch"]))
-        self.assertEqual(git.text("ls-remote", "--refs", "origin", "refs/heads/main").split()[0], self.anchor)
+        self.assertEqual(git.text("ls-remote", "--refs", "origin", sync.DOWNSTREAM_REF).split()[0], self.anchor)
 
     def test_pr_failure_retry_reuses_published_branch(self):
         self.upstream()
@@ -592,9 +597,8 @@ class HostedSyncTests(unittest.TestCase):
         self.assertNotIn('finalize-merged-episode', workflow)
         self.assertNotIn('--finalize-merged-pr', workflow)
         for part in (observe, publish):
-            self.assertIn("github.repository == 'constbogdan/Mosaic'", part)
-            self.assertNotIn("github.repository == 'constbogdan/Wholphin'", part)
-            self.assertIn("github.ref == 'refs/heads/main'", part)
+            self.assertIn("github.repository == 'constbogdan/seerr'", part)
+            self.assertIn("github.ref == 'refs/heads/downstream-main'", part)
         self.assertIn("needs.observe.outputs.outcome != 'no_delta'", publish)
         mint, execution = publish.split('      - name: Recheck exact inputs', 1)
         self.assertIn('contains(fromJSON', mint)
@@ -621,10 +625,16 @@ class HostedSyncTests(unittest.TestCase):
         self.assertIn('blocking_head: ${{ steps.observe.outputs.blocking_pr_head_sha }}', observe)
         self.assertIn('if: always()', execution)
         self.assertNotIn('MOSAIC_', workflow)
+        self.assertEqual(2, workflow.count('uses: ./.github/actions/setup'))
+        setup = (Path(__file__).resolve().parent.parent / '.github/actions/setup/action.yml').read_text()
+        self.assertIn('actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97', setup)
+        self.assertIn("python-version: '3.14'", setup)
+        for product_specific in ('setup-java', 'setup-android', 'gradle', 'ANDROID_', 'NDK_'):
+            self.assertNotIn(product_specific, setup)
 
-    def test_mosaic_repository_drives_exact_git_and_api_targets(self):
-        repository = "constbogdan/Mosaic"
-        path = self.root / "Mosaic"
+    def test_seerr_repository_drives_exact_git_and_api_targets(self):
+        repository = "constbogdan/seerr"
+        path = self.root / "seerr"
         path.mkdir()
         git = sync.Git(path, repository)
         self.assertEqual(
@@ -636,8 +646,8 @@ class HostedSyncTests(unittest.TestCase):
         with patch.object(sync, "command", return_value=completed) as command:
             self.assertEqual([], github.pages("pulls"))
         self.assertIn(f"repos/{repository}/pulls", command.call_args.args[0])
-        for repository in ("constbogdan/Wholphin", "constbogdan/Mosaic2",
-                           "constbogdan/mosaic", "other/Mosaic", "forks/Mosaic", ""):
+        for repository in ("constbogdan/Seerr", "constbogdan/seerr2",
+                           "constbogdan/SEERR", "other/seerr", "forks/seerr", ""):
             with self.subTest(repository=repository), self.assertRaises(ValueError):
                 sync.GitHub(repository)
 
@@ -658,16 +668,16 @@ class HostedSyncTests(unittest.TestCase):
         with self.assertRaisesRegex(sync.Blocked, "different work"):
             sync.publish(git, self.github, o, o["upstream_sha"], o["downstream_sha"])
 
-    def test_removed_downstream_owned_workflows_are_observed_but_remain_absent(self):
-        self.upstream(".github/workflows/main.yml", "unreviewed publisher\n")
-        self.upstream(".github/workflows/release.yml", "unreviewed tag publisher\n")
+    def test_downstream_owned_workflows_are_observed_but_remain_absent(self):
+        self.upstream(".github/workflows/downstream-image.yml", "unreviewed publisher\n")
+        self.upstream(".github/workflows/upstream-sync.yml", "unreviewed sync authority\n")
         git, observation = self.observe()
         self.assertEqual("observed_excluded", observation["outcome"])
         removed = {
             change["path"]: change for change in observation["automation_changes"]
         }
         self.assertEqual(
-            {".github/workflows/main.yml", ".github/workflows/release.yml"},
+            {".github/workflows/downstream-image.yml", ".github/workflows/upstream-sync.yml"},
             set(removed),
         )
         for change in removed.values():
@@ -678,7 +688,7 @@ class HostedSyncTests(unittest.TestCase):
         self.assertNotIn("observed but excluded", observe_summary.splitlines()[0])
         summary = sync.upstream_summary(observation, publication=True)
         self.assertTrue(summary.startswith("## 2 upstream changes · observed but excluded"))
-        self.assertIn("Mosaic state was preserved", summary)
+        self.assertIn("downstream state was preserved", summary)
         self.assertIn("DOWNSTREAM-OWNED: 2 — observed but excluded", summary)
         self.assertLess(summary.index("observed but excluded"), summary.index("<details>"))
         self.assertFalse(git.pushes)
@@ -686,41 +696,39 @@ class HostedSyncTests(unittest.TestCase):
         self.assertFalse(self.github.created)
 
     def test_owned_deletion_preserves_downstream_file_and_is_excluded(self):
-        self.commit(".github/workflows/main.yml", "owned\n")
+        self.commit(".github/workflows/downstream-image.yml", "owned\n")
         self.anchor = self.g("rev-parse", "HEAD")
-        for remote in self.remotes.values():
-            self.g("push", str(remote), "HEAD:refs/heads/main")
-        self.g("rm", ".github/workflows/main.yml")
+        self.push_both_heads()
+        self.g("rm", ".github/workflows/downstream-image.yml")
         self.g("commit", "-m", "Delete owned workflow")
-        self.g("push", str(self.remotes["upstream"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         _, observation = self.observe()
         self.assertEqual("observed_excluded", observation["outcome"])
         self.assertEqual("D", observation["automation_changes"][0]["status"])
 
     def test_owned_rename_restores_both_downstream_path_states_in_mixed_candidate(self):
-        old = ".github/workflows/mosaic-signing-exercise.yml"
-        new = ".github/workflows/mosaic-stable-promotion.yml"
+        old = ".github/workflows/downstream-image.yml"
+        new = ".github/workflows/upstream-sync.yml"
         self.commit(old, "downstream release\n")
         self.anchor = self.g("rev-parse", "HEAD")
-        for remote in self.remotes.values():
-            self.g("push", str(remote), "HEAD:refs/heads/main")
+        self.push_both_heads()
         self.g("mv", old, new)
-        self.commit("app/example.kt", "follow\n")
-        self.g("push", str(self.remotes["upstream"]), "HEAD:refs/heads/main")
+        self.commit("server/example.ts", "follow\n")
+        self.g("push", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         git, observation = self.observe()
         self.assertEqual("ready", observation["outcome"])
         self.assertEqual("downstream release", git.text("show", observation["candidate_sha"] + ":" + old))
         self.assertNotEqual(0, git.run("cat-file", "-e", observation["candidate_sha"] + ":" + new,
                                        check=False).returncode)
-        self.assertEqual("follow", git.text("show", observation["candidate_sha"] + ":app/example.kt"))
+        self.assertEqual("follow", git.text("show", observation["candidate_sha"] + ":server/example.ts"))
 
     def test_explicit_follow_and_review_policy_have_distinct_outcomes(self):
-        self.upstream(".github/actions/setup/action.yml", "follow setup\n")
+        self.upstream("server/api/servarr/base.ts", "follow source\n")
         follow_git, follow = self.observe()
         self.assertEqual("ready", follow["outcome"])
         self.assertEqual("FOLLOW", follow["automation_changes"][0]["ownership"])
-        self.assertEqual("follow setup", follow_git.text(
-            "show", follow["candidate_sha"] + ":.github/actions/setup/action.yml"))
+        self.assertEqual("follow source", follow_git.text(
+            "show", follow["candidate_sha"] + ":server/api/servarr/base.ts"))
 
         self.upstream(".github/workflows/ci.yml", "review ci\n")
         review_git, review = self.observe()
@@ -736,16 +744,16 @@ class HostedSyncTests(unittest.TestCase):
         ci = next(change for change in review["automation_changes"]
                   if change["path"] == ".github/workflows/ci.yml")
         self.assertEqual("REVIEW", ci["ownership"])
-        self.assertIn("semantic review", ci["reason"])
+        self.assertEqual("unmapped automation path defaults to REVIEW", ci["reason"])
         body = sync.description(review)
         self.assertIn("Git produced a textually clean candidate", body)
         self.assertIn("Semantic REVIEW:", body)
         self.assertNotIn("Git textual conflict:", body)
 
     def test_later_owned_change_produces_new_observed_state(self):
-        first = self.upstream(".github/workflows/main.yml", "one\n")
+        first = self.upstream(".github/workflows/downstream-image.yml", "one\n")
         _, a = self.observe()
-        second = self.upstream(".github/workflows/main.yml", "two\n")
+        second = self.upstream(".github/workflows/downstream-image.yml", "two\n")
         _, b = self.observe()
         self.assertEqual("observed_excluded", a["outcome"])
         self.assertEqual("observed_excluded", b["outcome"])
@@ -764,14 +772,13 @@ class HostedSyncTests(unittest.TestCase):
         self.assertNotIn("Tracking issue:", self.github.created[0][1])
 
     def test_rename_crossing_ownership_boundary_requires_review(self):
-        self.commit(".github/actions/setup/action.yml", "setup\n")
+        self.commit("server/example.ts", "source\n")
         self.anchor = self.g("rev-parse", "HEAD")
-        for remote in self.remotes.values():
-            self.g("push", str(remote), "HEAD:refs/heads/main")
+        self.push_both_heads()
         (self.seed / ".github/workflows").mkdir(parents=True, exist_ok=True)
-        self.g("mv", ".github/actions/setup/action.yml", ".github/workflows/main.yml")
+        self.g("mv", "server/example.ts", ".github/workflows/downstream-image.yml")
         self.g("commit", "-m", "Cross ownership boundary")
-        self.g("push", str(self.remotes["upstream"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         _, observation = self.observe()
         change = observation["automation_changes"][0]
         self.assertTrue(change["status"].startswith("R"))
@@ -779,43 +786,42 @@ class HostedSyncTests(unittest.TestCase):
         self.assertIn("crosses ownership", change["reason"])
 
     def test_mixed_changes_keep_all_ownership_evidence(self):
-        self.upstream("app/example.kt", "app\n")
+        self.upstream("server/example.ts", "app\n")
         self.upstream(".github/actions/setup/action.yml", "setup\n")
         self.upstream(".github/workflows/future.yml", "review\n")
-        self.upstream(".github/workflows/main.yml", "owned\n")
+        self.upstream(".github/workflows/downstream-image.yml", "owned\n")
         _, observation = self.observe()
         self.assertEqual("review_required", observation["outcome"])
-        self.assertEqual({"FOLLOW": 2, "REVIEW": 1, "DOWNSTREAM-OWNED": 1}, observation["ownership_counts"])
+        self.assertEqual({"FOLLOW": 1, "REVIEW": 2, "DOWNSTREAM-OWNED": 1}, observation["ownership_counts"])
         self.assertEqual(4, len(observation["automation_changes"]))
 
     def test_trusted_policy_and_schedule_contract(self):
         policy = sync.load_policy()
         self.assertEqual(1, policy["schemaVersion"])
         self.assertEqual("REVIEW", policy["defaultAutomationOwnership"])
-        self.assertEqual("DOWNSTREAM-OWNED", policy["paths"][".github/workflows/main.yml"])
-        self.assertEqual("DOWNSTREAM-OWNED", policy["paths"][".github/workflows/release.yml"])
-        self.assertEqual("FOLLOW", policy["paths"][".github/actions/setup/action.yml"])
+        self.assertEqual("DOWNSTREAM-OWNED", policy["paths"][".github/workflows/downstream-image.yml"])
+        self.assertEqual("DOWNSTREAM-OWNED", policy["paths"][".github/workflows/upstream-sync.yml"])
+        self.assertEqual("REVIEW", sync.ownership(".github/actions/setup/action.yml", policy))
         workflows = Path(__file__).resolve().parent.parent / ".github/workflows"
         self.assertFalse((workflows / "main.yml").exists())
-        self.assertFalse((workflows / "release.yml").exists())
+        self.assertTrue((workflows / "release.yml").exists())
         workflow = (Path(__file__).resolve().parent.parent / ".github/workflows/upstream-sync.yml").read_text()
         self.assertIn("cron: '0 6,15,21 * * *'", workflow)
         self.assertIn("workflow_dispatch:", workflow)
         self.assertIn("cancel-in-progress: false", workflow)
 
     def test_series_conflict_fixture_keeps_nonconflicting_context(self):
-        series = "app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt"
-        rtl = "app/src/main/java/com/github/damontecres/wholphin/ui/player/RtlControls.kt"
+        series = "server/lib/downloadtracker.ts"
+        rtl = "src/utils/refreshIntervalHelper.ts"
         self.commit(series, "base\n")
         self.anchor = self.g("rev-parse", "HEAD")
-        for remote in self.remotes.values():
-            self.g("push", str(remote), "HEAD:refs/heads/main")
+        self.push_both_heads()
         self.commit(series, "upstream duplicate search fix\n")
         self.commit(rtl, "upstream rtl\n")
-        self.g("push", str(self.remotes["upstream"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["upstream"]), f"HEAD:{sync.UPSTREAM_REF}")
         self.g("checkout", "--detach", self.anchor)
         self.commit(series, "downstream acquisition behavior\n")
-        self.g("push", str(self.remotes["origin"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["origin"]), f"HEAD:{sync.DOWNSTREAM_REF}")
         git, observation = self.observe()
         self.assertEqual("semantic_conflict", observation["outcome"])
         self.assertEqual([series], observation["conflict_paths"])
@@ -825,13 +831,13 @@ class HostedSyncTests(unittest.TestCase):
     def test_three_observations_reuse_one_native_draft_pr(self):
         self.upstream(".github/workflows/future.yml", "review\n")
         first_git, first = self.observe(observed_at="2026-09-10T00:00:00+00:00",
-                                       run_url="https://github.com/constbogdan/Wholphin/actions/runs/1")
+                                       run_url="https://github.com/constbogdan/seerr/actions/runs/1")
         sync.publish(first_git, self.github, first, first["upstream_sha"], first["downstream_sha"])
         self.retain_pr(first_git, first, draft=True, body=self.github.created[0][1])
         for hour, run in ((6, 2), (12, 3)):
             retry, observation = self.observe(
                 observed_at=f"2026-09-10T{hour:02}:00:00+00:00",
-                run_url=f"https://github.com/constbogdan/Wholphin/actions/runs/{run}")
+                run_url=f"https://github.com/constbogdan/seerr/actions/runs/{run}")
             self.assertEqual("existing_draft_pr", observation["outcome"])
             self.assertEqual(123, observation["existing_pr_number"])
             self.assertEqual(first["branch"], observation["existing_pr_branch"])
@@ -863,7 +869,7 @@ class HostedSyncTests(unittest.TestCase):
 
         self.g("checkout", "--detach", self.anchor)
         self.commit("unrelated.txt", "downstream movement\n")
-        self.g("push", str(self.remotes["origin"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["origin"]), f"HEAD:{sync.DOWNSTREAM_REF}")
         retry, observation = self.observe(observed_at="2026-09-10T06:00:00+00:00")
         self.assertNotEqual(first_branch, observation["branch"])
         self.assertEqual(first_episode, observation["episode_id"])
@@ -902,31 +908,31 @@ class HostedSyncTests(unittest.TestCase):
         )
         self.assertEqual(1, len(self.github.created))
     def test_quiet_pr_and_rich_summary_split_operator_navigation_from_provenance(self):
-        path = "app/src/SeriesViewModel.kt"
-        clean_path = "app/src/RtlControls.kt"
+        path = "server/lib/downloadtracker.ts"
+        clean_path = "src/utils/refreshIntervalHelper.ts"
         observation = {"episode_id": "a" * 64, "outcome": "review_required",
                        "downstream_repo": sync.ORIGIN,
                        "upstream_sha": "b" * 40,
-                       "downstream_sha": "c" * 40, "pr_url": "https://github.com/constbogdan/Mosaic/pull/31",
-                       "pr_number": 31, "run_url": "https://github.com/constbogdan/Mosaic/actions/runs/9",
+                       "downstream_sha": "c" * 40, "pr_url": "https://github.com/constbogdan/seerr/pull/31",
+                       "pr_number": 31, "run_url": "https://github.com/constbogdan/seerr/actions/runs/9",
                        "incoming_commits": [{"sha": "d" * 40, "subject": "Fix duplicates (#1946)",
-                                             "url": "https://github.com/damontecres/Wholphin/commit/" + "d" * 40,
+                                             "url": "https://github.com/seerr-team/seerr/commit/" + "d" * 40,
                                              "pull_request_numbers": ["1946"],
-                                             "pull_request_urls": ["https://github.com/damontecres/Wholphin/pull/1946"]}],
+                                             "pull_request_urls": ["https://github.com/seerr-team/seerr/pull/1946"]}],
                        "review_paths": [path], "conflict_paths": [path], "clean_path_count": 1,
                        "automation_changes": [{"path": path, "new_blob": "e" * 40,
                                                 "downstream_blob": "f" * 40, "ownership": "REVIEW",
-                                                "upstream_url": "https://github.com/damontecres/Wholphin/blob/" + "b" * 40 + "/" + path,
-                                                "downstream_url": "https://github.com/constbogdan/Mosaic/blob/" + "c" * 40 + "/" + path},
+                                                "upstream_url": "https://github.com/seerr-team/seerr/blob/" + "b" * 40 + "/" + path,
+                                                "downstream_url": "https://github.com/constbogdan/seerr/blob/" + "c" * 40 + "/" + path},
                                                {"path": clean_path, "new_blob": "1" * 40,
                                                 "downstream_blob": None, "ownership": "FOLLOW"}],
                        }
         body = sync.description(observation)
         self.assertIn("PR 1946", body)
         self.assertIn("<code>ddddddd</code>", body)
-        self.assertIn("<code>app/src/SeriesViewModel.kt</code>", body)
-        self.assertNotIn("github.com/damontecres", body)
-        self.assertNotIn("damontecres/Wholphin#", body)
+        self.assertIn("<code>server/lib/downloadtracker.ts</code>", body)
+        self.assertNotIn("github.com/seerr-team", body)
+        self.assertNotIn("seerr-team/seerr#", body)
         self.assertIn("1 FOLLOW path is included by the native candidate.", body)
         self.assertNotIn(clean_path, body)
         self.assertNotIn("existing_pr_url: not available", body)
@@ -945,18 +951,18 @@ class HostedSyncTests(unittest.TestCase):
         summary = sync.upstream_summary(observation, publication=True)
         self.assertTrue(summary.startswith("## 2 upstream changes · review required"))
         self.assertIn("1 path requires semantic review", summary)
-        self.assertIn("PR #31  [open](https://github.com/constbogdan/Mosaic/pull/31)", summary)
+        self.assertIn("PR #31  [open](https://github.com/constbogdan/seerr/pull/31)", summary)
         self.assertLess(summary.index("### Review required"), summary.index("1 incoming"))
         self.assertIn("Semantic REVIEW:", summary)
         self.assertIn("Git textual conflict:", summary)
-        self.assertIn("[Current Mosaic](https://github.com/constbogdan/Mosaic/blob/", summary)
-        self.assertIn("[Incoming upstream](https://github.com/damontecres/Wholphin/blob/", summary)
+        self.assertIn("[Current downstream](https://github.com/constbogdan/seerr/blob/", summary)
+        self.assertIn("[Incoming upstream](https://github.com/seerr-team/seerr/blob/", summary)
         self.assertIn("<summary>Operator navigation</summary>", summary)
         self.assertIn("<summary>Technical details</summary>", summary)
-        self.assertIn("[PR 1946](https://github.com/damontecres/Wholphin/pull/1946)", summary)
-        self.assertIn("https://github.com/damontecres/Wholphin/commit/" + "d" * 40, summary)
-        self.assertIn("https://github.com/damontecres/Wholphin/blob/" + "b" * 40 + "/" + path, summary)
-        self.assertIn("https://github.com/constbogdan/Mosaic/blob/" + "c" * 40 + "/" + path, summary)
+        self.assertIn("[PR 1946](https://github.com/seerr-team/seerr/pull/1946)", summary)
+        self.assertIn("https://github.com/seerr-team/seerr/commit/" + "d" * 40, summary)
+        self.assertIn("https://github.com/seerr-team/seerr/blob/" + "b" * 40 + "/" + path, summary)
+        self.assertIn("https://github.com/constbogdan/seerr/blob/" + "c" * 40 + "/" + path, summary)
 
     def test_clean_follow_pr_stands_alone_without_journal(self):
         self.upstream("app/example.kt", "clean\n")
@@ -964,7 +970,7 @@ class HostedSyncTests(unittest.TestCase):
         sync.publish(git, self.github, observation,
                      observation["upstream_sha"], observation["downstream_sha"])
         self.assertEqual("pr_created", observation["outcome"])
-        self.assertNotIn("github.com/damontecres", self.github.created[0][1])
+        self.assertNotIn("github.com/seerr-team", self.github.created[0][1])
         self.assertNotIn(observation["upstream_sha"][:12], self.github.created[0][3])
         self.assertNotIn("Tracking issue:", self.github.created[0][1])
 
@@ -973,9 +979,9 @@ class HostedSyncTests(unittest.TestCase):
         _, observation = self.observe()
         commit = observation["incoming_commits"][0]
         change = observation["automation_changes"][0]
-        self.assertEqual("https://github.com/damontecres/Wholphin/commit/" + commit["sha"],
+        self.assertEqual("https://github.com/seerr-team/seerr/commit/" + commit["sha"],
                          commit["url"])
-        self.assertEqual("https://github.com/damontecres/Wholphin/blob/" +
+        self.assertEqual("https://github.com/seerr-team/seerr/blob/" +
                          observation["upstream_sha"] + "/.github/workflows/future.yml",
                          change["upstream_url"])
         self.assertIn(commit["url"], json.dumps(observation))
@@ -983,8 +989,8 @@ class HostedSyncTests(unittest.TestCase):
 
     def test_body_escapes_external_markup_and_mentions(self):
         unsafe = "line-one#1946@team\n## injected"
-        subject = ("Fixes damontecres/Wholphin#1946 and #1947 "
-                   "https://github.com/damontecres/Wholphin/pull/1948 <script>@everyone</script>")
+        subject = ("Fixes seerr-team/seerr#1946 and #1947 "
+                   "https://github.com/seerr-team/seerr/pull/1948 <script>@everyone</script>")
         body = sync.description({"incoming_commits": [{"sha": "a" * 40, "subject": subject}],
                                  "review_paths": [unsafe],
                                  "automation_changes": [{"path": unsafe, "new_blob": "a" * 40,
@@ -993,8 +999,8 @@ class HostedSyncTests(unittest.TestCase):
         self.assertNotIn("<script>", body)
         self.assertNotIn("@everyone", body)
         self.assertNotIn("\n## injected", body)
-        self.assertNotIn("github.com/damontecres", body)
-        self.assertNotIn("damontecres/Wholphin#", body)
+        self.assertNotIn("github.com/seerr-team", body)
+        self.assertNotIn("seerr-team/seerr#", body)
         self.assertNotIn("#1947", body)
         for number in ("1946", "1947", "1948"):
             self.assertIn("PR " + number, body)
@@ -1032,11 +1038,11 @@ class HostedSyncTests(unittest.TestCase):
         with patch.dict(os.environ, {"GH_TOKEN": "read-only-repository-token"}), patch.object(sync, "command") as run:
             run.return_value.stdout = "[]"
             github.pulls()
-            github.api("repos/constbogdan/Wholphin/issues", {"title": "blocked"})
+            github.api("repos/constbogdan/seerr/issues", {"title": "blocked"})
             for call in run.call_args_list:
                 self.assertEqual(call.kwargs["env"]["GH_TOKEN"], "read-only-repository-token")
                 self.assertNotIn("SYNC_PUBLISH_TOKEN", call.kwargs["env"])
-            run.return_value.stdout = '{"html_url": "https://github.com/constbogdan/Wholphin/pull/1"}'
+            run.return_value.stdout = '{"html_url": "https://github.com/constbogdan/seerr/pull/1"}'
             github.create_pr(sync.branch_name("a" * 40, "b" * 40), "fixture")
             self.assertEqual(run.call_args.kwargs["env"]["GH_TOKEN"], "fixture-only-never-sent")
             self.assertNotIn("SYNC_PUBLISH_TOKEN", run.call_args.kwargs["env"])
@@ -1047,7 +1053,7 @@ class HostedSyncTests(unittest.TestCase):
         github = sync.GitHub()
         with patch.dict(os.environ, {"GH_TOKEN": "read-only", "SYNC_PUBLISH_TOKEN": token}), \
                 patch.object(sync, "command") as run:
-            run.return_value.stdout = '{"html_url":"https://github.com/constbogdan/Wholphin/pull/1"}'
+            run.return_value.stdout = '{"html_url":"https://github.com/constbogdan/seerr/pull/1"}'
             github.create_pr(sync.branch_name("a" * 40, "b" * 40), "fixture")
             self.assertEqual(run.call_args.kwargs["env"]["GH_TOKEN"], token)
             self.assertNotIn("SYNC_PUBLISH_TOKEN", run.call_args.kwargs["env"])
@@ -1085,7 +1091,7 @@ class HostedSyncTests(unittest.TestCase):
             "! [rejected] candidate -> candidate (non-fast-forward)": "non-fast-forward",
             "remote: error: GH006: Protected branch update failed": "Protected branch update failed",
             "remote: Repository not found.": "Repository not found",
-            "fatal: Authentication failed for 'https://github.com/constbogdan/Wholphin.git/'":
+            "fatal: Authentication failed for 'https://github.com/constbogdan/seerr.git/'":
                 "Authentication failed",
             "fatal: unable to access repository: Could not resolve host: github.com":
                 "Could not resolve host",
@@ -1101,19 +1107,19 @@ class HostedSyncTests(unittest.TestCase):
         failed = subprocess.CompletedProcess(
             ["git", "fetch"], 1,
             "fatal: unable to access 'https://x-access-token:" + token
-            + "@github.com/constbogdan/Wholphin.git/': authorization failed",
-            "Authorization: Basic c2VjcmV0\nremote repository github.com/constbogdan/Wholphin unavailable",
+            + "@github.com/constbogdan/seerr.git/': authorization failed",
+            "Authorization: Basic c2VjcmV0\nremote repository github.com/constbogdan/seerr unavailable",
         )
         with patch.dict(os.environ, {"SYNC_PUBLISH_TOKEN": token}), \
                 patch.object(sync.subprocess, "run", return_value=failed), \
                 self.assertRaises(sync.OperationError) as error:
-            sync.command(["git", "fetch", "origin", "main"], env={"GH_TOKEN": token})
+            sync.command(["git", "fetch", "origin", sync.PROTECTED_BRANCH], env={"GH_TOKEN": token})
         diagnostic = str(error.exception)
         self.assertNotIn(token, diagnostic)
         self.assertNotIn("x-access-token", diagnostic)
         self.assertNotIn("c2VjcmV0", diagnostic)
-        self.assertIn("https://[credentials-redacted]@github.com/constbogdan/Wholphin.git/", diagnostic)
-        self.assertIn("remote repository github.com/constbogdan/Wholphin unavailable", diagnostic)
+        self.assertIn("https://[credentials-redacted]@github.com/constbogdan/seerr.git/", diagnostic)
+        self.assertIn("remote repository github.com/constbogdan/seerr unavailable", diagnostic)
 
     def test_command_diagnostic_neutralizes_presentation_and_workflow_commands(self):
         diagnostic = sync.sanitize_command_diagnostic(
@@ -1157,7 +1163,7 @@ class HostedSyncTests(unittest.TestCase):
     def test_failed_cli_records_artifact_and_publication_error_outcome(self):
         output = self.root / "blocked.json"
         runtime = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": sync.ORIGIN,
-                   "GITHUB_REF": "refs/heads/main", "GITHUB_EVENT_NAME": "workflow_dispatch",
+                   "GITHUB_REF": sync.DOWNSTREAM_REF, "GITHUB_EVENT_NAME": "workflow_dispatch",
                    "RUNNER_TEMP": str(self.root), "GITHUB_STEP_SUMMARY": str(self.root / "summary.md"),
                    "GITHUB_OUTPUT": str(self.root / "outputs")}
         def conflict(git, gh, observation):
@@ -1175,7 +1181,7 @@ class HostedSyncTests(unittest.TestCase):
         summary = (self.root / "summary.md").read_text()
         self.assertIn("## Upstream publication failed", summary)
         self.assertIn("No candidate PR was confirmed", summary)
-        self.assertIn("Candidate branch  [inspect](https://github.com/constbogdan/Mosaic/tree/",
+        self.assertIn("Candidate branch  [inspect](https://github.com/constbogdan/seerr/tree/",
                       summary)
         self.assertIn("inspect the outcome artifact and branch before rerunning", summary)
         self.assertIn("permission_denied: fixture publication failed", summary)
@@ -1187,7 +1193,7 @@ class HostedSyncTests(unittest.TestCase):
         runtime = {
             "GITHUB_ACTIONS": "true",
             "GITHUB_REPOSITORY": sync.ORIGIN,
-            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_REF": sync.DOWNSTREAM_REF,
             "GITHUB_EVENT_NAME": "workflow_dispatch",
             "RUNNER_TEMP": str(self.root),
             "GITHUB_STEP_SUMMARY": str(summary),
@@ -1199,7 +1205,7 @@ class HostedSyncTests(unittest.TestCase):
             "::error::forged\n! [remote rejected] workflow update lacks permission "
             + token + "\n" + "x" * 2000,
             "\x1b[31mremote: https://x-access-token:" + token
-            + "@github.com/constbogdan/Wholphin.git rejected\x1b[0m",
+            + "@github.com/constbogdan/seerr.git rejected\x1b[0m",
         )
         with patch.dict(os.environ, runtime), patch.object(sync.subprocess, "run", return_value=failed):
             with self.assertRaises(sync.OperationError) as captured:
@@ -1218,7 +1224,7 @@ class HostedSyncTests(unittest.TestCase):
         self.assertNotIn("x-access-token", surfaces)
         self.assertNotIn("::error::", surfaces)
         self.assertNotIn("\x1b", surfaces)
-        self.assertIn("github.com/constbogdan/Wholphin.git", surfaces)
+        self.assertIn("github.com/constbogdan/seerr.git", surfaces)
         self.assertIn("[remote rejected] workflow update lacks permission", surfaces)
         self.assertIn(sync.DIAGNOSTIC_TRUNCATION, surfaces)
         self.assertEqual("publication_error", json.loads(output.read_text())["outcome"])
@@ -1235,7 +1241,7 @@ class HostedSyncTests(unittest.TestCase):
         runtime.update({
             "GITHUB_ACTIONS": "true",
             "GITHUB_REPOSITORY": sync.ORIGIN,
-            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_REF": sync.DOWNSTREAM_REF,
             "GITHUB_EVENT_NAME": "workflow_dispatch",
             "RUNNER_TEMP": str(self.root),
             "GITHUB_OUTPUT": str(self.root / "waiting-outputs"),
@@ -1262,7 +1268,7 @@ class HostedSyncTests(unittest.TestCase):
                 ownership_counts={"FOLLOW": 1, "REVIEW": 0, "DOWNSTREAM-OWNED": 0},
                 ancestry_validated=True,
                 blocking_pr_number=123,
-                blocking_pr_url="https://github.com/constbogdan/Mosaic/pull/123",
+                blocking_pr_url="https://github.com/constbogdan/seerr/pull/123",
                 blocking_pr_head_sha=blocker_head,
                 blocking_pr_branch=sync.branch_name("1" * 40, "2" * 40),
                 blocking_upstream_sha="1" * 40,
@@ -1304,7 +1310,7 @@ class HostedSyncTests(unittest.TestCase):
     def test_upstream_contained_after_accepted_merge_no_new_pr(self):
         self.upstream()
         git, o = self.observe()
-        git.run("push", str(self.remotes["origin"]), o["candidate_sha"] + ":refs/heads/main")
+        git.run("push", str(self.remotes["origin"]), o["candidate_sha"] + ":" + sync.DOWNSTREAM_REF)
         _, result = self.observe()
         self.assertEqual(result["outcome"], "no_delta")
 
@@ -1313,7 +1319,7 @@ class HostedSyncTests(unittest.TestCase):
         git, observation = self.observe()
         stale = sync.branch_name(upstream, self.anchor)
         git.run("push", str(self.remotes["origin"]), self.anchor + ":refs/heads/" + stale)
-        git.run("push", str(self.remotes["origin"]), observation["candidate_sha"] + ":refs/heads/main")
+        git.run("push", str(self.remotes["origin"]), observation["candidate_sha"] + ":" + sync.DOWNSTREAM_REF)
 
         _, result = self.observe()
 
@@ -1336,7 +1342,7 @@ class HostedSyncTests(unittest.TestCase):
         _, first = self.observe()
         self.g("checkout", "--detach", self.anchor)
         self.commit("downstream-moved.txt", "movement\n")
-        self.g("push", str(self.remotes["origin"]), "HEAD:refs/heads/main")
+        self.g("push", str(self.remotes["origin"]), f"HEAD:{sync.DOWNSTREAM_REF}")
         current_git, current = self.observe()
         with self.assertRaisesRegex(sync.Blocked, "Refs changed"):
             sync.publish(

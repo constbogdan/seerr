@@ -19,23 +19,27 @@ import unicodedata
 from urllib.parse import quote
 
 from mosaic_repository import (
-    MOSAIC_DOWNSTREAM_REPOSITORY,
+    PROTECTED_BRANCH,
+    SEERR_DOWNSTREAM_REPOSITORY,
     UPSTREAM_REPOSITORY,
     authenticate_downstream_repository,
 )
 
 
-ORIGIN = MOSAIC_DOWNSTREAM_REPOSITORY
+ORIGIN = SEERR_DOWNSTREAM_REPOSITORY
 UPSTREAM = UPSTREAM_REPOSITORY
+UPSTREAM_BRANCH = "develop"
+DOWNSTREAM_REF = f"refs/heads/{PROTECTED_BRANCH}"
+UPSTREAM_REF = f"refs/heads/{UPSTREAM_BRANCH}"
 URLS = {"origin": f"https://github.com/{ORIGIN}.git",
         "upstream": f"https://github.com/{UPSTREAM}.git"}
 # Reviewed, already integrated official upstream commit at implementation time.
-INITIAL_ANCHOR = "1778bdb34caa699c0590232a7de709a889839765"
+INITIAL_ANCHOR = "794743a45f17e3d6aba06d68e1716e8b15146673"
 PREFIX = "chore/sync-upstream-"
 BRANCH = re.compile(re.escape(PREFIX) + r"([0-9a-f]{40})-([0-9a-f]{40})$")
 POLICY_PATH = Path(__file__).with_name("upstream_ownership_policy.json")
 OWNERSHIP = {"FOLLOW", "REVIEW", "DOWNSTREAM-OWNED"}
-EPISODE_MARKER = re.compile(r"<!-- wholphin-upstream-episode:([0-9a-f]{64}) -->")
+EPISODE_MARKER = re.compile(r"<!-- seerr-upstream-episode:([0-9a-f]{64}) -->")
 ANSI_CSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 ANSI_OSC = re.compile(r"\x1b\].*?(?:\x07|\x1b\\)", re.DOTALL)
 CREDENTIAL_URL = re.compile(r"(?i)\b(https?://)[^\s/@]+@")
@@ -226,7 +230,7 @@ def finalize_attention(git, observation, base, upstream):
 
 def episode_marker(observation):
     episode = observation.get("episode_id")
-    return f"<!-- wholphin-upstream-episode:{episode} -->" if episode else ""
+    return f"<!-- seerr-upstream-episode:{episode} -->" if episode else ""
 
 
 def pull_episode(pull):
@@ -288,13 +292,13 @@ def attention_evidence(observation, *, rich_upstream=False):
             upstream_side = (f"[Incoming upstream]({blob_url(UPSTREAM, observation.get('upstream_sha'), path)})"
                              if change.get("new_blob") else "incoming upstream absent")
             if change.get("downstream_blob"):
-                downstream_side = f"[Current Mosaic]({blob_url(downstream_repository(observation), observation.get('downstream_sha'), path)})"
+                downstream_side = f"[Current downstream]({blob_url(downstream_repository(observation), observation.get('downstream_sha'), path)})"
             elif change.get("downstream_old_blob") and change.get("counterpart"):
                 counterpart = change["counterpart"]
-                downstream_side = (f"[Current Mosaic prior path]({blob_url(downstream_repository(observation), observation.get('downstream_sha'), counterpart)}) "
+                downstream_side = (f"[Current downstream prior path]({blob_url(downstream_repository(observation), observation.get('downstream_sha'), counterpart)}) "
                                    f"<code>{display_text(counterpart)}</code>")
             else:
-                downstream_side = "current Mosaic absent"
+                downstream_side = "current downstream absent"
             rendered_path += f" · {downstream_side} | {upstream_side}"
         lines.append(f"- {rendered_path}")
         if path in conflict_paths:
@@ -387,7 +391,7 @@ def human_evidence(observation, *, rich_upstream=False, include_technical=True,
         if marker:
             lines += ["", marker]
         if observation.get("upstream_sha") and observation.get("ancestry_validated"):
-            lines += ["", f"<!-- wholphin-upstream-observed:{observation['upstream_sha']} -->"]
+            lines += ["", f"<!-- seerr-upstream-observed:{observation['upstream_sha']} -->"]
     return "\n".join(lines) + "\n"
 
 
@@ -453,7 +457,7 @@ def upstream_summary(observation, *, publication=False, operation_error=False):
         }.get(outcome, 'Upstream check complete')
         action = {
             'no_delta': 'No action is required. The existing UTC schedule will check again automatically.',
-            'observed_excluded': ('Downstream-owned changes were observed but excluded; Mosaic state was preserved. '
+            'observed_excluded': ('Downstream-owned changes were observed but excluded; downstream state was preserved. '
                                   'No candidate is required.'),
             'ready': 'No paths require attention. Candidate publication will run next.',
             'review_required': (f'{attention_count} path{"s" if attention_count != 1 else ""} {attention_verb} review. '
@@ -684,16 +688,16 @@ class GitHub:
         return [item for page in json.loads(output) for item in page]
 
     def pulls(self):
-        return self.pages("pulls?state=all&base=main&per_page=100")
+        return self.pages(f"pulls?state=all&base={PROTECTED_BRANCH}&per_page=100")
 
     def create_pr(self, branch, body, *, draft=False, title=None):
         return self.api(f"repos/{self.repository}/pulls", {
-            "head": branch, "base": "main", "title": title or "chore: synchronize official upstream",
+            "head": branch, "base": PROTECTED_BRANCH, "title": title or "chore: synchronize official upstream",
             "body": body, "maintainer_can_modify": False, "draft": draft}, publish=True)["html_url"]
 
 def sync_pulls(pulls, repository=ORIGIN):
     repository = authenticate_downstream_repository(repository)
-    return [p for p in pulls if p["base"]["ref"] == "main"
+    return [p for p in pulls if p["base"]["ref"] == PROTECTED_BRANCH
             and p["base"]["repo"]["full_name"] == repository
             and p["head"].get("repo")
             and p["head"]["repo"]["full_name"] == repository
@@ -808,18 +812,18 @@ def existing_candidate(git, pulls, observation, candidate, policy_version):
 
 def inspect(git, github, observation, anchor=INITIAL_ANCHOR):
     git.identities()
-    git.fetch("origin", "refs/heads/main", "refs/remotes/origin/main")
-    git.fetch("upstream", "refs/heads/main", "refs/remotes/upstream/main")
-    down = git.text("rev-parse", "refs/remotes/origin/main")
-    up = git.text("rev-parse", "refs/remotes/upstream/main")
+    git.fetch("origin", DOWNSTREAM_REF, f"refs/remotes/origin/{PROTECTED_BRANCH}")
+    git.fetch("upstream", UPSTREAM_REF, f"refs/remotes/upstream/{UPSTREAM_BRANCH}")
+    down = git.text("rev-parse", f"refs/remotes/origin/{PROTECTED_BRANCH}")
+    up = git.text("rev-parse", f"refs/remotes/upstream/{UPSTREAM_BRANCH}")
     policy = load_policy()
     observation.update(upstream_sha=up, downstream_sha=down, branch=branch_name(up, down),
                        ownership_policy_version=policy["schemaVersion"])
     if not git.ancestor(anchor, down):
-        raise Blocked("Downstream no longer contains the reviewed initial upstream anchor; inspect main history.")
+        raise Blocked("Downstream no longer contains the reviewed initial upstream anchor; inspect protected-branch history.")
     # Native ancestry is the canonical accepted-range fact. Historical candidate
     # Historical candidate branches are irrelevant once current upstream is
-    # already contained by current downstream main.
+    # already contained by the current protected downstream branch.
     if git.ancestor(up, down):
         observation.update(outcome="no_delta", comparison_baseline=up, upstream_base_sha=up,
                            incoming_count=0, incoming_commits=[], changed_paths=[], conflict_paths=[])
@@ -958,7 +962,7 @@ def inspect(git, github, observation, anchor=INITIAL_ANCHOR):
     observation["review_paths"] = review
     timestamp = max(int(git.text("show", "-s", "--format=%ct", s)) for s in (up, down))
     git.env.update(GIT_AUTHOR_DATE=f"{timestamp} +0000", GIT_COMMITTER_DATE=f"{timestamp} +0000")
-    message = f"Merge official upstream {up} into downstream {down}\n\nWholphin-Upstream: {up}\nWholphin-Downstream: {down}\n"
+    message = f"Merge official upstream {up} into downstream {down}\n\nSeerr-Upstream: {up}\nSeerr-Downstream: {down}\n"
     candidate = native_merge_candidate(git, down, up, tree, message)
     observation.update(candidate_sha=candidate, candidate_tree=tree,
                        candidate_parents=[down, up],
@@ -1013,9 +1017,10 @@ def publish(git, github, observation, expected_up, expected_down,
         raise OperationError("Publication App token unavailable. Check SYNC_BOT_CLIENT_ID and SYNC_BOT_PRIVATE_KEY for the approved repository-scoped App and rerun; no branch was pushed.")
     git.identities()
     for remote, expected in (("origin", expected_down), ("upstream", expected_up)):
-        actual = git.text("ls-remote", "--refs", remote, "refs/heads/main").split()
+        ref = DOWNSTREAM_REF if remote == "origin" else UPSTREAM_REF
+        actual = git.text("ls-remote", "--refs", remote, ref).split()
         if not actual or actual[0] != expected:
-            raise Blocked("Main ref moved immediately before publication; rerun without overwriting history.")
+            raise Blocked("Protected or upstream ref moved immediately before publication; rerun without overwriting history.")
     branch, candidate = observation["branch"], observation["candidate_sha"]
     current = git.text("ls-remote", "--refs", "origin", "refs/heads/" + branch).split()
     if current and current[0] != candidate:
@@ -1086,7 +1091,7 @@ def description(o):
 
     lines += ["", "## What is intentionally preserved downstream?", ""]
     if preserved:
-        lines += [f"{len(preserved)} DOWNSTREAM-OWNED path{'s' if len(preserved) != 1 else ''} retain Mosaic semantics:", ""]
+        lines += [f"{len(preserved)} DOWNSTREAM-OWNED path{'s' if len(preserved) != 1 else ''} retain downstream semantics:", ""]
         lines += [f"- <code>{display_text(change.get('path', 'unknown'))}</code>"
                   for change in preserved]
     else:
@@ -1113,7 +1118,7 @@ def description(o):
     if marker:
         lines += ["", marker]
     if o.get("upstream_sha") and o.get("ancestry_validated"):
-        lines += ["", f"<!-- wholphin-upstream-observed:{o['upstream_sha']} -->"]
+        lines += ["", f"<!-- seerr-upstream-observed:{o['upstream_sha']} -->"]
     body = "\n".join(lines)
     # Full structured evidence remains in the retained observation artifact. The
     # bounded technical section keeps durable identity without making it the
@@ -1136,8 +1141,8 @@ def main():
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     raw_repository = os.environ.get("GITHUB_REPOSITORY", "")
-    o = {"schema_version": 2, "upstream_repo": UPSTREAM, "upstream_ref": "refs/heads/main",
-         "downstream_repo": raw_repository, "downstream_ref": "refs/heads/main",
+    o = {"schema_version": 2, "upstream_repo": UPSTREAM, "upstream_ref": UPSTREAM_REF,
+         "downstream_repo": raw_repository, "downstream_ref": DOWNSTREAM_REF,
          "observed_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
          "configured_schedule_utc": os.environ.get("CONFIGURED_SCHEDULE") or "manual",
          "workflow": os.environ.get("GITHUB_WORKFLOW"), "run_id": os.environ.get("GITHUB_RUN_ID"),
@@ -1156,11 +1161,11 @@ def main():
         o["downstream_repo"] = repository
         o["run_url"] = f"https://github.com/{repository}/actions/runs/{os.environ.get('GITHUB_RUN_ID', '')}"
         if (os.environ.get("GITHUB_ACTIONS") != "true"
-                or os.environ.get("GITHUB_REF") != "refs/heads/main"
+                or os.environ.get("GITHUB_REF") != DOWNSTREAM_REF
                 or os.environ.get("GITHUB_EVENT_NAME") not in {"schedule", "workflow_dispatch"}):
-            raise IdentityError("Hosted execution requires the canonical downstream, main, and schedule/workflow_dispatch.")
+            raise IdentityError("Hosted execution requires the canonical downstream, protected branch, and schedule/workflow_dispatch.")
         github = GitHub(repository)
-        with tempfile.TemporaryDirectory(prefix="wholphin-sync-", dir=os.environ["RUNNER_TEMP"]) as work:
+        with tempfile.TemporaryDirectory(prefix="seerr-sync-", dir=os.environ["RUNNER_TEMP"]) as work:
             git = Git(work, repository)
             git.identities()
             inspect(git, github, o)
