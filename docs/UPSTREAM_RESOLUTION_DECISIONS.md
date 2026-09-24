@@ -1,27 +1,65 @@
 # Upstream resolution decisions
 
-This compact log preserves useful context from completed semantic reviews. Previous decisions are
-context, not authority: every future `REVIEW` path must be evaluated against its new upstream
-change, current Mosaic behavior, and the authenticated candidate evidence.
+This is the durable decision ledger for human semantic resolution of managed
+Seerr upstream Drafts. It complements the operating contract in
+[UPSTREAM_SYNC.md](UPSTREAM_SYNC.md); it does not replace machine evidence,
+Git history, PR review, or validation.
 
-## PR #106 — upstream `365f8f8`
+The copied Mosaic implementation must be adapted and validated before the first
+Seerr entry is produced. Mosaic PR numbers, paths, product rules, and historical
+decisions are not Seerr evidence and are intentionally not carried into this
+ledger.
 
-- Episode: `0d04a7ca2773ce58dd1b7f33d0d8c86be29f4f17b19d85c5e51ea5a163844916`
-- Upstream: `365f8f8adacf4dcaf7d05317917830ed3a439668`
-- Original downstream baseline: `4a6db6df866c4182576a3a9f96e3de697d5596e7`
-- `.github/workflows/main.yml` and `.github/workflows/release.yml` remain absent as
-  `DOWNSTREAM-OWNED` publication authorities.
-- `.github/workflows/pr.yml` remains absent by deliberate semantic `REVIEW`; it remains a
-  `REVIEW` path. Mosaic's `.github/workflows/ci.yml` is the canonical PR-validation authority, but
-  future upstream `pr.yml` changes remain worth reviewing for underlying CI improvements.
-- This upstream `pr.yml` changed Gradle heap from 8 GiB to 12 GiB and metaspace from 512 MiB to
-  1024 MiB. Mosaic currently uses `org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8` without an
-  explicit metaspace cap; no resource-setting change was adopted implicitly.
-- `.github/actions/setup/action.yml` retained Mosaic's explicit Android platform, Build Tools, and
-  NDK provisioning while accepting compatible upstream pinned-action digest updates.
-- `IntentService` retained upstream home/missing-item navigation and playback validation together
-  with Mosaic's dynamic application-ID playback action and legacy compatibility.
-- `HomeViewModel` retained upstream reactive user/settings loading and Mosaic acquisition-state
-  collection. Acquisition items must survive the user/settings reset and reload transition.
-- Focused regression coverage: `HomeViewModelTest`, `IntentServiceTest`,
-  `HomeAcquiringSourceTest`, and `HomeAcquiringFixturesTest`.
+## What belongs here
+
+Add one entry only after an authenticated resolver session produces a reviewed
+semantic decision. Record durable information that a future maintainer cannot
+reconstruct safely from the final diff alone:
+
+- managed PR number and episode ID;
+- exact original candidate and live pre-publication Draft head;
+- recorded `seerr-team/seerr:develop` SHA;
+- recorded and, when applicable, reconciled `downstream-main` SHA;
+- attention/conflict paths actually reviewed;
+- upstream intent and downstream behavior that had to coexist;
+- the chosen semantic result and rejected unsafe alternatives;
+- focused tests added or selected;
+- exact final parent/tree shape when reconciliation was required; and
+- remaining manual or hosted acceptance.
+
+Do not copy credentials, raw environment output, unbounded logs, temporary paths,
+or complete machine artifacts into this document. Link the managed PR or hosted
+run where durable external evidence is useful.
+
+## Required decision standard
+
+For every attention path:
+
+1. reconstruct the exact upstream intent from retained evidence and Git history;
+2. inspect current downstream behavior;
+3. preserve both when compatible;
+4. never choose ours or theirs merely because Git selected a side;
+5. retain already-integrated clean upstream changes;
+6. add or identify focused tests for behavior changed or preserved; and
+7. record why the resulting tree is semantically correct.
+
+A decision is incomplete while conflict markers remain, unrelated paths are in
+scope, required focused coverage is missing, or the final Draft ancestry cannot
+be authenticated.
+
+## Publication boundary
+
+The resolver owns the authenticated merge commit and the handoff to prepare-pr.
+It binds any semantic test-filter handoff to the exact PR number, episode, branch,
+and source-controlled test targets. A malformed, stale, foreign, or weaker
+handoff is refused.
+
+The final publication remains fast-forward-only on the same managed Draft.
+Neither this ledger nor passing tests authorize Draft readiness, auto-merge,
+direct merge, branch replacement, or force push.
+
+## Seerr resolution entries
+
+No Seerr upstream semantic resolution has been recorded in this adapted ledger
+yet. Add the first entry only from a completed authenticated Seerr resolver
+session; do not pre-populate it from Mosaic history or planning assumptions.
