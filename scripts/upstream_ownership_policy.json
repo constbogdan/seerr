@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "defaultAutomationOwnership": "REVIEW",
+  "paths": {
+    ".github/actions/mosaic-sign-apk/action.yml": "DOWNSTREAM-OWNED",
+    ".github/actions/setup/action.yml": "FOLLOW",
+    ".github/workflows/ci.yml": "REVIEW",
+    ".github/workflows/main.yml": "DOWNSTREAM-OWNED",
+    ".github/workflows/mosaic-signing-exercise.yml": "DOWNSTREAM-OWNED",
+    ".github/workflows/mosaic-stable-promotion.yml": "DOWNSTREAM-OWNED",
+    ".github/workflows/pr.yml": "REVIEW",
+    ".github/workflows/release.yml": "DOWNSTREAM-OWNED",
+    ".github/workflows/upstream-sync.yml": "DOWNSTREAM-OWNED"
+  }
+}
