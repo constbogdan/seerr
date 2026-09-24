@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
-"""Safely prepare a local I06 candidate branch for semantic resolution."""
+"""Safely prepare a managed Seerr upstream candidate for semantic resolution."""
 
 from __future__ import annotations
 
 import argparse
-from fnmatch import fnmatchcase
 import json
 import re
 import shutil
@@ -16,18 +15,20 @@ from pathlib import Path
 
 import mosaic_validation_policy
 from mosaic_repository import (
-    MOSAIC_DOWNSTREAM_REPOSITORY,
+    PROTECTED_BRANCH,
+    SEERR_DOWNSTREAM_REPOSITORY,
     UPSTREAM_REPOSITORY,
     authenticate_downstream_repository,
 )
 
 
-REPOSITORY = MOSAIC_DOWNSTREAM_REPOSITORY
+REPOSITORY = SEERR_DOWNSTREAM_REPOSITORY
 UPSTREAM = UPSTREAM_REPOSITORY
-BASE_BRANCH = "main"
+BASE_BRANCH = PROTECTED_BRANCH
+UPSTREAM_BRANCH = "develop"
 UPSTREAM_WORKFLOW_PATH = ".github/workflows/upstream-sync.yml"
 BRANCH_PREFIX = "chore/sync-upstream-"
-EPISODE = re.compile(r"<!-- wholphin-upstream-episode:([0-9a-f]{64}) -->")
+EPISODE = re.compile(r"<!-- seerr-upstream-episode:([0-9a-f]{64}) -->")
 TECHNICAL = re.compile(
     r"<details>\s*<summary>"
     r"(?:Technical evidence|Technical provenance and upstream history)"
@@ -188,7 +189,7 @@ def load_observation(runner: Runner, root: Path, pr: dict, episode: str,
     attempt = int(run.get("run_attempt") or 0)
     if not attempt:
         raise Refusal("Latest Upstream Sync run did not expose a valid attempt number.")
-    with tempfile.TemporaryDirectory(prefix="wholphin-upstream-evidence-") as directory:
+    with tempfile.TemporaryDirectory(prefix="seerr-upstream-evidence-") as directory:
         destination = Path(directory)
         artifact_name = f"upstream-outcome-{attempt}"
         downloaded = runner.run([
@@ -227,7 +228,7 @@ def load_current_reuse_observation(runner: Runner, root: Path, pr: dict, origina
     if not isinstance(runs, list):
         raise Refusal("Could not enumerate authenticated Upstream Synchronization outcomes.")
     matches = []
-    with tempfile.TemporaryDirectory(prefix="wholphin-upstream-current-") as directory:
+    with tempfile.TemporaryDirectory(prefix="seerr-upstream-current-") as directory:
         base = Path(directory)
         for run in runs:
             run_id = int(run.get("id") or 0)
@@ -251,7 +252,7 @@ def load_current_reuse_observation(runner: Runner, root: Path, pr: dict, origina
             try:
                 evidence = json.loads(evidence_file.read_text(encoding="utf-8"))
             except (OSError, json.JSONDecodeError) as error:
-                raise Refusal("A current-main upstream outcome artifact is unreadable.") from error
+                raise Refusal("A current protected-branch upstream outcome artifact is unreadable.") from error
             expected = {
                 "schema_version": 2,
                 "downstream_repo": repository,
@@ -287,7 +288,7 @@ def load_current_reuse_observation(runner: Runner, root: Path, pr: dict, origina
     if not matches:
         raise Refusal(
             "No fresh authenticated same-episode Upstream Synchronization outcome exists for "
-            "current origin/main. Run the normal Upstream Synchronization workflow and retry."
+            f"current origin/{BASE_BRANCH}. Run the normal Upstream Synchronization workflow and retry."
         )
     critical = {
         (item.get("episode_id"), item.get("downstream_sha"), item.get("upstream_sha"),
@@ -299,7 +300,7 @@ def load_current_reuse_observation(runner: Runner, root: Path, pr: dict, origina
         for item in matches
     }
     if len(critical) != 1:
-        raise Refusal("Current-main upstream outcomes disagree on resolver-critical identity.")
+        raise Refusal("Current protected-branch outcomes disagree on resolver-critical identity.")
     return max(matches, key=lambda item: int(item.get("run_id") or 0))
 
 
@@ -315,7 +316,7 @@ def checks(runner: Runner, root: Path, number: int, repository=REPOSITORY) -> di
         rows = json.loads(result.stdout or "[]")
     except json.JSONDecodeError:
         return {"status": "UNKNOWN", "name": None, "url": None}
-    preferred = next((row for row in rows if row.get("name") == "Full validation"), None)
+    preferred = next((row for row in rows if row.get("name") == "Downstream validation"), None)
     row = preferred or next((row for row in rows if row.get("bucket") in ("fail", "pending")), None)
     row = row or (rows[0] if rows else {})
     buckets = {item.get("bucket") for item in rows}
@@ -339,7 +340,7 @@ def assert_preflight(runner: Runner, root: Path, *, allow_dirty=False,
         authenticate_downstream_repository(slug(origin))
     except ValueError as error:
         raise Refusal(
-            "Expected origin constbogdan/Mosaic; "
+            f"Expected origin {REPOSITORY}; "
             f"found {slug(origin) or origin}."
         ) from error
     upstream = runner.run(["git", "remote", "get-url", "upstream"], cwd=root).stdout.strip()
@@ -365,7 +366,7 @@ def authenticated_origin(runner: Runner, root: Path) -> str:
         return authenticate_downstream_repository(slug(origin))
     except ValueError as error:
         raise Refusal(
-            "Expected origin constbogdan/Mosaic; "
+            f"Expected origin {REPOSITORY}; "
             f"found {slug(origin) or origin}."
         ) from error
 
@@ -385,7 +386,7 @@ def validate_pr(pr: dict, number: int, repository=REPOSITORY) -> str:
         raise Refusal("PR head is not the maintained downstream repository.")
     episode = marker(pr.get("body", ""))
     if not episode or not branch.startswith(BRANCH_PREFIX):
-        raise Refusal(f"PR #{number} is not a durable I06 Upstream Sync candidate.")
+        raise Refusal(f"PR #{number} is not a durable managed Upstream Sync candidate.")
     return episode
 
 
@@ -413,8 +414,8 @@ def semantic_paths(candidate: Candidate) -> set[str]:
     paths = set(observation.get("review_paths") or []) | set(observation.get("conflict_paths") or [])
     for change in observation.get("automation_changes") or []:
         path = str(change.get("path") or "")
-        production = (path.startswith("app/src/main/") or path.startswith(".github/")
-                      or path.startswith("scripts/") or path.endswith((".gradle", ".gradle.kts")))
+        production = (path.startswith(("server/", "src/", ".github/", "scripts/"))
+                      or path in {"package.json", "pnpm-lock.yaml", "Dockerfile", "seerr-api.yml"})
         ownership = change.get("ownership") in {"REVIEW", "DOWNSTREAM-OWNED"}
         if path and (production or ownership):
             paths.add(path)
@@ -438,7 +439,7 @@ def classify_dependencies(runner: Runner, root: Path, candidates: list[Candidate
     main = json_output(runner, ["gh", "api", f"repos/{repository}/git/ref/heads/{BASE_BRANCH}"], root)
     main_sha = main.get("object", {}).get("sha")
     if not main_sha:
-        raise Refusal("Could not determine authoritative downstream main SHA.")
+        raise Refusal(f"Could not determine authoritative downstream {BASE_BRANCH} SHA.")
     active = [candidate for candidate in candidates if candidate.state != "Superseded"]
     for candidate in active:
         if is_ancestor(runner, root, repository, candidate.pr["head"]["sha"], main_sha):
@@ -466,7 +467,7 @@ def classify_dependencies(runner: Runner, root: Path, candidates: list[Candidate
                 continue
             candidate.current_observation = current
             candidate.current_main = main_sha
-            candidate.state = "Ready for current-main reconciliation"
+            candidate.state = "Ready for protected-branch reconciliation"
     active = [candidate for candidate in active if candidate.state not in {"Superseded", "Dependency ambiguous"}]
     edges: dict[int, set[int]] = {int(candidate.pr["number"]): set() for candidate in active}
     for index, left in enumerate(active):
@@ -503,7 +504,7 @@ def classify_dependencies(runner: Runner, root: Path, candidates: list[Candidate
         if predecessors:
             candidate.state = f"Waiting on PR #{predecessors[0]}"
             candidate.predecessor = predecessors[0]
-        elif candidate.state == "Ready for current-main reconciliation":
+        elif candidate.state == "Ready for protected-branch reconciliation":
             continue
         elif len(active) == 1 or any(edges.values()):
             candidate.state = "Ready for resolution"
@@ -620,11 +621,12 @@ def validate_draft_extension_scope(runner: Runner, root: Path, candidate: Candid
 def authenticate_upstream_history(runner: Runner, root: Path, upstream: str) -> None:
     runner.run([
         "git", "fetch", "--quiet", "--no-tags", "upstream",
-        "refs/heads/main:refs/remotes/upstream/main",
+        f"refs/heads/{UPSTREAM_BRANCH}:refs/remotes/upstream/{UPSTREAM_BRANCH}",
     ], cwd=root)
     exists = runner.run(["git", "cat-file", "-e", upstream + "^{commit}"], cwd=root, check=False)
     ancestry = runner.run([
-        "git", "merge-base", "--is-ancestor", upstream, "refs/remotes/upstream/main"
+        "git", "merge-base", "--is-ancestor", upstream,
+        f"refs/remotes/upstream/{UPSTREAM_BRANCH}",
     ], cwd=root, check=False)
     if exists.returncode or ancestry.returncode:
         raise Refusal("Recorded upstream tip is missing or no longer belongs to current upstream history.")
@@ -694,7 +696,7 @@ def commit_native_resolution(runner: Runner, root: Path, candidate: Candidate, p
     first = first_parent or candidate.pr["head"]["sha"]
     second = candidate.observation["upstream_sha"]
     runner.run([
-        "git", "commit", "-m", f"Resolve official upstream {second} against Mosaic {first}"
+        "git", "commit", "-m", f"Resolve official upstream {second} against Seerr downstream {first}"
     ], cwd=root)
     commit = git_text(runner, root, "rev-parse", "HEAD")
     parents = git_text(runner, root, "show", "-s", "--format=%P", commit).split()
@@ -718,7 +720,7 @@ def commit_clean_reconciled_resolution(runner: Runner, root: Path, candidate: Ca
     second = candidate.observation["upstream_sha"]
     commit = runner.run(
         ["git", "commit-tree", tree, "-p", first_parent, "-p", second, "-m",
-         f"Resolve official upstream {second} against reconciled Mosaic {first_parent}"],
+         f"Resolve official upstream {second} against reconciled Seerr downstream {first_parent}"],
         cwd=root, check=True,
     )
     resolved = commit.stdout.strip()
@@ -739,22 +741,22 @@ def reconciliation_commit(runner: Runner, root: Path, candidate: Candidate) -> s
         return remote_head
     merge_head = git_text(runner, root, "rev-parse", "-q", "--verify", "MERGE_HEAD", check=False)
     if merge_head != current_main:
-        raise Refusal("Current-main reconciliation MERGE_HEAD does not match authenticated main.")
+        raise Refusal("Protected-branch reconciliation MERGE_HEAD does not match authenticated downstream head.")
     unmerged = git_text(runner, root, "diff", "--name-only", "--diff-filter=U")
     if unmerged:
         raise Refusal(
-            "Current-main reconciliation still has unresolved paths: "
+            "Protected-branch reconciliation still has unresolved paths: "
             + ", ".join(unmerged.splitlines())
         )
     runner.run(["git", "diff", "--cached", "--check"], cwd=root)
     reviewed_tree = git_text(runner, root, "write-tree")
     runner.run([
-        "git", "commit", "-m", f"Reconcile Mosaic main {current_main} into upstream Draft {remote_head}"
+        "git", "commit", "-m", f"Reconcile Seerr {BASE_BRANCH} {current_main} into upstream Draft {remote_head}"
     ], cwd=root)
     commit = git_text(runner, root, "rev-parse", "HEAD")
     parents = git_text(runner, root, "show", "-s", "--format=%P", commit).split()
     if parents != [remote_head, current_main]:
-        raise Refusal("Reconciliation commit does not have exact parents [Draft head, current main].")
+        raise Refusal("Reconciliation commit does not have exact parents [Draft head, current protected head].")
     if git_text(runner, root, "rev-parse", commit + "^{tree}") != reviewed_tree:
         raise Refusal("Reconciliation commit tree differs from the reviewed reconciliation tree.")
     return commit
@@ -772,7 +774,7 @@ def begin_main_reconciliation(runner: Runner, root: Path, candidate: Candidate) 
     ], cwd=root)
     fetched_main = git_text(runner, root, "rev-parse", f"refs/remotes/origin/{BASE_BRANCH}")
     if fetched_main != current_main:
-        raise Refusal("Current Mosaic main moved after hosted reuse evidence; reobserve and retry.")
+        raise Refusal(f"Current Seerr {BASE_BRANCH} moved after hosted reuse evidence; reobserve and retry.")
     head = git_text(runner, root, "rev-parse", "HEAD")
     if head != remote_head:
         raise Refusal("Local Draft head differs from the exact authenticated remote head.")
@@ -786,7 +788,7 @@ def begin_main_reconciliation(runner: Runner, root: Path, candidate: Candidate) 
                        cwd=root, check=False)
     merge_head = git_text(runner, root, "rev-parse", "-q", "--verify", "MERGE_HEAD", check=False)
     if merge.returncode not in (0, 1) or merge_head != current_main:
-        raise Refusal("Git could not establish the exact current-main reconciliation state.")
+        raise Refusal("Git could not establish the exact protected-branch reconciliation state.")
     return ""
 
 
@@ -794,10 +796,10 @@ def reconciliation_prompt(candidate: Candidate, runner: Runner, root: Path,
                           draft_extension_paths: list[str] | None = None) -> str:
     conflicts = git_text(runner, root, "diff", "--name-only", "--diff-filter=U").splitlines()
     lines = [
-        f"# Reconcile Mosaic main for Upstream Sync PR #{candidate.pr['number']}", "",
-        "This is the Mosaic-main reconciliation stage, not upstream semantic resolution.", "",
+        f"# Reconcile Seerr {BASE_BRANCH} for Upstream Sync PR #{candidate.pr['number']}", "",
+        f"This is the Seerr {BASE_BRANCH} reconciliation stage, not upstream semantic resolution.", "",
         f"- Remote Draft head C: `{candidate.pr['head']['sha']}`",
-        f"- Authenticated current main M: `{candidate.current_main}`", "",
+        f"- Authenticated current {BASE_BRANCH} M: `{candidate.current_main}`", "",
     ]
     if conflicts:
         lines += ["Resolve only these C + M reconciliation conflicts:", ""]
@@ -842,45 +844,49 @@ def validate_reconciliation_scope(runner: Runner, root: Path, candidate: Candida
     unexpected = sorted(reconciliation_paths - main_paths)
     if unexpected:
         raise Refusal(
-            "Current-main reconciliation contains paths outside the authenticated main delta: "
+            "Protected-branch reconciliation contains paths outside the authenticated downstream delta: "
             + ", ".join(unexpected)
         )
     return sorted(reconciliation_paths)
 
 
-def derive_filters(paths: list[str], attention: list[str]) -> list[str]:
+def _is_focused_test(path: str) -> bool:
+    normalized = path.replace("\\", "/")
+    return (normalized.startswith(("server/", "src/"))
+            and normalized.endswith((".test.ts", ".test.tsx")))
+
+
+def derive_filters(root: Path, paths: list[str], attention: list[str]) -> list[str]:
     if not paths:
         raise Refusal("No semantic-resolution changes exist; publication is not needed.")
-    production = sorted(set(path for path in paths + attention if path.startswith("app/src/main/")))
-    changed_tests = sorted(set(path for path in paths
-                               if path.startswith(("app/src/test/", "app/src/testDebug/"))))
-    production_filters, fallback = mosaic_validation_policy.focused_tests(production)
-    test_filters, _ = mosaic_validation_policy.focused_tests(changed_tests)
-    if fallback and not test_filters:
-        raise Refusal("Focused coverage is ambiguous and no supplemental changed test proves intent for: " +
-                      ", ".join(fallback))
-    filters = sorted((set(production_filters) - {mosaic_validation_policy.ALL_JVM_TESTS}) |
-                     set(test_filters))
-    if not filters:
-        raise Refusal("No meaningful focused JVM filters can be derived from the resolution scope.")
-    return filters
+    candidates = sorted(set(paths + attention))
+    production = sorted({path for path in candidates
+                         if path.startswith(("server/", "src/"))
+                         and path.endswith((".ts", ".tsx"))
+                         and not _is_focused_test(path)})
+    mapped, _ = mosaic_validation_policy.focused_tests(production, root)
+    changed_tests = {
+        mosaic_validation_policy.authenticated_test_filter(root, path, paths)
+        for path in paths if _is_focused_test(path)
+    }
+    return sorted(set(mapped) | changed_tests)
 
 
-def validate_resolution_scope(paths: list[str], attention: list[str]) -> None:
+def validate_resolution_scope(root: Path, paths: list[str], attention: list[str]) -> None:
     attention_set = set(attention)
-    attention_filters, attention_fallback = mosaic_validation_policy.focused_tests(attention)
-    changed_tests = [path for path in paths if path.startswith(("app/src/test/", "app/src/testDebug/"))]
-    if attention_fallback and not changed_tests:
-        raise Refusal("Attention scope has no deterministic focused-test mapping: " +
-                      ", ".join(attention_fallback))
+    attention_filters, _ = mosaic_validation_policy.focused_tests(attention, root)
     unrelated = []
     for path in paths:
         if path in attention_set or path == ".upstream-sync/blocked-context.json":
             continue
-        if path.startswith(("app/src/test/", "app/src/testDebug/")):
+        if _is_focused_test(path):
+            try:
+                mosaic_validation_policy.authenticated_test_filter(root, path, paths)
+            except ValueError:
+                unrelated.append(path)
             continue
-        if path.startswith("app/src/main/"):
-            mapped, fallback = mosaic_validation_policy.focused_tests([path])
+        if path.startswith(("server/", "src/")) and path.endswith((".ts", ".tsx")):
+            mapped, fallback = mosaic_validation_policy.focused_tests([path], root)
             if not fallback and set(mapped) & set(attention_filters):
                 continue
         unrelated.append(path)
@@ -889,29 +895,25 @@ def validate_resolution_scope(paths: list[str], attention: list[str]) -> None:
                       ", ".join(unrelated))
 
 
-def validate_filter_targets(root: Path, filters: list[str]) -> None:
-    classes = set()
-    for source_root in (root / "app" / "src").glob("test*"):
-        if not source_root.is_dir():
-            continue
-        for source in list(source_root.rglob("*.kt")) + list(source_root.rglob("*.java")):
-            text = source.read_text(encoding="utf-8", errors="replace")
-            package = re.search(r"^\s*package\s+([\w.]+)", text, re.M)
-            if not package:
-                continue
-            for name in re.findall(r"^\s*(?:public\s+)?(?:class|object)\s+(\w+)", text, re.M):
-                classes.add(f"{package.group(1)}.{name}")
-    unmatched = [test_filter for test_filter in filters
-                 if not any(fnmatchcase(name, test_filter) or fnmatchcase(name.split(".")[-1], test_filter)
-                            for name in classes)]
-    if unmatched:
-        raise Refusal("Focused JVM filters do not match source-controlled tests: " + ", ".join(unmatched))
+def validate_filter_targets(root: Path, filters: list[str], reviewed_paths=()) -> None:
+    try:
+        for test_filter in filters:
+            mosaic_validation_policy.authenticated_test_filter(
+                root, test_filter, reviewed_paths
+            )
+    except ValueError as error:
+        raise Refusal(str(error)) from error
 
 
-def resolution_filters(root: Path, candidate: Candidate, derived: list[str]) -> tuple[list[str], str]:
+def resolution_filters(root: Path, runner: Runner, candidate: Candidate,
+                       derived: list[str], reviewed_paths=()) -> tuple[list[str], str]:
     """Use exact semantic filters only when their candidate binding is authenticated."""
     path = root / RESOLUTION_HANDOFF
     if not path.is_file():
+        if not derived:
+            raise Refusal(
+                "No authenticated semantic test handoff or deterministic focused Seerr test exists."
+            )
         return derived, "No semantic filter handoff found; using deterministic derived filters."
     try:
         handoff = json.loads(path.read_text(encoding="utf-8"))
@@ -923,6 +925,8 @@ def resolution_filters(root: Path, candidate: Candidate, derived: list[str]) -> 
         "pr_number": int(candidate.pr["number"]),
         "episode_id": marker(candidate.pr.get("body", "")),
         "branch": candidate.pr["head"]["ref"],
+        "head_sha": candidate.pr["head"]["sha"],
+        "reviewed_source_sha": git_text(runner, root, "rev-parse", "HEAD"),
     }
     mismatched = [key for key, value in expected.items() if handoff.get(key) != value]
     if mismatched:
@@ -938,7 +942,7 @@ def resolution_filters(root: Path, candidate: Candidate, derived: list[str]) -> 
             "Semantic filter handoff would weaken deterministic coverage; missing: "
             + ", ".join(missing)
         )
-    validate_filter_targets(root, filters)
+    validate_filter_targets(root, filters, reviewed_paths)
     return filters, f"Authenticated semantic filter handoff: {RESOLUTION_HANDOFF.as_posix()}"
 
 
@@ -990,11 +994,11 @@ def select_candidate(candidates: list[Candidate], requested: int | None, input_f
     print(render_candidates(candidates))
     selectable = [candidate for candidate in candidates
                   if candidate.state in {"Ready for resolution", "Independent",
-                                         "Ready for current-main reconciliation"}]
+                                         "Ready for protected-branch reconciliation"}]
     if requested is not None:
         matches = [candidate for candidate in candidates if int(candidate.pr["number"]) == requested]
         if len(matches) != 1:
-            raise Refusal(f"Open I06 candidate PR #{requested} was not found.")
+            raise Refusal(f"Open managed Upstream Sync candidate PR #{requested} was not found.")
         chosen = matches[0]
     else:
         default_index = candidates.index(selectable[0]) + 1 if len(selectable) == 1 else None
@@ -1042,11 +1046,11 @@ def publication_phase(root: Path, runner: Runner, candidate: Candidate, input_fn
                 output.write_text(
                     prompt(
                         int(candidate.pr["number"]), candidate.pr, candidate.observation,
-                        candidate.ci, "Current main reconciled; upstream resolution active",
+                        candidate.ci, "Protected branch reconciled; upstream resolution active",
                     ),
                     encoding="utf-8", newline="\n",
                 )
-                print("Current-main reconciliation authenticated. Upstream semantic resolution is now active.")
+                print("Protected-branch reconciliation authenticated. Upstream semantic resolution is now active.")
                 print(f"Review `{output.relative_to(root).as_posix()}`, resolve upstream semantics, then rerun.")
                 return
         if merge_head == candidate.observation.get("upstream_sha"):
@@ -1055,16 +1059,16 @@ def publication_phase(root: Path, runner: Runner, candidate: Candidate, input_fn
                 raise Refusal("Active upstream resolution is not based on exact reconciliation B=[C,M].")
             resolution_first_parent = head
         elif merge_head:
-            raise Refusal("Active merge does not match current-main or recorded-upstream identity.")
+            raise Refusal("Active merge does not match protected-branch or recorded-upstream identity.")
         elif head == candidate.pr["head"]["sha"]:
             reconciled = begin_main_reconciliation(runner, root, candidate)
             if not reconciled:
-                print("Current-main reconciliation started. Review it before upstream resolution.")
+                print("Protected-branch reconciliation started. Review it before upstream resolution.")
                 return
             resolution_first_parent = reconciled
             if native_conflict:
                 begin_native_resolution(runner, root, candidate, resolution_first_parent)
-                print("Current main is already contained. Upstream semantic resolution is now active.")
+                print("Current protected branch is already contained. Upstream semantic resolution is now active.")
                 return
         else:
             parents = git_text(runner, root, "show", "-s", "--format=%P", head).split()
@@ -1085,10 +1089,12 @@ def publication_phase(root: Path, runner: Runner, candidate: Candidate, input_fn
         runner, root, candidate, resolution_first_parent
     )
     upstream_paths = sorted(set(paths) - set(reconciliation_paths))
-    validate_resolution_scope(upstream_paths, attention)
-    derived_filters = derive_filters(paths, attention)
-    validate_filter_targets(root, derived_filters)
-    filters, filter_source = resolution_filters(root, candidate, derived_filters)
+    validate_resolution_scope(root, upstream_paths, attention)
+    derived_filters = derive_filters(root, paths, attention)
+    validate_filter_targets(root, derived_filters, paths)
+    filters, filter_source = resolution_filters(
+        root, runner, candidate, derived_filters, paths
+    )
     print("\nPublication plan")
     print(f"PR: #{candidate.pr['number']} (same Draft)")
     print("Changes:")
@@ -1127,18 +1133,20 @@ def publication_phase(root: Path, runner: Runner, candidate: Candidate, input_fn
         if (current.current_main != candidate.current_main
                 or any(current.current_observation.get(key) != candidate.current_observation.get(key)
                        for key in keys)):
-            raise Refusal("Fresh current-main reuse evidence changed after review began.")
+            raise Refusal("Fresh protected-branch reuse evidence changed after review began.")
     verify_local_descendant(runner, root, current)
     current_paths = resolution_paths(runner, root, current.pr["head"]["sha"])
     current_reconciliation_paths = validate_reconciliation_scope(
         runner, root, current, resolution_first_parent
     )
     validate_resolution_scope(
-        sorted(set(current_paths) - set(current_reconciliation_paths)), attention
+        root, sorted(set(current_paths) - set(current_reconciliation_paths)), attention
     )
-    current_derived_filters = derive_filters(current_paths, attention)
-    validate_filter_targets(root, current_derived_filters)
-    current_filters, _ = resolution_filters(root, current, current_derived_filters)
+    current_derived_filters = derive_filters(root, current_paths, attention)
+    validate_filter_targets(root, current_derived_filters, current_paths)
+    current_filters, _ = resolution_filters(
+        root, runner, current, current_derived_filters, current_paths
+    )
     if current_paths != paths or current_filters != filters:
         raise Refusal("Resolution scope or focused-test plan changed after approval; rerun and review it.")
     if native_conflict:
@@ -1190,14 +1198,14 @@ def prompt(number: int, pr: dict, observation: dict, ci: dict,
     workspace = ("The resolver has authenticated its deterministic blocked workspace and started a real "
                  "merge of the exact recorded upstream tip. Resolve the active merge semantically; its "
                  "first parent will remain the exact remote Draft candidate, which is itself bound to the "
-                 "recorded Mosaic baseline." if observation.get("conflict_paths") else
+                 "recorded Seerr downstream baseline." if observation.get("conflict_paths") else
                  "This textually clean REVIEW candidate already has native upstream ancestry. Inspect and "
                  "adjust its semantics only where review proves that necessary.")
     return f"""# Resolve Upstream Sync PR #{number}
 
 Resolve the currently checked-out Upstream Sync candidate for PR #{number}.
 
-This branch was created by I06. {workspace}
+This branch was created by hosted Upstream Synchronization. {workspace}
 
 Do not interpret the absence of Git conflict markers as proof that the semantic
 integration is complete.
@@ -1225,20 +1233,21 @@ Cleanly integrated paths: {int(observation.get('clean_path_count') or 0)}
 For every attention path:
 
 1. Reconstruct the exact upstream intent from the recorded evidence and Git history.
-2. Inspect current Mosaic behavior.
+2. Inspect current Seerr downstream behavior.
 3. Preserve both where compatible.
 4. Never blindly choose ours or theirs.
 5. Preserve already-integrated clean upstream changes.
-6. Preserve Enhanced Wholphin OFF behavior.
-7. Preserve Mosaic acquisition, Series, and Downloads behavior where applicable.
-8. Add or update tests where behavior changes.
+6. Preserve existing downstream behavior outside the authenticated attention scope.
+7. Preserve Seerr behavior already integrated cleanly where compatible.
+8. Add or update focused Seerr tests where behavior changes.
 
 Start with compile/runtime blockers exposed by CI, then resolve the remaining
 attention paths semantically. Inspect the linked run when bounded failure evidence
 is unavailable. Run focused validation as you work.
 
 Write `{RESOLUTION_HANDOFF.as_posix()}` as schema-version 1 JSON containing the
-current PR number, episode ID, branch, and exact meaningful JVM test filters:
+current PR number, episode ID, branch, live Draft head, reviewed source head, and
+exact meaningful Seerr test paths:
 
 ```json
 {{
@@ -1246,7 +1255,9 @@ current PR number, episode ID, branch, and exact meaningful JVM test filters:
   "pr_number": {number},
   "episode_id": "{marker(pr.get('body', ''))}",
   "branch": "{pr.get('head', {}).get('ref', '')}",
-  "test_filters": ["fully.qualified.TestClass"]
+  "head_sha": "{pr.get('head', {}).get('sha', '')}",
+  "reviewed_source_sha": "<exact local HEAD shown by git rev-parse HEAD>",
+  "test_filters": ["server/path/Behavior.test.ts"]
 }}
 ```
 
@@ -1254,7 +1265,7 @@ Derive filters from behavior actually changed or preserved and prefer the
 narrowest meaningful existing or newly added tests. The resolver authenticates
 the binding and source-controlled targets, and refuses a handoff that omits its
 deterministic coverage floor, before passing the exact filters to prepare-pr. If
-no suitable focused JVM test exists, add the required test before publication.
+no suitable focused Seerr test exists, add the required test before publication.
 
 Do not push, commit the active merge, mark the PR Ready, rewrite candidate history,
 or force-update the branch. Resolve and stage the reviewed merge paths; the resolver
@@ -1271,7 +1282,7 @@ def selected_output(number: int, root: Path, candidate: Candidate, runner: Runne
     ci = candidate.ci
     checkout(runner, root, pr["head"]["ref"], pr["head"]["sha"])
     draft_extension_paths = validate_draft_extension_scope(runner, root, candidate)
-    if candidate.state == "Ready for current-main reconciliation":
+    if candidate.state == "Ready for protected-branch reconciliation":
         reconciled = begin_main_reconciliation(runner, root, candidate)
         if not reconciled:
             content = reconciliation_prompt(candidate, runner, root, draft_extension_paths)
@@ -1280,8 +1291,8 @@ def selected_output(number: int, root: Path, candidate: Candidate, runner: Runne
             output.write_text(content, encoding="utf-8", newline="\n")
             return ("\n".join([
                 "Upstream resolution", "", f"PR:          #{number}",
-                "Dependency:  Ready for current-main reconciliation", "",
-                "Current-main reconciliation is active.",
+                "Dependency:  Ready for protected-branch reconciliation", "",
+                "Protected-branch reconciliation is active.",
                 f"Read `{output.relative_to(root).as_posix()}` and review it exactly.",
                 "Upstream semantic resolution has not begun.",
             ]), output)

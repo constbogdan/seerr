@@ -28,7 +28,7 @@ BRANCH = f"chore/sync-upstream-{UPSTREAM}-{DOWNSTREAM}"
 
 
 class FakeRunner:
-    def __init__(self, *, dirty=False, origin="https://github.com/constbogdan/Mosaic.git",
+    def __init__(self, *, dirty=False, origin="https://github.com/constbogdan/seerr.git",
                  state="open", candidate=True, local=False, local_sha=CANDIDATE,
                  tracking=None, artifact=True, ci_bucket="fail", current_branch="chore/test",
                  upstream_rewritten=False, artifact_payload=None):
@@ -57,12 +57,12 @@ class FakeRunner:
         body = ("<details><summary>Technical provenance and upstream history</summary>\n\n"
                 "58 incoming\n\n- Upstream history remains human-readable here.\n\n"
                 "```json\n" + json.dumps(self.durable_evidence()) + "\n```\n</details>\n" +
-                f"<!-- wholphin-upstream-episode:{EPISODE} -->") if self.candidate else "ordinary"
+                f"<!-- seerr-upstream-episode:{EPISODE} -->") if self.candidate else "ordinary"
         return {"number": 33, "state": self.state, "draft": True, "body": body,
-                "html_url": "https://github.com/constbogdan/Wholphin/pull/33",
+                "html_url": "https://github.com/constbogdan/seerr/pull/33",
                 "head": {"ref": BRANCH if self.candidate else "feature/ordinary", "sha": CANDIDATE,
                          "repo": {"full_name": self.repository}},
-                "base": {"ref": "main", "repo": {"full_name": self.repository}}}
+                "base": {"ref": resolve.BASE_BRANCH, "repo": {"full_name": self.repository}}}
 
     def observation(self):
         return {"schema_version": 2, "episode_id": EPISODE,
@@ -71,15 +71,15 @@ class FakeRunner:
                 "upstream_sha": UPSTREAM, "downstream_sha": DOWNSTREAM,
                 "candidate_tree": "f" * 40, "ownership_policy_version": 1,
                 "comparison_baseline": "9" * 40, "classification_range_count": 1,
-                "run_url": "https://github.com/constbogdan/Wholphin/actions/runs/456",
-                "automation_changes": [{"path": "app/SeriesViewModel.kt", "ownership": "REVIEW"}],
-                "review_paths": ["app/SeriesViewModel.kt", "app/ContextMenu.kt"],
-                "conflict_paths": ["app/SeriesViewModel.kt"], "clean_path_count": 10,
+                "run_url": "https://github.com/constbogdan/seerr/actions/runs/456",
+                "automation_changes": [{"path": "server/lib/downloadtracker.ts", "ownership": "REVIEW"}],
+                "review_paths": ["server/lib/downloadtracker.ts", "src/components/Discover/index.tsx"],
+                "conflict_paths": ["server/lib/downloadtracker.ts"], "clean_path_count": 10,
                 "priority": {"risk": "medium", "debt": "high", "age": "1h",
                              "escalation": "Attention"},
                 "incoming_commits": [{"sha": "d" * 40,
                                       "subject": "Fix duplicates (#1946)",
-                                      "url": "https://github.com/damontecres/Wholphin/commit/" + "d" * 40}]}
+                                      "url": "https://github.com/seerr-team/seerr/commit/" + "d" * 40}]}
 
     def durable_evidence(self):
         value = self.observation()
@@ -103,7 +103,7 @@ class FakeRunner:
         if args[:4] == ["git", "remote", "get-url", "origin"]:
             return resolve.Result(self.origin + "\n", "", 0)
         if args[:4] == ["git", "remote", "get-url", "upstream"]:
-            return resolve.Result("https://github.com/damontecres/Wholphin.git\n", "", 0)
+            return resolve.Result("https://github.com/seerr-team/seerr.git\n", "", 0)
         if args[:3] == ["git", "status", "--porcelain=v1"]:
             return resolve.Result("?? local.txt\n" if self.dirty else "", "", 0)
         if args[:3] == ["git", "branch", "--show-current"]:
@@ -116,7 +116,7 @@ class FakeRunner:
             return resolve.Result(json.dumps(self.pr()), "", 0)
         if args[:3] == ["gh", "api", "--paginate"]:
             return resolve.Result(json.dumps([[self.pr()]]), "", 0)
-        if args[:3] == ["gh", "api", f"repos/{self.repository}/git/ref/heads/main"]:
+        if args[:3] == ["gh", "api", f"repos/{self.repository}/git/ref/heads/{resolve.BASE_BRANCH}"]:
             return resolve.Result(json.dumps({"object": {"sha": self.main_sha}}), "", 0)
         if args[:2] == ["gh", "api"] and "/compare/" in args[2]:
             comparison = args[2].split("/compare/", 1)[1]
@@ -135,9 +135,9 @@ class FakeRunner:
             (destination / filename).write_text(json.dumps(payload), encoding="utf-8")
             return resolve.Result("", "", 0)
         if args[:3] == ["gh", "pr", "checks"]:
-            row = {"name": "Full validation", "workflow": "CI", "bucket": self.ci_bucket,
+            row = {"name": "Downstream validation", "workflow": "Downstream validation", "bucket": self.ci_bucket,
                    "state": "FAILURE" if self.ci_bucket == "fail" else "SUCCESS",
-                   "link": "https://github.com/constbogdan/Wholphin/actions/runs/789"}
+                   "link": "https://github.com/constbogdan/seerr/actions/runs/789"}
             return resolve.Result(json.dumps([row]), "", 1 if self.ci_bucket == "fail" else 0)
         if args[:3] == ["git", "check-ref-format", "--branch"]:
             return resolve.Result(BRANCH, "", 0)
@@ -159,7 +159,7 @@ class FakeRunner:
             return resolve.Result("f" * 40 + "\n", "", 0)
         if args[:3] == ["git", "show", CANDIDATE + ":.upstream-sync/blocked-context.json"]:
             context = {"schemaVersion": 1, "upstream": UPSTREAM, "downstream": DOWNSTREAM,
-                       "policyVersion": 1, "conflicts": ["app/SeriesViewModel.kt"]}
+                       "policyVersion": 1, "conflicts": ["server/lib/downloadtracker.ts"]}
             return resolve.Result(json.dumps(context), "", 0)
         if args[:3] == ["git", "rev-parse", "HEAD"]:
             return resolve.Result(CANDIDATE + "\n", "", 0)
@@ -185,6 +185,19 @@ class ResolveUpstreamTests(unittest.TestCase):
         (root / ".gitignore").write_text(".logs/\n", encoding="utf-8")
         return root
 
+    def tracked_root(self, files):
+        root = self.root()
+        subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.email", "resolver@example.invalid"], cwd=root, check=True)
+        subprocess.run(["git", "config", "user.name", "Resolver Test"], cwd=root, check=True)
+        for path, content in files.items():
+            target = root / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(content, encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "fixture"], cwd=root, check=True)
+        return root
+
     def execute(self, runner):
         root = self.root()
         with patch.object(resolve.shutil, "which", return_value="fixture"):
@@ -196,14 +209,14 @@ class ResolveUpstreamTests(unittest.TestCase):
         branch = f"chore/sync-upstream-{upstream}-{downstream}"
         head = head or f"{number:040x}"
         pr = {"number": number, "state": "open", "draft": True,
-              "body": f"<!-- wholphin-upstream-episode:{episode} -->",
+              "body": f"<!-- seerr-upstream-episode:{episode} -->",
               "head": {"ref": branch, "sha": head, "repo": {"full_name": resolve.REPOSITORY}},
-              "base": {"ref": "main", "repo": {"full_name": resolve.REPOSITORY}}}
+              "base": {"ref": resolve.BASE_BRANCH, "repo": {"full_name": resolve.REPOSITORY}}}
         observation = {"episode_id": episode, "upstream_sha": upstream,
                        "downstream_sha": downstream, "candidate_sha": head,
                        "review_paths": [path], "conflict_paths": [path], "clean_path_count": 1}
         return resolve.Candidate(pr, observation,
-                                 {"status": "FAILED", "name": "CI / Full validation", "url": "run"})
+                                 {"status": "FAILED", "name": "Downstream validation", "url": "run"})
 
     def test_native_conflict_resolution_produces_exact_two_parent_reviewed_tree(self):
         root = self.root()
@@ -233,7 +246,7 @@ class ResolveUpstreamTests(unittest.TestCase):
         self.addCleanup(lambda: shutil.rmtree(upstream_bare, ignore_errors=True))
         subprocess.run(["git", "init", "--bare", str(upstream_bare)], check=True,
                        capture_output=True, text=True)
-        git("push", str(upstream_bare), f"{upstream}:refs/heads/main")
+        git("push", str(upstream_bare), f"{upstream}:refs/heads/{resolve.UPSTREAM_BRANCH}")
         git("checkout", "--detach", downstream)
         context = {"schemaVersion": 1, "upstream": upstream, "downstream": downstream,
                    "policyVersion": 1, "conflicts": ["source.kt"]}
@@ -303,7 +316,7 @@ class ResolveUpstreamTests(unittest.TestCase):
         upstream_bare = root / "upstream.git"
         subprocess.run(["git", "init", "-q", "--bare", str(upstream_bare)], env=env, check=True)
         git("remote", "add", "upstream", str(upstream_bare))
-        git("push", "-q", "upstream", f"{upstream}:refs/heads/main")
+        git("push", "-q", "upstream", f"{upstream}:refs/heads/{resolve.UPSTREAM_BRANCH}")
 
         git("switch", "-q", "--detach", downstream)
         context_path = root / ".upstream-sync" / "blocked-context.json"
@@ -327,7 +340,7 @@ class ResolveUpstreamTests(unittest.TestCase):
         git("add", "main.txt")
         git("commit", "-q", "-m", "M")
         current_main = git("rev-parse", "HEAD").stdout.strip()
-        git("push", "-q", "origin", f"{current_main}:refs/heads/main")
+        git("push", "-q", "origin", f"{current_main}:refs/heads/{resolve.BASE_BRANCH}")
         git("switch", "-q", branch)
 
         observation = {
@@ -362,6 +375,24 @@ class ResolveUpstreamTests(unittest.TestCase):
         for ancestor in (candidate_sha, current_main, upstream):
             self.assertEqual(0, git("merge-base", "--is-ancestor", ancestor, r_commit,
                                     check=False).returncode)
+
+    def test_reconciliation_skips_redundant_b_when_protected_head_is_in_draft(self):
+        current = "6" * 40
+
+        class Contained(FakeRunner):
+            def _result(self, args):
+                if args[:3] == ["git", "rev-parse", f"refs/remotes/origin/{resolve.BASE_BRANCH}"]:
+                    return resolve.Result(current + "\n", "", 0)
+                if args[:3] == ["git", "merge-base", "--is-ancestor"]:
+                    return resolve.Result("", "", 0)
+                return super()._result(args)
+
+        candidate = resolve.Candidate(
+            Contained().pr(), Contained().observation(), {}, current_main=current
+        )
+        runner = Contained()
+        self.assertEqual(CANDIDATE, resolve.begin_main_reconciliation(runner, self.root(), candidate))
+        self.assertFalse(any(call[:2] == ["git", "merge"] for call in runner.calls))
 
     def test_upstream_rewrite_and_incomplete_context_fail_before_merge(self):
         with self.assertRaisesRegex(resolve.Refusal, "no longer belongs"):
@@ -426,13 +457,13 @@ class ResolveUpstreamTests(unittest.TestCase):
             self.execute(runner)
         self.assertFalse(any(call[:2] == ["git", "switch"] for call in runner.calls))
 
-    def test_mosaic_repository_is_authenticated_and_targets_matching_api(self):
-        runner = FakeRunner(origin="https://github.com/constbogdan/Mosaic.git")
+    def test_seerr_repository_is_authenticated_and_targets_matching_api(self):
+        runner = FakeRunner(origin="https://github.com/constbogdan/seerr.git")
         self.execute(runner)
         commands = [" ".join(call) for call in runner.calls]
-        self.assertTrue(any("repos/constbogdan/Mosaic/pulls/33" in call for call in commands))
-        self.assertTrue(any("--repo constbogdan/Mosaic" in call for call in commands))
-        self.assertFalse(any("repos/constbogdan/Wholphin/" in call for call in commands))
+        self.assertTrue(any("repos/constbogdan/seerr/pulls/33" in call for call in commands))
+        self.assertTrue(any("--repo constbogdan/seerr" in call for call in commands))
+        self.assertFalse(any("repos/seerr-team/seerr/" in call for call in commands))
 
     def test_dirty_tree_including_untracked_refuses_before_github_query(self):
         runner = FakeRunner(dirty=True)
@@ -450,7 +481,7 @@ class ResolveUpstreamTests(unittest.TestCase):
             self.execute(Missing())
 
     def test_non_candidate_and_closed_pr_refuse(self):
-        for runner, message in ((FakeRunner(candidate=False), "not a durable I06"),
+        for runner, message in ((FakeRunner(candidate=False), "not a durable managed Upstream Sync"),
                                 (FakeRunner(state="closed"), "closed")):
             with self.subTest(message=message), self.assertRaisesRegex(resolve.Refusal, message):
                 self.execute(runner)
@@ -489,9 +520,9 @@ class ResolveUpstreamTests(unittest.TestCase):
         _, _, output = self.execute(runner)
         text = output.read_text(encoding="utf-8")
         self.assertIn("Candidate state: Draft - attention required", text)
-        self.assertIn("app/SeriesViewModel.kt", text)
+        self.assertIn("server/lib/downloadtracker.ts", text)
         self.assertIn("Fix duplicates (#1946)", text)
-        self.assertIn("FAILED - CI / Full validation", text)
+        self.assertIn("FAILED - Downstream validation", text)
         self.assertIn("actions/runs/789", text)
         self.assertIn(UPSTREAM, text)
         self.assertIn(DOWNSTREAM, text)
@@ -510,7 +541,7 @@ class ResolveUpstreamTests(unittest.TestCase):
         with self.assertRaisesRegex(resolve.Refusal, "machine-evidence candidate SHA"):
             self.execute(Mismatched())
 
-    def test_current_mosaic_candidate_uses_complete_outcome_artifact(self):
+    def test_current_seerr_candidate_uses_complete_outcome_artifact(self):
         runner = FakeRunner()
         _, summary, _ = self.execute(runner)
         self.assertIn("Ready for semantic resolution", summary)
@@ -535,7 +566,7 @@ class ResolveUpstreamTests(unittest.TestCase):
     def test_wrong_downstream_repository_in_artifact_refuses(self):
         runner = FakeRunner()
         payload = runner.observation()
-        payload["downstream_repo"] = "other/Mosaic"
+        payload["downstream_repo"] = "other/seerr"
         runner.artifact_payload = payload
         with self.assertRaisesRegex(resolve.Refusal, "mismatch for downstream_repo"):
             self.execute(runner)
@@ -579,10 +610,10 @@ class ResolveUpstreamTests(unittest.TestCase):
                     return resolve.Result(self.path + "\n", "", 0)
                 return super()._result(args)
 
-        allowed = Descendant("app/SeriesViewModel.kt")
+        allowed = Descendant("server/lib/downloadtracker.ts")
         candidate = resolve.Candidate(allowed.pr(), allowed.observation(), {})
         self.assertEqual(
-            ["app/SeriesViewModel.kt"],
+            ["server/lib/downloadtracker.ts"],
             resolve.validate_draft_extension_scope(allowed, self.root(), candidate),
         )
         refused = Descendant("unrelated.txt")
@@ -615,7 +646,7 @@ class ResolveUpstreamTests(unittest.TestCase):
         artifacts = {900: evidence} if artifacts is None else artifacts
         runs = ([{
             "id": run_id, "run_attempt": 1, "head_sha": current_main,
-            "head_branch": "main", "path": resolve.UPSTREAM_WORKFLOW_PATH,
+            "head_branch": resolve.BASE_BRANCH, "path": resolve.UPSTREAM_WORKFLOW_PATH,
             "conclusion": "success", "event": "schedule",
         } for run_id in artifacts] if runs is None else runs)
 
@@ -623,7 +654,7 @@ class ResolveUpstreamTests(unittest.TestCase):
             def _result(self, args):
                 if args[:3] == [
                         "gh", "api",
-                        f"repos/{resolve.REPOSITORY}/actions/workflows/upstream-sync.yml/runs?branch=main&status=success&per_page=100"]:
+                        f"repos/{resolve.REPOSITORY}/actions/workflows/upstream-sync.yml/runs?branch={resolve.BASE_BRANCH}&status=success&per_page=100"]:
                     return resolve.Result(json.dumps({"workflow_runs": runs}), "", 0)
                 if args[:3] == ["gh", "run", "download"] and int(args[3]) in artifacts:
                     destination = Path(args[args.index("--dir") + 1])
@@ -635,7 +666,7 @@ class ResolveUpstreamTests(unittest.TestCase):
 
         return CurrentReuse(), current_main, evidence
 
-    def test_fresh_exact_main_same_episode_reuse_is_fully_authenticated(self):
+    def test_fresh_exact_protected_branch_same_episode_reuse_is_fully_authenticated(self):
         runner, current_main, expected = self.current_reuse_runner()
         actual = resolve.load_current_reuse_observation(
             runner, self.root(), runner.pr(), runner.observation(), current_main
@@ -702,31 +733,22 @@ class ResolveUpstreamTests(unittest.TestCase):
                           "--force", "git push", "git pull"):
             self.assertNotIn(forbidden, source)
 
-    def test_vscode_interactive_task_preserves_existing_tasks(self):
-        tasks = json.loads((MODULE_PATH.parent.parent / ".vscode/tasks.json").read_text(encoding="utf-8"))
-        commands = {task["label"]: task["command"] for task in tasks["tasks"]}
-        self.assertEqual(r".\scripts\resolve-upstream.ps1", commands["Mosaic: Resolve Upstream"])
-        self.assertEqual(r".\scripts\prepare-pr.ps1", commands["Mosaic: Prepare PR"])
-        for level in ("Fast", "Standard", "Full"):
-            self.assertEqual(fr".\scripts\validate-local.ps1 -Level {level}",
-                             commands[f"Mosaic: Validate {level}"])
-
     def test_selector_handles_zero_one_multiple_and_cancellation(self):
         with patch("builtins.print") as output:
             self.assertIsNone(resolve.select_candidate([], None, lambda _: ""))
             self.assertIn("No open", output.call_args.args[0])
-        one = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
+        one = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
         one.state = "Ready for resolution"
         self.assertIs(one, resolve.select_candidate([one], None, lambda _: ""))
-        two = self.candidate(37, "app/src/main/Other.kt", "2" * 40)
+        two = self.candidate(37, "server/lib/watchlistsync.ts", "2" * 40)
         two.state = "Independent"
         self.assertIsNone(resolve.select_candidate([one, two], None, lambda _: "q"))
         self.assertIs(two, resolve.select_candidate([one, two], None, lambda _: "2"))
 
     def test_independent_candidates_remain_parallel(self):
         runner = FakeRunner()
-        first = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
-        second = self.candidate(37, "app/src/main/ContextMenu.kt", "2" * 40)
+        first = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
+        second = self.candidate(37, "server/lib/watchlistsync.ts", "2" * 40)
         result = resolve.classify_dependencies(runner, self.root(), [first, second])
         self.assertEqual(["Independent", "Independent"], [candidate.state for candidate in result])
 
@@ -734,17 +756,17 @@ class ResolveUpstreamTests(unittest.TestCase):
         runner = FakeRunner()
         older, newer = "1" * 40, "2" * 40
         runner.compare_map[f"{older}...{newer}"] = "ahead"
-        first = self.candidate(33, "app/src/main/SeriesViewModel.kt", older)
-        second = self.candidate(37, "app/src/main/SeriesViewModel.kt", newer)
+        first = self.candidate(33, "server/lib/downloadtracker.ts", older)
+        second = self.candidate(37, "server/lib/downloadtracker.ts", newer)
         result = resolve.classify_dependencies(runner, self.root(), [first, second])
         self.assertEqual("Ready for resolution", result[0].state)
         self.assertEqual("Waiting on PR #33", result[1].state)
-        self.assertEqual(("app/src/main/SeriesViewModel.kt",), result[1].overlaps)
+        self.assertEqual(("server/lib/downloadtracker.ts",), result[1].overlaps)
 
     def test_ambiguous_overlap_refuses_selection(self):
         runner = FakeRunner()
-        first = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
-        second = self.candidate(37, "app/src/main/SeriesViewModel.kt", "2" * 40)
+        first = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
+        second = self.candidate(37, "server/lib/downloadtracker.ts", "2" * 40)
         result = resolve.classify_dependencies(runner, self.root(), [first, second])
         self.assertEqual("Dependency ambiguous", result[0].state)
         with self.assertRaisesRegex(resolve.Refusal, "refusing to guess"):
@@ -755,9 +777,9 @@ class ResolveUpstreamTests(unittest.TestCase):
         merged_head, current = "3" * 40, "4" * 40
         runner.main_sha = current
         runner.compare_map[f"{merged_head}...{current}"] = "ahead"
-        first = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40,
+        first = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40,
                                downstream=DOWNSTREAM, head=merged_head)
-        second = self.candidate(37, "app/src/main/SeriesViewModel.kt", "2" * 40,
+        second = self.candidate(37, "server/lib/downloadtracker.ts", "2" * 40,
                                 downstream=current)
         result = resolve.classify_dependencies(runner, self.root(), [first, second])
         self.assertEqual("Superseded", result[0].state)
@@ -766,17 +788,16 @@ class ResolveUpstreamTests(unittest.TestCase):
     def test_stale_downstream_baseline_is_ambiguous_until_reobserved(self):
         runner = FakeRunner()
         runner.main_sha = "4" * 40
-        candidate = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
+        candidate = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
         self.assertEqual("Dependency ambiguous",
                          resolve.classify_dependencies(runner, self.root(), [candidate])[0].state)
 
-    def test_filter_derivation_uses_i03_mapping_and_changed_tests(self):
-        filters = resolve.derive_filters([
-            "app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt",
-            "app/src/test/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModelTest.kt",
-        ], ["app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt"])
-        self.assertIn("com.github.damontecres.wholphin.ui.detail.series.*", filters)
-        self.assertIn("*SeriesViewModelTest", filters)
+    def test_filter_derivation_uses_exact_tracked_seerr_tests(self):
+        source = "server/lib/downloadtracker.ts"
+        test = "server/lib/downloadtracker.test.ts"
+        root = self.tracked_root({source: "export {};\n", test: "test('queue', () => {});\n"})
+        filters = resolve.derive_filters(root, [source, test], [source])
+        self.assertEqual([test], filters)
 
     def write_filter_handoff(self, root, candidate, **overrides):
         payload = {
@@ -784,7 +805,9 @@ class ResolveUpstreamTests(unittest.TestCase):
             "pr_number": int(candidate.pr["number"]),
             "episode_id": resolve.marker(candidate.pr["body"]),
             "branch": candidate.pr["head"]["ref"],
-            "test_filters": ["derived.Filter", "semantic.HomeViewModelTest"],
+            "head_sha": candidate.pr["head"]["sha"],
+            "reviewed_source_sha": CANDIDATE,
+            "test_filters": ["server/lib/downloadtracker.test.ts"],
         }
         payload.update(overrides)
         path = root / resolve.RESOLUTION_HANDOFF
@@ -793,98 +816,140 @@ class ResolveUpstreamTests(unittest.TestCase):
         return path
 
     def test_absent_filter_handoff_uses_derived_fallback(self):
-        candidate = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
-        filters, reason = resolve.resolution_filters(self.root(), candidate, ["derived.Filter"])
-        self.assertEqual(["derived.Filter"], filters)
+        candidate = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
+        filters, reason = resolve.resolution_filters(
+            self.root(), FakeRunner(), candidate, ["server/lib/downloadtracker.test.ts"]
+        )
+        self.assertEqual(["server/lib/downloadtracker.test.ts"], filters)
         self.assertIn("using deterministic derived filters", reason)
 
     def test_valid_filter_handoff_is_bound_and_validated(self):
-        root = self.root()
-        candidate = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
-        self.write_filter_handoff(root, candidate)
-        tests = root / "app/src/test/java/fixture"
-        tests.mkdir(parents=True)
-        (tests / "Derived.kt").write_text("package derived\nclass Filter\n", encoding="utf-8")
-        (tests / "Semantic.kt").write_text(
-            "package semantic\nclass HomeViewModelTest\n", encoding="utf-8"
+        root = self.tracked_root({
+            "server/lib/downloadtracker.ts": "export {};\n",
+            "server/lib/downloadtracker.test.ts": "test('queue', () => {});\n",
+            "server/lib/semantic.test.tsx": "test('semantic', () => {});\n",
+        })
+        candidate = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
+        self.write_filter_handoff(
+            root, candidate,
+            test_filters=[
+                "server/lib/downloadtracker.test.ts",
+                "server/lib/semantic.test.tsx",
+            ],
         )
-        filters, reason = resolve.resolution_filters(root, candidate, ["derived.Filter"])
-        self.assertEqual(["derived.Filter", "semantic.HomeViewModelTest"], filters)
+        filters, reason = resolve.resolution_filters(
+            root, FakeRunner(), candidate, ["server/lib/downloadtracker.test.ts"]
+        )
+        self.assertEqual(
+            ["server/lib/downloadtracker.test.ts", "server/lib/semantic.test.tsx"], filters
+        )
         self.assertIn("Authenticated semantic filter handoff", reason)
 
     def test_stale_or_mismatched_filter_handoff_refuses(self):
-        candidate = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
+        candidate = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
         cases = {
             "pr_number": 34,
             "episode_id": "f" * 64,
             "branch": "chore/sync-upstream-wrong",
+            "head_sha": "f" * 40,
+            "reviewed_source_sha": "f" * 40,
         }
         for field, value in cases.items():
             with self.subTest(field=field):
                 root = self.root()
                 self.write_filter_handoff(root, candidate, **{field: value})
                 with self.assertRaisesRegex(resolve.Refusal, field):
-                    resolve.resolution_filters(root, candidate, ["derived.Filter"])
+                    resolve.resolution_filters(
+                        root, FakeRunner(), candidate, ["server/lib/downloadtracker.test.ts"]
+                    )
 
     def test_malformed_filter_handoff_refuses(self):
-        candidate = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
+        candidate = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
         root = self.root()
         path = root / resolve.RESOLUTION_HANDOFF
         path.parent.mkdir(parents=True)
         path.write_text("{not-json", encoding="utf-8")
         with self.assertRaisesRegex(resolve.Refusal, "malformed"):
-            resolve.resolution_filters(root, candidate, ["derived.Filter"])
+            resolve.resolution_filters(
+                root, FakeRunner(), candidate, ["server/lib/downloadtracker.test.ts"]
+            )
 
     def test_filter_handoff_cannot_remove_derived_coverage(self):
         root = self.root()
-        candidate = self.candidate(33, "app/src/main/SeriesViewModel.kt", "1" * 40)
-        self.write_filter_handoff(root, candidate, test_filters=["semantic.HomeViewModelTest"])
+        candidate = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
+        self.write_filter_handoff(root, candidate, test_filters=["src/pages/semantic.test.tsx"])
         with self.assertRaisesRegex(resolve.Refusal, "would weaken deterministic coverage"):
-            resolve.resolution_filters(root, candidate, ["derived.Filter"])
+            resolve.resolution_filters(
+                root, FakeRunner(), candidate, ["server/lib/downloadtracker.test.ts"]
+            )
 
     def test_missing_or_unmapped_filters_refuse(self):
         with self.assertRaisesRegex(resolve.Refusal, "No semantic-resolution changes"):
-            resolve.derive_filters([], [])
-        with self.assertRaisesRegex(resolve.Refusal, "ambiguous"):
-            resolve.derive_filters(["app/src/main/java/com/github/damontecres/wholphin/unknown/Foo.kt"], [])
+            resolve.derive_filters(self.root(), [], [])
+        root = self.tracked_root({"server/unknown.ts": "export {};\n"})
+        self.assertEqual([], resolve.derive_filters(root, ["server/unknown.ts"], []))
+        candidate = self.candidate(33, "server/unknown.ts", "1" * 40)
+        with self.assertRaisesRegex(resolve.Refusal, "No authenticated semantic test handoff"):
+            resolve.resolution_filters(root, FakeRunner(), candidate, [])
+
+    def test_handoff_rejects_non_test_and_nonexistent_targets(self):
+        root = self.tracked_root({"server/lib/downloadtracker.ts": "export {};\n"})
+        candidate = self.candidate(33, "server/lib/downloadtracker.ts", "1" * 40)
+        for value, message in (
+            ("server/lib/downloadtracker.ts", "Unsupported focused Seerr test path"),
+            ("server/lib/missing.test.ts", "does not exist"),
+        ):
+            with self.subTest(value=value):
+                self.write_filter_handoff(root, candidate, test_filters=[value])
+                with self.assertRaisesRegex(resolve.Refusal, message):
+                    resolve.resolution_filters(root, FakeRunner(), candidate, [], [value])
 
     def test_supplemental_scope_allows_related_tests_and_refuses_unrelated_behavior(self):
-        attention = ["app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt"]
-        resolve.validate_resolution_scope([
+        source = "server/lib/downloadtracker.ts"
+        test = "server/lib/downloadtracker.test.ts"
+        root = self.tracked_root({
+            source: "export {};\n",
+            test: "test('queue', () => {});\n",
+            "server/lib/watchlistsync.ts": "export {};\n",
+        })
+        attention = [source]
+        resolve.validate_resolution_scope(root, [
             attention[0],
-            "app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesDetails.kt",
-            "app/src/test/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModelTest.kt",
+            test,
             ".upstream-sync/blocked-context.json",
         ], attention)
         with self.assertRaisesRegex(resolve.Refusal, "outside"):
-            resolve.validate_resolution_scope([
+            resolve.validate_resolution_scope(root, [
                 attention[0],
-                "app/src/main/java/com/github/damontecres/wholphin/ui/downloads/DownloadsPage.kt",
+                "server/lib/watchlistsync.ts",
             ], attention)
 
     def test_changed_test_supplies_supplemental_filter_for_unmapped_resource_attention(self):
-        filters = resolve.derive_filters([
-            "app/src/main/res/values/strings.xml",
-            "app/src/test/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModelTest.kt",
-        ], ["app/src/main/res/values/strings.xml"])
-        self.assertEqual(["*SeriesViewModelTest"], filters)
+        test = "src/components/Discover/index.test.tsx"
+        root = self.tracked_root({test: "test('discover', () => {});\n"})
+        filters = resolve.derive_filters(root, ["seerr-api.yml", test], ["seerr-api.yml"])
+        self.assertEqual([test], filters)
 
     def test_default_no_publication_never_invokes_prepare_pr(self):
         candidate = self.candidate(
-            33, "app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt",
+            33, "server/lib/downloadtracker.ts",
             "1" * 40)
         runner = FakeRunner()
+        root = self.tracked_root({
+            "server/lib/downloadtracker.ts": "export {};\n",
+            "server/lib/downloadtracker.test.ts": "test('queue', () => {});\n",
+        })
         with (patch.object(resolve, "verify_local_descendant"),
               patch.object(resolve, "assert_native_merge_identity"),
               patch.object(resolve, "resolution_paths", return_value=[
-                  "app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt"]),
-              patch.object(resolve, "validate_filter_targets")):
-            resolve.publication_phase(self.root(), runner, candidate, lambda _: "")
+                  "server/lib/downloadtracker.ts"]),
+              patch.object(resolve, "validate_reconciliation_scope", return_value=[])):
+            resolve.publication_phase(root, runner, candidate, lambda _: "")
         self.assertFalse(any(call and call[0] == "powershell" for call in runner.calls))
 
     def test_explicit_yes_rechecks_and_delegates_exact_filters_to_prepare_pr(self):
         candidate = self.candidate(
-            33, "app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt",
+            33, "server/lib/downloadtracker.ts",
             "1" * 40)
         candidate.state = "Ready for resolution"
 
@@ -895,19 +960,23 @@ class ResolveUpstreamTests(unittest.TestCase):
                 return super()._result(args)
 
         runner = PublishRunner()
-        root = self.root()
+        root = self.tracked_root({
+            "server/lib/downloadtracker.ts": "export {};\n",
+            "server/lib/downloadtracker.test.ts": "test('queue', () => {});\n",
+            "server/lib/semantic.test.tsx": "test('semantic', () => {});\n",
+        })
         self.write_filter_handoff(
             root, candidate,
             test_filters=[
-                "com.github.damontecres.wholphin.ui.detail.series.*",
-                "*HomeViewModelTest",
+                "server/lib/downloadtracker.test.ts",
+                "server/lib/semantic.test.tsx",
             ],
         )
-        paths = ["app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt"]
+        paths = ["server/lib/downloadtracker.ts"]
         with (patch.object(resolve, "verify_local_descendant"),
               patch.object(resolve, "assert_native_merge_identity"),
               patch.object(resolve, "resolution_paths", return_value=paths),
-              patch.object(resolve, "validate_filter_targets"),
+              patch.object(resolve, "validate_reconciliation_scope", return_value=[]),
               patch.object(resolve, "open_candidates", return_value=[candidate]),
               patch.object(resolve, "classify_dependencies", return_value=[candidate]),
               patch.object(resolve, "commit_native_resolution", return_value=("d" * 40, "f" * 40))):
@@ -916,7 +985,7 @@ class ResolveUpstreamTests(unittest.TestCase):
         self.assertEqual("-Command", command[-2])
         self.assertIn("prepare-pr.ps1", command[-1])
         self.assertIn(
-            "-TestFilter @('com.github.damontecres.wholphin.ui.detail.series.*','*HomeViewModelTest')",
+            "-TestFilter @('server/lib/downloadtracker.test.ts','server/lib/semantic.test.tsx')",
             command[-1],
         )
         self.assertNotIn("-Level", command[-1])
@@ -926,7 +995,7 @@ class ResolveUpstreamTests(unittest.TestCase):
 
     def test_clean_review_candidate_keeps_existing_non_conflict_publication_path(self):
         candidate = self.candidate(
-            33, "app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt",
+            33, "server/lib/downloadtracker.ts",
             "1" * 40,
         )
         candidate.observation["conflict_paths"] = []
@@ -939,20 +1008,24 @@ class ResolveUpstreamTests(unittest.TestCase):
                 return super()._result(args)
 
         runner = PublishRunner()
-        paths = ["app/src/main/java/com/github/damontecres/wholphin/ui/detail/series/SeriesViewModel.kt"]
+        root = self.tracked_root({
+            "server/lib/downloadtracker.ts": "export {};\n",
+            "server/lib/downloadtracker.test.ts": "test('queue', () => {});\n",
+        })
+        paths = ["server/lib/downloadtracker.ts"]
         with (patch.object(resolve, "verify_local_descendant"),
               patch.object(resolve, "assert_native_merge_identity") as native,
               patch.object(resolve, "resolution_paths", return_value=paths),
-              patch.object(resolve, "validate_filter_targets"),
+              patch.object(resolve, "validate_reconciliation_scope", return_value=[]),
               patch.object(resolve, "open_candidates", return_value=[candidate]),
               patch.object(resolve, "classify_dependencies", return_value=[candidate])):
-            resolve.publication_phase(self.root(), runner, candidate, lambda _: "y")
+            resolve.publication_phase(root, runner, candidate, lambda _: "y")
         native.assert_not_called()
         command = next(call for call in runner.calls if call and call[0] == "powershell")
         self.assertNotIn("-PreserveMergeCommit", command[-1])
 
     def test_waiting_candidate_refuses_direct_selection(self):
-        candidate = self.candidate(37, "app/src/main/SeriesViewModel.kt", "2" * 40)
+        candidate = self.candidate(37, "server/lib/downloadtracker.ts", "2" * 40)
         candidate.state = "Waiting on PR #33"
         with self.assertRaisesRegex(resolve.Refusal, "Resolve its predecessor"):
             resolve.select_candidate([candidate], 37)

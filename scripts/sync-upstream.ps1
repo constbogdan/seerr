@@ -47,8 +47,8 @@ try {
     }
 
     $branch = (Invoke-Git -Arguments @('branch', '--show-current') -Capture | Select-Object -First 1).Trim()
-    if ($branch -ne 'main') {
-        throw "Run this helper from local 'main'; current branch is '$branch'."
+    if ($branch -ne 'downstream-main') {
+        throw "Run this helper from local 'downstream-main'; current branch is '$branch'."
     }
 
     foreach ($remote in @('origin', 'upstream')) {
@@ -56,35 +56,35 @@ try {
         Write-Host "$remote -> $url"
     }
 
-    Write-Host 'Fetching origin/main...'
-    Invoke-Git -Arguments @('fetch', 'origin', 'main')
-    Write-Host 'Fetching upstream/main...'
-    Invoke-Git -Arguments @('fetch', 'upstream', 'main')
+    Write-Host 'Fetching origin/downstream-main...'
+    Invoke-Git -Arguments @('fetch', 'origin', 'downstream-main')
+    Write-Host 'Fetching upstream/develop...'
+    Invoke-Git -Arguments @('fetch', 'upstream', 'develop')
 
-    if (-not (Test-GitRef 'refs/heads/main')) {
-        throw "Local branch 'main' does not exist."
+    if (-not (Test-GitRef 'refs/heads/downstream-main')) {
+        throw "Local branch 'downstream-main' does not exist."
     }
-    if (-not (Test-GitRef 'refs/remotes/origin/main')) {
-        throw "Remote-tracking ref 'origin/main' does not exist after fetch."
+    if (-not (Test-GitRef 'refs/remotes/origin/downstream-main')) {
+        throw "Remote-tracking ref 'origin/downstream-main' does not exist after fetch."
     }
-    if (-not (Test-GitRef 'refs/remotes/upstream/main')) {
-        throw "Remote-tracking ref 'upstream/main' does not exist after fetch."
+    if (-not (Test-GitRef 'refs/remotes/upstream/develop')) {
+        throw "Remote-tracking ref 'upstream/develop' does not exist after fetch."
     }
 
-    $counts = ((Invoke-Git -Arguments @('rev-list', '--left-right', '--count', 'main...origin/main') -Capture) -join ' ').Trim() -split '\s+'
+    $counts = ((Invoke-Git -Arguments @('rev-list', '--left-right', '--count', 'downstream-main...origin/downstream-main') -Capture) -join ' ').Trim() -split '\s+'
     if ($counts.Count -ne 2) {
-        throw "Could not determine divergence between main and origin/main."
+        throw "Could not determine divergence between downstream-main and origin/downstream-main."
     }
     $ahead = [int]$counts[0]
     $behind = [int]$counts[1]
     if ($ahead -gt 0) {
-        throw "Local main has $ahead commit(s) not present on origin/main. Refusing to discard or publish them automatically."
+        throw "Local downstream-main has $ahead commit(s) not present on origin/downstream-main. Refusing to discard or publish them automatically."
     }
     if ($behind -gt 0) {
-        Write-Host "Fast-forwarding local main by $behind commit(s)..."
-        Invoke-Git -Arguments @('merge', '--ff-only', 'origin/main')
+        Write-Host "Fast-forwarding local downstream-main by $behind commit(s)..."
+        Invoke-Git -Arguments @('merge', '--ff-only', 'origin/downstream-main')
     } else {
-        Write-Host 'Local main already matches origin/main.'
+        Write-Host 'Local downstream-main already matches origin/downstream-main.'
     }
 
     $date = Get-Date -Format 'yyyy-MM-dd'
@@ -96,9 +96,9 @@ try {
         throw "Remote branch 'origin/$syncBranch' already exists. Refusing to create a conflicting local branch."
     }
 
-    Invoke-Git -Arguments @('switch', '-c', $syncBranch, 'main')
-    Write-Host "Merging upstream/main into $syncBranch..."
-    & git merge --no-edit upstream/main
+    Invoke-Git -Arguments @('switch', '-c', $syncBranch, 'downstream-main')
+    Write-Host "Merging upstream/develop into $syncBranch..."
+    & git merge --no-edit upstream/develop
     $mergeExitCode = $LASTEXITCODE
 
     if ($mergeExitCode -ne 0) {
@@ -109,10 +109,10 @@ try {
             $conflicts | ForEach-Object { Write-Host "  $_" }
             Write-Host ''
             Write-Host 'Inspect ours, upstream, the common base, callers, and tests. Never choose ours/theirs mechanically.'
-            Write-Host 'After resolving: git add the files, run Standard validation, then Full validation, commit, push, and open a PR into main.'
+            Write-Host 'After resolving: git add the files, run Standard validation, then Full validation, commit, push, and open a PR into downstream-main.'
             exit 2
         }
-        throw "git merge upstream/main failed with exit code $mergeExitCode."
+        throw "git merge upstream/develop failed with exit code $mergeExitCode."
     }
 
     Write-Host ''
