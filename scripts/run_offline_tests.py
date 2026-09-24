@@ -3,6 +3,7 @@
 import argparse
 import os
 from pathlib import Path
+import re
 import sys
 import unittest
 
@@ -13,10 +14,21 @@ def main(argv=None):
     parser.add_argument("--pattern", default="test_*.py")
     args = parser.parse_args(argv)
 
+    if not re.fullmatch(r"test_[A-Za-z0-9_*?\[\].-]+\.py", args.pattern):
+        parser.error("offline test pattern must be a test_*.py basename pattern")
+
     # Tests that explicitly need these channels supply fixture-local paths.
     # Never let an implicit lookup write synthetic evidence to the enclosing job.
     os.environ.pop("GITHUB_STEP_SUMMARY", None)
     os.environ.pop("GITHUB_OUTPUT", None)
+    for key in (
+        "GH_TOKEN",
+        "GITHUB_TOKEN",
+        "SYNC_APP_ID",
+        "SYNC_APP_PRIVATE_KEY",
+        "SYNC_PUBLISH_TOKEN",
+    ):
+        os.environ.pop(key, None)
 
     suite = unittest.defaultTestLoader.discover(str(Path(args.start)), pattern=args.pattern)
     if suite.countTestCases() == 0:

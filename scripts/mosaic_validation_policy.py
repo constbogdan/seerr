@@ -1,4 +1,4 @@
-"""Deterministic local/PR validation selection built on Mosaic change classification."""
+"""Deterministic local/PR validation selection built on Seerr change classification."""
 
 import argparse
 from fnmatch import fnmatchcase
@@ -10,106 +10,68 @@ import subprocess
 import mosaic_change_classification as classification
 
 
-NON_ANDROID = "non-android"
-TARGETED_ANDROID = "targeted-android"
+SCOPED = "scoped"
+FOCUSED = "focused"
 FULL = "full"
 
-ALL_JVM_TESTS = "com.github.damontecres.wholphin.*"
-
-# These paths control trusted builds, publication, updater identity, packaging, or
-# persistence. They require Full even when their release relevance is tooling-only.
+# These paths control validation, publication, packaging, authentication, or
+# persistence. They require Full even when product relevance is tooling-only.
 FULL_VALIDATION_PATTERNS = (
     ".github/workflows/*",
     ".github/actions/*",
     "scripts/mosaic_change_classification.py",
     "scripts/mosaic_validation_policy.py",
     "scripts/upstream_ownership_policy.json",
-    "scripts/mosaic_development_release.py",
-    "scripts/mosaic_hold_release.py",
     "scripts/mosaic_repository.py",
-    "scripts/mosaic_signing_exercise.py",
-    "scripts/mosaic_stable.py",
     "scripts/mosaic_validation_reuse.py",
-    "scripts/mosaic_version.py",
-    "scripts/verify_mosaic_apk.py",
-    "scripts/mosaic-signing.json",
-    "app/build.gradle.kts",
-    "app/proguard-rules.pro",
-    "build.gradle.kts",
-    "settings.gradle.kts",
-    "gradle.properties",
-    "gradlew",
-    "gradlew.bat",
-    "gradle/*",
-    "app/src/*/AndroidManifest.xml",
-    "app/src/androidTest/*",
-    "app/src/release/*",
-    "app/src/main/proto/*",
-    "app/src/main/java/*/data/AppDatabase.kt",
-    "app/src/main/java/*/preferences/AppPreference.kt",
-    "app/src/main/java/*/preferences/AppPreferencesSerializer.kt",
-    "app/src/main/java/*/services/Update*",
-    "app/src/main/java/*/ui/setup/InstallUpdatePage.kt",
-    "app/schemas/*",
-    "renovate.json",
+    "scripts/seerr_downstream_version.py",
+    "scripts/prepare-pr.ps1",
+    "scripts/prepare-pr.config.psd1",
+    "scripts/validate-local.ps1",
+    "scripts/hosted_upstream.py",
+    "scripts/resolve_upstream.py",
+    "scripts/resolve-upstream.ps1",
+    "scripts/sync-upstream.ps1",
+    "docs/downstream-workflow-inventory.txt",
+    "Dockerfile",
+    "Dockerfile.local",
+    "package.json",
+    "pnpm-lock.yaml",
+    "next.config.ts",
+    "tsconfig.json",
+    "seerr-api.yml",
+    "server/datasource.ts",
+    "server/entity/*",
+    "server/lib/settings/*",
+    "server/middleware/*",
+    "server/migration/*",
+    "server/test/index.mts",
 )
 
-# Package-level filters deliberately trade some extra test work for an auditable,
-# conservative mapping. A production Android path that misses this map gets the
-# broad all-JVM fallback rather than silently selecting no tests.
-FOCUSED_TEST_PATTERNS = (
-    ("app/src/main/java/*/data/model/*", ("com.github.damontecres.wholphin.data.model.*",)),
-    ("app/src/main/java/*/services/*", ("com.github.damontecres.wholphin.services.*",)),
-    ("app/src/main/java/*/ui/cards/*", ("com.github.damontecres.wholphin.ui.cards.*",)),
-    ("app/src/main/java/*/ui/components/*", ("com.github.damontecres.wholphin.ui.components.*",)),
-    ("app/src/main/java/*/ui/detail/series/*", ("com.github.damontecres.wholphin.ui.detail.series.*",)),
-    ("app/src/main/java/*/ui/downloads/*", ("com.github.damontecres.wholphin.ui.downloads.*",)),
-    ("app/src/main/java/*/ui/main/*", (
-        "com.github.damontecres.wholphin.ui.main.*",
-        "com.github.damontecres.wholphin.test.TestHomeRowSamples",
-        "com.github.damontecres.wholphin.test.TestMainActivityViewModel",
-    )),
-    ("app/src/main/java/*/ui/playback/*", ("com.github.damontecres.wholphin.ui.playback.*",)),
-    ("app/src/main/java/*/ui/detail/discover/*", (
-        "com.github.damontecres.wholphin.test.TestSeerr*",
-        "com.github.damontecres.wholphin.services.SeerrRequestPaginationTest",
-    )),
-    ("app/src/main/java/*/util/*", ("com.github.damontecres.wholphin.util.*",)),
-)
+TEST_ROOTS = ("server/", "src/")
+TEST_SUFFIXES = (".test.ts", ".test.tsx")
 
 
 OFFLINE_TEST_MAP = {
-    "scripts/mosaic_delivery_output.py": "test_mosaic_delivery_output.py",
     "scripts/hosted_upstream.py": "test_hosted_upstream.py",
     "scripts/upstream_ownership_policy.json": "test_hosted_upstream.py",
     "scripts/resolve_upstream.py": "test_resolve_upstream.py",
     "scripts/run_offline_tests.py": "test_run_offline_tests.py",
     "scripts/mosaic_change_classification.py": "test_mosaic_change_classification.py",
-    "scripts/mosaic_development_release.py": "test_mosaic_development_release.py",
-    "scripts/mosaic_hold_release.py": "test_mosaic_hold_release.py",
     "scripts/mosaic_repository.py": "test_mosaic_repository.py",
-    "scripts/mosaic_signing_exercise.py": "test_mosaic_signing_exercise.py",
-    "scripts/mosaic_stable.py": "test_mosaic_stable.py",
     "scripts/mosaic_validation_reuse.py": "test_mosaic_validation_reuse.py",
-    "scripts/mosaic_version.py": "test_mosaic_version.py",
-    "scripts/verify_mosaic_apk.py": "test_verify_mosaic_apk.py",
+    "scripts/seerr_downstream_version.py": "test_seerr_downstream_version.py",
 }
 
 
 BOUNDED_LOCAL_FAST_OFFLINE_PATTERNS = frozenset({
     "test_mosaic_change_classification.py",
-    "test_mosaic_delivery_output.py",
-    "test_mosaic_development_release.py",
-    "test_mosaic_hold_release.py",
     "test_mosaic_repository.py",
-    "test_mosaic_signing_exercise.py",
-    "test_mosaic_stable.py",
     "test_mosaic_validation_policy.py",
     "test_mosaic_validation_reuse.py",
-    "test_mosaic_version.py",
     "test_resolve_upstream.py",
     "test_run_offline_tests.py",
-    "test_verify_mosaic_apk.py",
+    "test_seerr_downstream_version.py",
 })
 
 
@@ -119,12 +81,12 @@ def offline_test_patterns(paths):
     for path in paths:
         if path in {
             ".vscode/tasks.json",
-            "scripts/mosaic_output.ps1",
             "scripts/mosaic_validation_policy.py",
-            "scripts/prepare-pr.ps1",
             "scripts/validate-local.ps1",
         }:
             tests.add("test_mosaic_validation_policy.py")
+        elif path == "scripts/prepare-pr.ps1":
+            tests.update(("test_mosaic_validation_policy.py", "test_prepare_pr.py"))
         elif path.startswith("scripts/test_") and path.endswith(".py"):
             tests.add(Path(path).name)
         elif classification.is_offline_tooling_test_support_path(path):
@@ -153,35 +115,82 @@ def _matches(path, patterns):
     return any(fnmatchcase(path, pattern) for pattern in patterns)
 
 
-def focused_tests(paths):
-    """Return mapped tests and whether broad fallback was required."""
+def _git_path(root, *args):
+    env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
+    env["GIT_NO_REPLACE_OBJECTS"] = "1"
+    return subprocess.run(
+        ["git", "-c", f"safe.directory={root}", *args],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        timeout=60,
+    )
+
+
+def authenticated_test_filter(root, value, candidate_paths=()):
+    """Return one exact repository test path or fail closed."""
+    path = value.replace("\\", "/").removeprefix("./")
+    if (
+        not path
+        or path.startswith("/")
+        or ".." in path.split("/")
+        or not path.startswith(TEST_ROOTS)
+        or not path.endswith(TEST_SUFFIXES)
+    ):
+        raise ValueError(f"Unsupported focused Seerr test path: {value}")
+    target = (Path(root) / path).resolve()
+    try:
+        target.relative_to(Path(root).resolve())
+    except ValueError:
+        raise ValueError(f"Focused Seerr test escapes the repository: {value}") from None
+    if not target.is_file():
+        raise ValueError(f"Focused Seerr test does not exist: {path}")
+    tracked = _git_path(root, "ls-files", "--error-unmatch", "--", path).returncode == 0
+    ignored = (
+        _git_path(root, "check-ignore", "--no-index", "--quiet", "--", path).returncode
+        == 0
+    )
+    reviewed_paths = {
+        value.replace("\\", "/").removeprefix("./") for value in candidate_paths
+    }
+    reviewed_untracked = path in reviewed_paths and not ignored
+    if ignored:
+        raise ValueError(f"Focused Seerr test is ignored: {path}")
+    if not tracked and not reviewed_untracked:
+        raise ValueError(f"Focused Seerr test is not a reviewed source path: {path}")
+    return path
+
+
+def focused_tests(paths, root):
+    """Return authenticated sibling/direct tests and unmapped product inputs."""
     selected = set()
     fallback_paths = []
-    for path in sorted(set(paths)):
-        if path.startswith("app/src/test/") or path.startswith("app/src/testDebug/"):
-            if path.endswith((".kt", ".java")):
-                selected.add("*" + Path(path).stem)
+    candidates = set(paths)
+    for path in sorted(candidates):
+        if path.startswith(TEST_ROOTS) and path.endswith(TEST_SUFFIXES):
+            selected.add(authenticated_test_filter(root, path, candidates))
             continue
-        if not path.startswith("app/src/main/"):
+        if not path.startswith(TEST_ROOTS) or not path.endswith((".ts", ".tsx")):
             continue
-        matches = set()
-        for pattern, filters in FOCUSED_TEST_PATTERNS:
-            if fnmatchcase(path, pattern):
-                matches.update(filters)
-        if matches:
-            selected.update(matches)
-        else:
+        suffix = ".test.tsx" if path.endswith(".tsx") else ".test.ts"
+        candidate = path.rsplit(".", 1)[0] + suffix
+        try:
+            selected.add(authenticated_test_filter(root, candidate, candidates))
+        except ValueError:
             fallback_paths.append(path)
-    if fallback_paths:
-        selected.add(ALL_JVM_TESTS)
     return sorted(selected), fallback_paths
 
 
-def plan_paths(paths, explicit_filters=(), force_full=False):
+def plan_paths(paths, explicit_filters=(), force_full=False, root=None):
     paths = sorted(set(paths))
+    root = Path(root).resolve() if root else Path(__file__).resolve().parent.parent
     result = classification.classify_paths(paths)
     full_paths = [entry["path"] for entry in result["paths"]
                   if _matches(entry["path"], FULL_VALIDATION_PATTERNS)]
+    explicit = sorted({
+        authenticated_test_filter(root, value, paths) for value in explicit_filters
+    })
+    mapped, fallback = focused_tests(paths, root)
 
     if force_full or result["releaseRelevance"] == classification.UNKNOWN or full_paths:
         mode = FULL
@@ -190,23 +199,31 @@ def plan_paths(paths, explicit_filters=(), force_full=False):
             if force_full
             else "unknown or security/build/persistence-sensitive input requires Full"
         )
-        tests, fallback = [], []
-    elif explicit_filters or result["releaseRelevance"] in {
-        classification.APK_RELEVANT,
-        classification.ANDROID_VALIDATION_ONLY,
-    }:
-        mode = TARGETED_ANDROID
-        mapped, fallback = focused_tests(paths)
-        tests = sorted(set(explicit_filters or mapped or (ALL_JVM_TESTS,)))
+        # Exact operator-requested tests remain useful additive local feedback even
+        # when the changed scope still requires authoritative Full validation.
+        tests = explicit
+    elif explicit and not fallback:
+        mode = FOCUSED
+        tests = explicit
         reason = (
-            "operator-supplied focused JVM coverage"
-            if explicit_filters
-            else "Android input uses deterministic focused JVM coverage"
+            "operator-supplied exact Seerr test coverage"
         )
+    elif result["releaseRelevance"] in {
+        classification.PRODUCT_RELEVANT,
+        classification.VALIDATION_ONLY,
+    }:
+        if mapped and not fallback:
+            mode = FOCUSED
+            tests = mapped
+            reason = "changed Seerr source has authenticated sibling/direct tests"
+        else:
+            mode = FULL
+            tests = explicit
+            reason = "product or test scope lacks a complete authenticated focused-test binding"
     else:
-        mode = NON_ANDROID
+        mode = SCOPED
         tests, fallback = [], []
-        reason = "proven non-Android scope uses repository tooling checks only"
+        reason = "proven documentation/tooling scope uses bounded repository checks"
 
     return {
         **result,
@@ -223,7 +240,13 @@ def plan_paths(paths, explicit_filters=(), force_full=False):
 def _git(root, *args):
     env = {key: value for key, value in os.environ.items() if not key.startswith("GIT_")}
     env["GIT_NO_REPLACE_OBJECTS"] = "1"
-    result = subprocess.run(["git", *args], cwd=root, env=env, capture_output=True, timeout=60)
+    result = subprocess.run(
+        ["git", "-c", f"safe.directory={root}", *args],
+        cwd=root,
+        env=env,
+        capture_output=True,
+        timeout=60,
+    )
     if result.returncode:
         raise ValueError(f"Validation policy Git inspection failed: git {args[0]}")
     return result.stdout
@@ -287,7 +310,7 @@ def main():
             paths = changed_paths(root, args.base, args.head, args.include_working_tree)
         else:
             raise ValueError("Supply --path or --base")
-        plan = plan_paths(paths, args.test_filter, args.force_full)
+        plan = plan_paths(paths, args.test_filter, args.force_full, root)
         plan["reviewedUntrackedPaths"] = reviewed_untracked_paths(root, paths)
         if args.github_output:
             write_github_outputs(plan, args.github_output)

@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import urllib.error
 import urllib.parse
@@ -18,20 +17,35 @@ from mosaic_repository import (
 
 # Canonical downstream identity used by fixtures and live operations.
 REPOSITORY = MOSAIC_DOWNSTREAM_REPOSITORY
-WORKFLOW = ".github/workflows/ci.yml"
-JOB = "Full validation"
+WORKFLOW = ".github/workflows/downstream-validation.yml"
+JOB = "Downstream validation"
 CONTRACT = "pr-policy-v1"
-NON_ANDROID = "NON_ANDROID"
-ANDROID_FULL = "ANDROID_FULL"
-VALIDATION_CLASSES = {NON_ANDROID, ANDROID_FULL}
-CLASSIFY_STEP = "Choose PR validation path"
-PRE_COMMIT_STEP = "Check changed files"
-OFFLINE_STEP = "Run offline tooling checks"
-FULL_STEP = "Run Full validation"
+FULL = "FULL"
+VALIDATION_CLASSES = {FULL}
+INVENTORY_STEP = "Verify workflow inventory"
+VERSION_STEP = "Test downstream version allocation"
+INSTALL_STEP = "Install dependencies"
+I18N_STEP = "Check translations"
+FORMAT_STEP = "Check formatting"
+LINT_STEP = "Lint"
+TYPECHECK_STEP = "Type check"
+TEST_STEP = "Unit tests"
+BUILD_STEP = "Build"
+VALIDATION_STEPS = (
+    INVENTORY_STEP,
+    VERSION_STEP,
+    INSTALL_STEP,
+    I18N_STEP,
+    FORMAT_STEP,
+    LINT_STEP,
+    TYPECHECK_STEP,
+    TEST_STEP,
+    BUILD_STEP,
+)
 RECORD_STEP = "Record reusable PR validation evidence"
 UPLOAD_STEP = "Upload PR validation evidence"
 ARTIFACT_RE = re.compile(
-    rf"wholphin-{CONTRACT}-(?P<class>non-android|android-full)-"
+    rf"seerr-{CONTRACT}-(?P<class>full)-"
     r"pr-(?P<pr>[1-9][0-9]*)-(?P<head>[0-9a-f]{40})-"
     r"tested-(?P<tested>[0-9a-f]{40})-tree-(?P<tree>[0-9a-f]{40})-"
     r"run-(?P<run>[1-9][0-9]*)-attempt-(?P<attempt>[1-9][0-9]*)"
@@ -62,7 +76,7 @@ class GitHub:
                 "Authorization": "Bearer " + os.environ["GH_TOKEN"],
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-                "User-Agent": "mosaic-validation-reuse",
+                "User-Agent": "seerr-validation-reuse",
             },
         )
         try:
@@ -93,7 +107,7 @@ def artifact_name(validation_class, pr, head, tested, tree, run, attempt):
         raise ValueError("PR validation evidence requires numeric PR/run identity")
     class_name = validation_class.lower().replace("_", "-")
     return (
-        f"wholphin-{CONTRACT}-{class_name}-pr-{pr}-{head}-"
+        f"seerr-{CONTRACT}-{class_name}-pr-{pr}-{head}-"
         f"tested-{tested}-tree-{tree}-"
         f"run-{run}-attempt-{attempt}"
     )
@@ -136,21 +150,11 @@ def record(root, env):
         "runId": int(run),
         "runAttempt": int(attempt),
     }
-    evidence_path = Path(env["RUNNER_TEMP"]) / "mosaic-pr-validation-evidence"
+    evidence_path = Path(env["RUNNER_TEMP"]) / "seerr-pr-validation-evidence"
     evidence_path.mkdir(parents=True, exist_ok=False)
     (evidence_path / "validation-evidence.json").write_text(
         json.dumps(evidence, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
-    apk_path = env.get("PR_APK_PATH", "")
-    if validation_class == ANDROID_FULL:
-        apk = Path(apk_path)
-        if not apk.is_file() or not re.fullmatch(
-            r"Mosaic-default-debug-[A-Za-z0-9.-]+\.apk", apk.name
-        ):
-            raise ValueError("ANDROID_FULL evidence requires the validated universal Debug APK")
-        shutil.copy2(apk, evidence_path / apk.name)
-    elif apk_path:
-        raise ValueError("NON_ANDROID evidence must not include an Android APK")
     with Path(env["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
         output.write(f"artifact_name={name}\n")
         output.write(f"evidence_path={evidence_path}\n")
@@ -172,11 +176,11 @@ def reuse_decision(root, api, env):
     expected = {
         "GITHUB_ACTIONS": "true",
         "GITHUB_EVENT_NAME": "push",
-        "GITHUB_REF": "refs/heads/main",
+        "GITHUB_REF": "refs/heads/downstream-main",
         "GITHUB_REF_PROTECTED": "true",
     }
     if any(env.get(key) != value for key, value in expected.items()):
-        raise ValueError("not an exact protected-main push")
+        raise ValueError("not an exact protected downstream-main push")
     main_sha = git(root, "rev-parse", "HEAD")
     if env.get("GITHUB_SHA") != main_sha:
         raise ValueError("protected-main checkout differs from the event SHA")
@@ -193,7 +197,7 @@ def reuse_decision(root, api, env):
             if item.get("merged_at")
             and item.get("merge_commit_sha") == main_sha
             and item.get("base", {}).get("repo", {}).get("full_name") == repository
-            and item.get("base", {}).get("ref") == "main"
+            and item.get("base", {}).get("ref") == "downstream-main"
             and item.get("head", {}).get("repo", {}).get("full_name") == repository
         ],
         "no unique same-repository merged PR owns the main commit",
@@ -267,15 +271,10 @@ def reuse_decision(root, api, env):
 
             if any(
                 conclusion(name) != "success"
-                for name in (CLASSIFY_STEP, PRE_COMMIT_STEP, OFFLINE_STEP, RECORD_STEP, UPLOAD_STEP)
+                for name in VALIDATION_STEPS + (RECORD_STEP, UPLOAD_STEP)
             ):
                 continue
-            full_result = conclusion(FULL_STEP)
-            if (
-                validation_class == ANDROID_FULL and full_result != "success"
-            ) or (
-                validation_class == NON_ANDROID and full_result != "skipped"
-            ):
+            if validation_class != FULL:
                 continue
             accepted.append((run, artifact, match, validation_class))
 

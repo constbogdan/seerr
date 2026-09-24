@@ -21,7 +21,16 @@ class OfflineTestRunnerTests(unittest.TestCase):
                 )
             summary = root / "real-summary.md"
             output = root / "real-output.txt"
-            env = dict(os.environ, GITHUB_STEP_SUMMARY=str(summary), GITHUB_OUTPUT=str(output))
+            env = dict(
+                os.environ,
+                GITHUB_STEP_SUMMARY=str(summary),
+                GITHUB_OUTPUT=str(output),
+                GH_TOKEN="fixture-gh-token",
+                GITHUB_TOKEN="fixture-github-token",
+                SYNC_APP_ID="12345",
+                SYNC_APP_PRIVATE_KEY="fixture-private-key",
+                SYNC_PUBLISH_TOKEN="fixture-publish-token",
+            )
             result = subprocess.run(
                 [sys.executable, "-B", str(RUNNER), "--start", str(root),
                  "--pattern", pattern],
@@ -39,11 +48,27 @@ class OfflineTestRunnerTests(unittest.TestCase):
                     print('Recovered · downstream-build-5')
                     self.assertNotIn('GITHUB_STEP_SUMMARY', os.environ)
                     self.assertNotIn('GITHUB_OUTPUT', os.environ)
+                    self.assertNotIn('GH_TOKEN', os.environ)
+                    self.assertNotIn('GITHUB_TOKEN', os.environ)
+                    self.assertNotIn('SYNC_APP_ID', os.environ)
+                    self.assertNotIn('SYNC_APP_PRIVATE_KEY', os.environ)
+                    self.assertNotIn('SYNC_PUBLISH_TOKEN', os.environ)
         """)
         self.assertEqual(0, result.returncode, result.stderr)
         self.assertNotIn("Recovered", result.stdout + result.stderr)
         self.assertFalse(summary_exists)
         self.assertFalse(output_exists)
+
+    def test_pattern_cannot_escape_or_select_non_test_files(self):
+        for pattern in ("../test_fixture.py", "*.py", "fixture.py", "test_*/x.py"):
+            with self.subTest(pattern=pattern):
+                result, summary_exists, output_exists = self.run_fixture(
+                    "import unittest\n", pattern=pattern
+                )
+                self.assertNotEqual(0, result.returncode)
+                self.assertIn("offline test pattern must be", result.stderr)
+                self.assertFalse(summary_exists)
+                self.assertFalse(output_exists)
 
     def test_failure_retains_fixture_diagnostics(self):
         result, _, _ = self.run_fixture("""

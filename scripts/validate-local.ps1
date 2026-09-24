@@ -8,13 +8,72 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$legacyLogPath = Join-Path $repoRoot 'validation.log'
-$gradleWrapper = Join-Path $repoRoot 'gradlew.bat'
 $policyScript = Join-Path $PSScriptRoot 'mosaic_validation_policy.py'
-. (Join-Path $PSScriptRoot 'mosaic_output.ps1')
+$config = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'prepare-pr.config.psd1')
+$runDirectory = Join-Path ([IO.Path]::GetTempPath()) ("seerr-validation-" + [guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Path $runDirectory | Out-Null
 
-$output = New-MosaicRunOutput -RepositoryRoot $repoRoot -Kind validation -LegacyLogPath $legacyLogPath
-Write-MosaicRunLog $output "Mosaic local validation ($Level)"
+function Get-TextHash([string]$Value) {
+    $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha256.ComputeHash($bytes)
+        return ([BitConverter]::ToString($hash) -replace '-', '').ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+    }
+}
+
+function Get-GitText([string[]]$Arguments) {
+    $errorPath = Join-Path ([IO.Path]::GetTempPath()) ("seerr-git-stderr-" + [guid]::NewGuid().ToString('N') + '.log')
+    $previousErrorAction = $ErrorActionPreference
+    try {
+        $ErrorActionPreference = 'Continue'
+        $lines = @(& git @Arguments 2> $errorPath)
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorAction
+    }
+    if ($exitCode -ne 0) {
+        $diagnostic = if (Test-Path -LiteralPath $errorPath) {
+            (Get-Content -LiteralPath $errorPath -Raw).Trim()
+        } else { '' }
+        throw "Git inspection failed: git $($Arguments[0]). $diagnostic"
+    }
+    if (Test-Path -LiteralPath $errorPath) { [IO.File]::Delete($errorPath) }
+    return ($lines -join "`n").TrimEnd()
+}
+
+function Get-RepositorySnapshot {
+    $head = Get-GitText @('rev-parse', 'HEAD')
+    $headTree = Get-GitText @('rev-parse', 'HEAD^{tree}')
+    $index = Get-TextHash (Get-GitText @('diff', '--cached', '--binary', 'HEAD', '--'))
+    $working = Get-TextHash (Get-GitText @('diff', '--binary', '--'))
+    $untracked = @(Get-GitText @('ls-files', '--others', '--exclude-standard') -split "`n" | Where-Object { $_ })
+    $untrackedIdentity = foreach ($path in $untracked) {
+        "$path`0$(Get-GitText @('hash-object', '--', $path))"
+    }
+    return [pscustomobject]@{
+        Head = $head
+        HeadTree = $headTree
+        Index = $index
+        Working = $working
+        Untracked = Get-TextHash ($untrackedIdentity -join "`n")
+    }
+}
+
+function Assert-RepositorySnapshot($Expected, [string]$Stage) {
+    $actual = Get-RepositorySnapshot
+    $drift = [Collections.Generic.List[string]]::new()
+    foreach ($field in @('Head', 'HeadTree', 'Index', 'Working', 'Untracked')) {
+        if ($actual.$field -cne $Expected.$field) { $drift.Add($field) }
+    }
+    if ($drift.Count) {
+        throw "$Stage changed the reviewed repository snapshot ($($drift -join ', ')); inspect and rerun validation."
+    }
+}
 
 function Find-Python {
     $python = Get-Command python -ErrorAction SilentlyContinue
@@ -22,39 +81,11 @@ function Find-Python {
     return $python.Source
 }
 
-function Initialize-JavaEnvironment {
-    if ($env:JAVA_HOME -and (Test-Path -LiteralPath (Join-Path $env:JAVA_HOME 'bin\java.exe'))) {
-        Write-MosaicRunLog $output "JAVA_HOME=$env:JAVA_HOME"
-    } elseif (-not (Get-Command java.exe -ErrorAction SilentlyContinue)) {
-        $androidStudioJbr = Join-Path $env:ProgramFiles 'Android\Android Studio\jbr'
-        if (-not (Test-Path -LiteralPath (Join-Path $androidStudioJbr 'bin\java.exe'))) {
-            throw 'No Java runtime found. Set JAVA_HOME or install Android Studio with its bundled JBR.'
-        }
-        $env:JAVA_HOME = $androidStudioJbr
-        Write-MosaicRunLog $output "JAVA_HOME discovered: $env:JAVA_HOME"
-    }
-    if ($env:JAVA_HOME) {
-        $javaBin = Join-Path $env:JAVA_HOME 'bin'
-        $normalizedJavaBin = $javaBin.TrimEnd('\')
-        $pathEntries = @($env:PATH -split ';' | ForEach-Object { $_.Trim().TrimEnd('\') })
-        if ($normalizedJavaBin -notin $pathEntries) {
-            $env:PATH = if ($env:PATH) { "$javaBin;$env:PATH" } else { $javaBin }
-            Write-MosaicRunLog $output "Added Java to validation process PATH: $javaBin"
-        }
-    }
-    $java = Get-Command java.exe -ErrorAction SilentlyContinue
-    if (-not $java) { throw 'JAVA_HOME was resolved, but java.exe is still unavailable on the validation process PATH.' }
-    $previousErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & $java.Source -version 2>&1 | Out-Null
-    $javaExitCode = $LASTEXITCODE
-    $ErrorActionPreference = $previousErrorAction
-    if ($javaExitCode -ne 0) { throw "java.exe could not execute (exit $javaExitCode)." }
-    if (-not $env:GRADLE_USER_HOME) {
-        if (-not $env:USERPROFILE) { throw 'USERPROFILE is unavailable. Set GRADLE_USER_HOME explicitly.' }
-        $env:GRADLE_USER_HOME = Join-Path $env:USERPROFILE '.gradle'
-    }
-    Write-MosaicRunLog $output "java.exe=$($java.Source); GRADLE_USER_HOME=$env:GRADLE_USER_HOME"
+function Find-Pnpm {
+    $name = if ($IsWindows -or $env:OS -eq 'Windows_NT') { 'pnpm.cmd' } else { 'pnpm' }
+    $pnpm = Get-Command $name -ErrorAction SilentlyContinue
+    if (-not $pnpm) { throw "pnpm is required and '$name' is unavailable on PATH." }
+    return $pnpm.Source
 }
 
 function Get-ValidationPlan([string]$Python) {
@@ -62,7 +93,7 @@ function Get-ValidationPlan([string]$Python) {
     if ($ChangedPath.Count) {
         foreach ($path in $ChangedPath) { $arguments += @('--path', $path) }
     } else {
-        $arguments += @('--base', 'origin/main', '--head', 'HEAD', '--include-working-tree')
+        $arguments += @('--base', "$($config.OriginRemote)/$($config.BaseBranch)", '--head', 'HEAD', '--include-working-tree')
     }
     foreach ($filter in @($TestFilter | Where-Object { $_ })) { $arguments += @('--test-filter', $filter) }
     $planOutput = @(& $Python @arguments 2>&1)
@@ -70,85 +101,95 @@ function Get-ValidationPlan([string]$Python) {
     return (($planOutput -join "`n") | ConvertFrom-Json)
 }
 
-function Find-PreCommit([string]$Python) {
-    $previousErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    & $Python -m pre_commit --version 2>&1 | Out-Null
-    $available = $LASTEXITCODE -eq 0
-    $ErrorActionPreference = $previousErrorAction
-    if ($available) { return [pscustomobject]@{ File = $Python; Prefix = @('-m', 'pre_commit'); Display = 'python -m pre_commit' } }
-    throw "pre-commit is required. Install it once with 'python -m pip install pre-commit'; validation never installs global tooling."
+function Assert-WorkflowInventory {
+    $expectedPath = Join-Path $repoRoot 'docs/downstream-workflow-inventory.txt'
+    $expected = @(Get-Content -LiteralPath $expectedPath | Where-Object { $_ })
+    $actual = @(
+        Get-ChildItem -LiteralPath (Join-Path $repoRoot '.github/workflows') -File |
+            Where-Object { $_.Extension -in @('.yml', '.yaml') } |
+            ForEach-Object Name |
+            Sort-Object -CaseSensitive
+    )
+    if (($expected -join "`n") -cne ($actual -join "`n")) {
+        throw 'Workflow inventory changed; review inherited workflow safety and update the inventory explicitly.'
+    }
 }
 
-function Invoke-StageCommand {
-    param([int]$Number, [int]$Total, [string]$Name, [string]$LogName, [string]$File, [string[]]$Arguments, [string]$Display)
-    Start-MosaicStage $output $Number $Total $Name $LogName
-    $exitCode = Invoke-MosaicLoggedCommand $output $File $Arguments $Display
-    if ($exitCode -ne 0) {
-        if ($Name -like '*pre-commit*') {
-            Write-MosaicStageLog $output 'Autofix hooks may have modified files. Inspect the working tree before rerunning validation.'
+function Invoke-ValidationStage {
+    param([int]$Number, [int]$Total, $Stage, $Snapshot)
+    Write-Host "[$Number/$Total] $($Stage.Name) [RUN]"
+    $logPath = Join-Path $runDirectory $Stage.Log
+    $previousErrorAction = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    if ($Stage.Action) {
+        try {
+            $lines = @(& $Stage.Action 2>&1)
+            $exitCode = 0
+        } catch {
+            $lines = @($_.Exception.Message)
+            $exitCode = 1
         }
-        Fail-MosaicStage $output "Command exited with code $exitCode."
-        $output.CurrentStageName = $null
-        throw "$Name failed with exit code $exitCode."
+    } else {
+        $lines = @(& $Stage.File @($Stage.Args) 2>&1)
+        $exitCode = $LASTEXITCODE
     }
-    Complete-MosaicStage $output
+    $ErrorActionPreference = $previousErrorAction
+    $lines | Set-Content -LiteralPath $logPath -Encoding utf8
+    $lines | ForEach-Object { Write-Host $_ }
+    try {
+        Assert-RepositorySnapshot $Snapshot $Stage.Name
+    } catch {
+        Write-Host "[$Number/$Total] $($Stage.Name) [FAIL]"
+        throw
+    }
+    if ($exitCode -ne 0) {
+        Write-Host "[$Number/$Total] $($Stage.Name) [FAIL]"
+        throw "$($Stage.Name) failed with exit code $exitCode. Full log: $logPath"
+    }
+    Write-Host "[$Number/$Total] $($Stage.Name) [PASS]"
 }
 
 try {
     Set-Location -LiteralPath $repoRoot
+    foreach ($name in @(
+        'GH_TOKEN',
+        'GITHUB_TOKEN',
+        'SYNC_APP_ID',
+        'SYNC_APP_PRIVATE_KEY',
+        'SYNC_PUBLISH_TOKEN'
+    )) {
+        Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
+    }
+
     $python = Find-Python
+    $pnpm = Find-Pnpm
+    $node = (Get-Command node -ErrorAction Stop).Source
+    $validationConfig = Join-Path $runDirectory 'config'
+    New-Item -ItemType Directory -Path $validationConfig | Out-Null
+    $env:CONFIG_DIRECTORY = $validationConfig
     $plan = Get-ValidationPlan $python
+    $selectedTests = @($plan.focusedTests | Where-Object { $_ })
     $effectiveMode = if ($Level -eq 'Full') {
         'full'
-    } elseif ($Level -eq 'Fast' -and $TestFilter.Count) {
-        'targeted-android'
     } elseif ($Level -eq 'Fast' -and $plan.validationMode -eq 'full') {
-        'non-android'
+        if ($selectedTests.Count) { 'focused' } else { 'scoped' }
     } else {
         $plan.validationMode
     }
-    $selectedTests = if ($Level -eq 'Fast' -and $TestFilter.Count) {
-        @($TestFilter)
-    } else {
-        @($plan.focusedTests)
+
+    Write-Host 'Seerr validation'
+    Write-Host "Requested level: $Level"
+    Write-Host "Required hosted mode: $($plan.validationMode)"
+    Write-Host "Selected local path: $effectiveMode"
+    Write-Host "Validation risk: $($plan.validationRisk)"
+    if ($Level -eq 'Fast' -and $plan.validationMode -eq 'full') {
+        Write-Host 'Fast provides bounded local feedback only; authoritative Downstream validation still requires Full.'
     }
-    if ($env:MOSAIC_OUTPUT_COMPACT -eq '1') {
-        Write-Host ((Get-MosaicConsolePrefix) + "Validation: $Level $([char]0xB7) $effectiveMode")
-    } else {
-        Write-Host 'Mosaic validation'
-        Write-Host "Requested level: $Level"
-        Write-Host "Release relevance: $($plan.releaseRelevance)"
-        Write-Host "Validation risk: $($plan.validationRisk)"
-        Write-Host "Selected path: $effectiveMode"
-        if ($effectiveMode -eq 'full' -and $Level -ne 'Full') { Write-Host "$Level escalated to Full: $($plan.reason)" }
-        if ($Level -eq 'Fast' -and $plan.validationMode -eq 'full') { Write-Host 'Fast provides local feedback only; authoritative PR CI will run the required Full policy.' }
-    }
-    Write-MosaicRunLog $output "RequestedLevel=$Level; EffectiveMode=$effectiveMode; ReleaseRelevance=$($plan.releaseRelevance); ValidationRisk=$($plan.validationRisk); ChangedPaths=$(@($plan.paths).Count); Filters=$($selectedTests -join ',')"
 
     $stages = [Collections.Generic.List[object]]::new()
     $scopedPaths = @($plan.paths | ForEach-Object { $_.path } | Where-Object { Test-Path -LiteralPath (Join-Path $repoRoot $_) })
-    $reviewedUntrackedPaths = @($plan.reviewedUntrackedPaths | Where-Object { Test-Path -LiteralPath (Join-Path $repoRoot $_) })
-    $isFullPath = $effectiveMode -eq 'full'
-    if ($isFullPath) {
-        $preCommit = Find-PreCommit $python
-        $stages.Add([pscustomobject]@{ Name = 'Repository-wide pre-commit'; Log = 'pre-commit.log'; File = $preCommit.File; Args = @($preCommit.Prefix + @('run', '--all-files')); Display = "$($preCommit.Display) run --all-files" })
-        if ($reviewedUntrackedPaths.Count) {
-            $stages.Add([pscustomobject]@{ Name = 'Reviewed untracked pre-commit'; Log = 'pre-commit-untracked.log'; File = $preCommit.File; Args = @($preCommit.Prefix + @('run', '--files') + $reviewedUntrackedPaths); Display = "$($preCommit.Display) run --files <reviewed untracked paths>" })
-        }
-    } else {
-        $preCommit = Find-PreCommit $python
-        $preCommitArguments = @($preCommit.Prefix + @('run'))
-        $preCommitDisplay = "$($preCommit.Display) run"
-        if ($scopedPaths.Count) {
-            $preCommitArguments += @('--files') + $scopedPaths
-            $preCommitDisplay += ' --files <changed paths>'
-        } else {
-            $preCommitArguments += '--all-files'
-            $preCommitDisplay += ' --all-files'
-        }
-        $stages.Add([pscustomobject]@{ Name = 'Changed-scope pre-commit'; Log = 'pre-commit.log'; File = $preCommit.File; Args = $preCommitArguments; Display = $preCommitDisplay })
-    }
+    $formattedPaths = @($scopedPaths | Where-Object { $_ -match '\.(cjs|css|js|json|md|mdx|mjs|ts|tsx|ya?ml)$' })
+    $isFullPath = $Level -eq 'Full' -or ($Level -eq 'Standard' -and $plan.validationMode -eq 'full')
     $offlinePatterns = if ($isFullPath) {
         @('test_*.py')
     } elseif ($Level -eq 'Fast') {
@@ -157,15 +198,6 @@ try {
         @($plan.offlineTestPattern)
     } else {
         @()
-    }
-    $deferredOfflineToPr = (
-        $Level -eq 'Fast' -and
-        $plan.offlineTestPattern -and
-        ($plan.offlineTestPattern -eq 'test_*.py' -or $plan.offlineTestPattern -notin $offlinePatterns)
-    )
-    if ($deferredOfflineToPr) {
-        if ($env:MOSAIC_OUTPUT_COMPACT -ne '1') { Write-Host 'Fast deferred heavyweight or complete offline tooling to authoritative PR CI.' }
-        Write-MosaicRunLog $output 'Heavyweight or complete offline tooling deferred to authoritative PR CI.'
     }
     foreach ($offlinePattern in $offlinePatterns) {
         $multipleOfflinePatterns = $offlinePatterns.Count -gt 1
@@ -177,36 +209,38 @@ try {
         }
         $stages.Add([pscustomobject]@{ Name = $offlineName; Log = $offlineLog; File = $python; Args = @('-B', 'scripts/run_offline_tests.py', '--pattern', $offlinePattern); Display = "python -B scripts/run_offline_tests.py --pattern '$offlinePattern'" })
     }
-    if ($effectiveMode -eq 'targeted-android') {
-        Initialize-JavaEnvironment
-        $gradleArgs = @()
-        if ($Level -eq 'Standard') { $gradleArgs += ':app:compileDefaultDebugKotlin' }
-        $gradleArgs += ':app:testDefaultDebugUnitTest'
-        foreach ($filter in $selectedTests) { $gradleArgs += @('--tests', $filter) }
-        $name = if ($Level -eq 'Fast') { 'Focused JVM tests' } else { 'Kotlin compile + focused JVM tests' }
-        $stages.Add([pscustomobject]@{ Name = $name; Log = 'focused-android.log'; File = $gradleWrapper; Args = $gradleArgs; Display = '.\gradlew ' + ($gradleArgs -join ' ') })
-    } elseif ($effectiveMode -eq 'full') {
-        Initialize-JavaEnvironment
-        $gradleArgs = @(':app:compileDefaultDebugKotlin', ':app:testDefaultDebugUnitTest', ':app:assembleDefaultDebug')
-        $stages.Add([pscustomobject]@{ Name = 'Full default-debug validation'; Log = 'full-android.log'; File = $gradleWrapper; Args = $gradleArgs; Display = '.\gradlew ' + ($gradleArgs -join ' ') })
+
+    if (-not $isFullPath -and $formattedPaths.Count) {
+        $stages.Add([pscustomobject]@{ Name = 'Changed-scope formatting'; Log = 'format-check.log'; File = $pnpm; Args = @('exec', 'prettier', '--check', '--') + $formattedPaths })
     }
-    $stages.Add([pscustomobject]@{ Name = 'Git whitespace check'; Log = 'git-diff-check.log'; File = 'git'; Args = @('diff', '--check'); Display = 'git diff --check' })
+    if (-not $isFullPath -and $effectiveMode -eq 'focused' -and $selectedTests.Count) {
+        $stages.Add([pscustomobject]@{ Name = 'Focused tests'; Log = 'focused-tests.log'; File = $pnpm; Args = @('test') + $selectedTests })
+    }
+    if ($isFullPath) {
+        $stages.Add([pscustomobject]@{ Name = 'Install dependencies'; Log = 'install.log'; File = $pnpm; Args = @('install', '--frozen-lockfile') })
+        $stages.Add([pscustomobject]@{ Name = 'Internationalization consistency'; Log = 'i18n.log'; File = $node; Args = @('bin/check-i18n.js') })
+        $stages.Add([pscustomobject]@{ Name = 'Formatting'; Log = 'format-check.log'; File = $pnpm; Args = @('format:check') })
+        $stages.Add([pscustomobject]@{ Name = 'Lint'; Log = 'lint.log'; File = $pnpm; Args = @('lint') })
+        $stages.Add([pscustomobject]@{ Name = 'Typecheck'; Log = 'typecheck.log'; File = $pnpm; Args = @('typecheck') })
+        $stages.Add([pscustomobject]@{ Name = 'Unit tests'; Log = 'tests.log'; File = $pnpm; Args = @('test') })
+        $stages.Add([pscustomobject]@{ Name = 'Build'; Log = 'build.log'; File = $pnpm; Args = @('build') })
+        $stages.Add([pscustomobject]@{ Name = 'Workflow inventory'; Log = 'workflow-inventory.log'; Action = { Assert-WorkflowInventory } })
+    }
+    $stages.Add([pscustomobject]@{ Name = 'Git whitespace check'; Log = 'git-diff-check.log'; File = 'git'; Args = @('diff', '--check') })
+
+    $snapshot = Get-RepositorySnapshot
 
     for ($index = 0; $index -lt $stages.Count; $index++) {
         $stage = $stages[$index]
-        Invoke-StageCommand ($index + 1) $stages.Count $stage.Name $stage.Log $stage.File $stage.Args $stage.Display
+        Invoke-ValidationStage ($index + 1) $stages.Count $stage $snapshot
     }
-    Complete-MosaicRun $output "SUCCESS: $Level validation completed ($effectiveMode)."
+    Write-Host "SUCCESS: $Level validation completed ($effectiveMode)."
+    Write-Host "Logs: $runDirectory"
     $global:LASTEXITCODE = 0
 } catch {
-    if ($output.CurrentStageName) { Fail-MosaicStage $output $_.Exception.Message }
-    if ($output.Timer.IsRunning) { $output.Timer.Stop() }
-    Write-MosaicRunLog $output "Validation failed: $($_.Exception.Message)"
-    Write-Host "Logs: $($output.RunDirectory)"
+    Write-Error $_.Exception.Message
+    Write-Host "Logs: $runDirectory"
     exit 1
 } finally {
     Set-Location -LiteralPath $repoRoot
-    if (Publish-MosaicLegacyLog $output) {
-        if ($env:MOSAIC_OUTPUT_COMPACT -ne '1') { Write-Host "Compatibility log: $legacyLogPath" }
-    }
 }
