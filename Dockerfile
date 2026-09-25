@@ -53,6 +53,8 @@ RUN rm -rf .next/cache
 FROM node:22.23.2-alpine3.23@sha256:46825fbbd4e996a78b7a2cdc08d75e38a5a505bdab95dcda55605359bf124bc6
 ARG SOURCE_DATE_EPOCH
 ARG COMMIT_TAG
+ARG BUILD_VERSION
+ARG BUILD_CHANNEL
 ENV NODE_ENV=production
 ENV COMMIT_TAG=${COMMIT_TAG}
 
@@ -68,7 +70,8 @@ COPY --chown=node:node --from=build /app/.next ./.next
 COPY --chown=node:node --from=build /app/dist ./dist
 
 RUN touch config/DOCKER && \
-  echo "{\"commitTag\": \"${COMMIT_TAG}\"}" > committag.json
+  echo "{\"commitTag\": \"${COMMIT_TAG}\"}" > committag.json && \
+  echo "{\"channel\": \"${BUILD_CHANNEL}\", \"version\": \"${BUILD_VERSION}\", \"commitTag\": \"${COMMIT_TAG}\"}" > buildmetadata.json
 
 EXPOSE 5055
 

@@ -30,6 +30,7 @@ const messages = defineMessages('components.Settings.SettingsAbout', {
   documentation: 'Documentation',
   outofdate: 'Out of Date',
   uptodate: 'Up to Date',
+  downstreamBuild: 'Downstream Build',
   versionCheckDisabled: 'Version Check Disabled',
   runningDevelop:
     'You are running the <code>develop</code> branch of Seerr, which is only recommended for those contributing to development or assisting with bleeding-edge testing.',
@@ -64,7 +65,7 @@ const SettingsAbout = () => {
       />
       <div className="section">
         <List title={intl.formatMessage(messages.aboutseerr)}>
-          {data.version.startsWith('develop-') && (
+          {data.buildChannel === 'develop' && (
             <Alert
               title={intl.formatMessage(messages.runningDevelop, {
                 code: (msg: React.ReactNode) => (
@@ -80,12 +81,25 @@ const SettingsAbout = () => {
             <code className="truncate">
               {data.version.replace('develop-', '')}
             </code>
-            {settings.currentSettings.versionCheck ? (
+            {data.buildChannel === 'downstream' ? (
+              <a
+                href={`https://github.com/constbogdan/seerr/commit/${data.commitTag}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <Badge
+                  badgeType="primary"
+                  className="ml-2 !cursor-pointer transition hover:bg-indigo-400"
+                >
+                  {intl.formatMessage(messages.downstreamBuild)}
+                </Badge>
+              </a>
+            ) : settings.currentSettings.versionCheck ? (
               status && status.commitTag !== 'local' ? (
                 status.updateAvailable ? (
                   <a
                     href={
-                      data.version.startsWith('develop-')
+                      data.buildChannel === 'develop'
                         ? `https://github.com/seerr-team/seerr/compare/${status.commitTag}...develop`
                         : 'https://github.com/seerr-team/seerr/releases'
                     }
@@ -102,7 +116,7 @@ const SettingsAbout = () => {
                 ) : (
                   <a
                     href={
-                      data.version.startsWith('develop-')
+                      data.buildChannel === 'develop'
                         ? 'https://github.com/seerr-team/seerr/commits/develop'
                         : 'https://github.com/seerr-team/seerr/releases'
                     }
@@ -121,7 +135,7 @@ const SettingsAbout = () => {
             ) : (
               <a
                 href={
-                  data.version.startsWith('develop-')
+                  data.buildChannel === 'develop'
                     ? 'https://github.com/seerr-team/seerr/commits/develop'
                     : 'https://github.com/seerr-team/seerr/releases'
                 }

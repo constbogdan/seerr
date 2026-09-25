@@ -1,3 +1,4 @@
+import type { BuildChannel } from '@server/utils/appVersion';
 import type { DnsEntries, DnsStats } from 'dns-caching';
 import type { PaginatedResponse } from './common';
 
@@ -15,6 +16,8 @@ export interface LogsResultsResponse extends PaginatedResponse {
 
 export interface SettingsAboutResponse {
   version: string;
+  buildChannel: BuildChannel;
+  commitTag: string;
   totalRequests: number;
   totalMediaItems: number;
   tz?: string;
@@ -76,6 +79,7 @@ export interface CacheResponse {
 
 export interface StatusResponse {
   version: string;
+  buildChannel: BuildChannel;
   commitTag: string;
   updateAvailable?: boolean;
   commitsBehind?: number;

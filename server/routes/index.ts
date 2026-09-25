@@ -24,7 +24,12 @@ import {
   appDataPermissions,
   appDataStatus,
 } from '@server/utils/appDataVolume';
-import { getAppVersion, getCommitTag } from '@server/utils/appVersion';
+import {
+  getAppVersion,
+  getBuildChannel,
+  getCommitTag,
+  shouldCheckUpstreamVersion,
+} from '@server/utils/appVersion';
 import restartFlag from '@server/utils/restartFlag';
 import { isPerson } from '@server/utils/typeHelpers';
 import { Router } from 'express';
@@ -57,8 +62,9 @@ router.get<unknown, StatusResponse>('/status', async (req, res) => {
       : settings.fullPublicSettings.versionCheck;
   let updateAvailable = false;
   let commitsBehind = 0;
+  const checkUpstreamVersion = checkUpdate && shouldCheckUpstreamVersion();
 
-  if (checkUpdate) {
+  if (checkUpstreamVersion) {
     const githubApi = new GithubAPI();
 
     if (currentVersion.startsWith('develop-') && commitTag !== 'local') {
@@ -95,8 +101,9 @@ router.get<unknown, StatusResponse>('/status', async (req, res) => {
 
   return res.status(200).json({
     version: getAppVersion(),
+    buildChannel: getBuildChannel(),
     commitTag: getCommitTag(),
-    ...(checkUpdate && { updateAvailable, commitsBehind }),
+    ...(checkUpstreamVersion && { updateAvailable, commitsBehind }),
     restartRequired: restartFlag.isSet(),
   });
 });

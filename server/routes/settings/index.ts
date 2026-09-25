@@ -28,7 +28,11 @@ import { isAuthenticated } from '@server/middleware/auth';
 import discoverSettingRoutes from '@server/routes/settings/discover';
 import { ApiError } from '@server/types/error';
 import { appDataPath } from '@server/utils/appDataVolume';
-import { getAppVersion } from '@server/utils/appVersion';
+import {
+  getAppVersion,
+  getBuildChannel,
+  getCommitTag,
+} from '@server/utils/appVersion';
 import { dnsCache } from '@server/utils/dnsCache';
 import { getHostname } from '@server/utils/getHostname';
 import type { DnsEntries, DnsStats } from 'dns-caching';
@@ -890,6 +894,8 @@ settingsRoutes.get('/about', async (req, res) => {
 
   return res.status(200).json({
     version: getAppVersion(),
+    buildChannel: getBuildChannel(),
+    commitTag: getCommitTag(),
     totalMediaItems,
     totalRequests,
     tz: process.env.TZ,
