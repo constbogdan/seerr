@@ -18,7 +18,7 @@ import tempfile
 import unicodedata
 from urllib.parse import quote
 
-from mosaic_repository import (
+from seerr_repository import (
     PROTECTED_BRANCH,
     SEERR_DOWNSTREAM_REPOSITORY,
     UPSTREAM_REPOSITORY,

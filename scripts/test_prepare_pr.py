@@ -164,9 +164,9 @@ class PreparePrFixtureTest(unittest.TestCase):
             self.root / "scripts/prepare-pr.config.psd1",
         )
         for name in (
-            "mosaic_output.ps1",
-            "mosaic_validation_policy.py",
-            "mosaic_change_classification.py",
+            "seerr_output.ps1",
+            "seerr_validation_policy.py",
+            "seerr_change_classification.py",
         ):
             shutil.copy2(ROOT / "scripts" / name, self.root / "scripts" / name)
         (self.root / ".github/pull_request_template.md").write_text("fixture\n", encoding="utf-8")
@@ -678,7 +678,6 @@ raise SystemExit(2)
                         body.index("<summary>Confirmed paths (1)</summary>"))
         self.assertIn("Expected hosted path: Scoped local feedback; authoritative Downstream validation.", body)
         self.assertIn("Required Downstream validation: pending.", body)
-        self.assertNotIn("APK", body)
         self.assertNotIn("release", body.lower())
 
     def test_expected_hosted_path_uses_existing_policy_for_full_scope(self):
@@ -700,7 +699,6 @@ raise SystemExit(2)
         body = (Path(env["FAKE_GH_STATE"]) / "pr-body.md").read_text(encoding="utf-8")
         self.assertIn("Expected hosted path: Full local feedback; authoritative Downstream validation.", body)
         self.assertIn("Required Downstream validation: pending.", body)
-        self.assertNotIn("APK", body)
 
     def test_default_local_checks_are_fast_and_preserve_explicit_filter(self):
         self.prepare("Audit")

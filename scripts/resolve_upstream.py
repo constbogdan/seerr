@@ -13,8 +13,8 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-import mosaic_validation_policy
-from mosaic_repository import (
+import seerr_validation_policy
+from seerr_repository import (
     PROTECTED_BRANCH,
     SEERR_DOWNSTREAM_REPOSITORY,
     UPSTREAM_REPOSITORY,
@@ -864,9 +864,9 @@ def derive_filters(root: Path, paths: list[str], attention: list[str]) -> list[s
                          if path.startswith(("server/", "src/"))
                          and path.endswith((".ts", ".tsx"))
                          and not _is_focused_test(path)})
-    mapped, _ = mosaic_validation_policy.focused_tests(production, root)
+    mapped, _ = seerr_validation_policy.focused_tests(production, root)
     changed_tests = {
-        mosaic_validation_policy.authenticated_test_filter(root, path, paths)
+        seerr_validation_policy.authenticated_test_filter(root, path, paths)
         for path in paths if _is_focused_test(path)
     }
     return sorted(set(mapped) | changed_tests)
@@ -874,19 +874,19 @@ def derive_filters(root: Path, paths: list[str], attention: list[str]) -> list[s
 
 def validate_resolution_scope(root: Path, paths: list[str], attention: list[str]) -> None:
     attention_set = set(attention)
-    attention_filters, _ = mosaic_validation_policy.focused_tests(attention, root)
+    attention_filters, _ = seerr_validation_policy.focused_tests(attention, root)
     unrelated = []
     for path in paths:
         if path in attention_set or path == ".upstream-sync/blocked-context.json":
             continue
         if _is_focused_test(path):
             try:
-                mosaic_validation_policy.authenticated_test_filter(root, path, paths)
+                seerr_validation_policy.authenticated_test_filter(root, path, paths)
             except ValueError:
                 unrelated.append(path)
             continue
         if path.startswith(("server/", "src/")) and path.endswith((".ts", ".tsx")):
-            mapped, fallback = mosaic_validation_policy.focused_tests([path], root)
+            mapped, fallback = seerr_validation_policy.focused_tests([path], root)
             if not fallback and set(mapped) & set(attention_filters):
                 continue
         unrelated.append(path)
@@ -898,7 +898,7 @@ def validate_resolution_scope(root: Path, paths: list[str], attention: list[str]
 def validate_filter_targets(root: Path, filters: list[str], reviewed_paths=()) -> None:
     try:
         for test_filter in filters:
-            mosaic_validation_policy.authenticated_test_filter(
+            seerr_validation_policy.authenticated_test_filter(
                 root, test_filter, reviewed_paths
             )
     except ValueError as error:

@@ -33,7 +33,7 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $configPath = Join-Path $PSScriptRoot 'prepare-pr.config.psd1'
 $config = Import-PowerShellDataFile -LiteralPath $configPath
-. (Join-Path $PSScriptRoot 'mosaic_output.ps1')
+. (Join-Path $PSScriptRoot 'seerr_output.ps1')
 $startingLocation = Get-Location
 $runId = '{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $PID
 $gitLogPathOutput = @(& git -C $repoRoot rev-parse --git-path 'seerr-prepare-pr-logs' 2>$null)
@@ -115,7 +115,7 @@ function Get-PrepareValidationPlan([string[]]$Paths) {
         validationMode = 'full'
     }
     $python = Get-Command python -ErrorAction SilentlyContinue
-    $policyScript = Join-Path $PSScriptRoot 'mosaic_validation_policy.py'
+    $policyScript = Join-Path $PSScriptRoot 'seerr_validation_policy.py'
     if (-not $python -or -not (Test-Path -LiteralPath $policyScript -PathType Leaf)) {
         Write-PrepareLog 'Validation-path presentation fell back conservatively because Python or the existing policy script was unavailable.'
         return $fallback

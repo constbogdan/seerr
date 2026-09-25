@@ -11,9 +11,6 @@ import subprocess
 
 PRODUCT_RELEVANT = "product-relevant"
 VALIDATION_ONLY = "validation-only"
-# Temporary compatibility for copied validation layers that are adapted later.
-APK_RELEVANT = PRODUCT_RELEVANT
-ANDROID_VALIDATION_ONLY = VALIDATION_ONLY
 TOOLING_ONLY = "tooling-only"
 DOCS_ONLY = "docs-only"
 UNKNOWN = "unknown"
@@ -117,12 +114,12 @@ def classify_path(value):
         if is_offline_tooling_test_support_path(path):
             return PathClassification(path, TOOLING_ONLY, NORMAL, "offline tooling test support")
         if _matches(name, (
-            "mosaic_*.py", "seerr_*.py", "hosted_upstream.py",
+            "seerr_*.py", "hosted_upstream.py",
             "*.ps1", "prepare-pr*.psd1",
         )):
             risk = HIGH if _matches(name, (
-                "mosaic_*.py", "seerr_*.py", "hosted_upstream.py",
-                "mosaic_output.ps1", "sync-upstream.ps1",
+                "seerr_*.py", "hosted_upstream.py",
+                "seerr_output.ps1", "sync-upstream.ps1",
                 "resolve-upstream.ps1", "prepare-pr*",
             )) else NORMAL
             return PathClassification(path, TOOLING_ONLY, risk, "repository automation")

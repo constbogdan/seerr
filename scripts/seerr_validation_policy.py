@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 
-import mosaic_change_classification as classification
+import seerr_change_classification as classification
 
 
 SCOPED = "scoped"
@@ -19,12 +19,12 @@ FULL = "full"
 FULL_VALIDATION_PATTERNS = (
     ".github/workflows/*",
     ".github/actions/*",
-    "scripts/mosaic_change_classification.py",
-    "scripts/mosaic_validation_policy.py",
+    "scripts/seerr_change_classification.py",
+    "scripts/seerr_validation_policy.py",
     "scripts/upstream_ownership_policy.json",
-    "scripts/mosaic_repository.py",
-    "scripts/mosaic_validation_reuse.py",
-    "scripts/mosaic_output.ps1",
+    "scripts/seerr_repository.py",
+    "scripts/seerr_validation_reuse.py",
+    "scripts/seerr_output.ps1",
     "scripts/seerr_downstream_version.py",
     "scripts/prepare-pr.ps1",
     "scripts/prepare-pr.config.psd1",
@@ -58,19 +58,19 @@ OFFLINE_TEST_MAP = {
     "scripts/upstream_ownership_policy.json": "test_hosted_upstream.py",
     "scripts/resolve_upstream.py": "test_resolve_upstream.py",
     "scripts/run_offline_tests.py": "test_run_offline_tests.py",
-    "scripts/mosaic_change_classification.py": "test_mosaic_change_classification.py",
-    "scripts/mosaic_repository.py": "test_mosaic_repository.py",
-    "scripts/mosaic_validation_reuse.py": "test_mosaic_validation_reuse.py",
-    "scripts/mosaic_output.ps1": "test_prepare_pr.py",
+    "scripts/seerr_change_classification.py": "test_seerr_change_classification.py",
+    "scripts/seerr_repository.py": "test_seerr_repository.py",
+    "scripts/seerr_validation_reuse.py": "test_seerr_validation_reuse.py",
+    "scripts/seerr_output.ps1": "test_prepare_pr.py",
     "scripts/seerr_downstream_version.py": "test_seerr_downstream_version.py",
 }
 
 
 BOUNDED_LOCAL_FAST_OFFLINE_PATTERNS = frozenset({
-    "test_mosaic_change_classification.py",
-    "test_mosaic_repository.py",
-    "test_mosaic_validation_policy.py",
-    "test_mosaic_validation_reuse.py",
+    "test_seerr_change_classification.py",
+    "test_seerr_repository.py",
+    "test_seerr_validation_policy.py",
+    "test_seerr_validation_reuse.py",
     "test_resolve_upstream.py",
     "test_run_offline_tests.py",
     "test_seerr_downstream_version.py",
@@ -83,12 +83,12 @@ def offline_test_patterns(paths):
     for path in paths:
         if path in {
             ".vscode/tasks.json",
-            "scripts/mosaic_validation_policy.py",
+            "scripts/seerr_validation_policy.py",
             "scripts/validate-local.ps1",
         }:
-            tests.add("test_mosaic_validation_policy.py")
+            tests.add("test_seerr_validation_policy.py")
         elif path == "scripts/prepare-pr.ps1":
-            tests.update(("test_mosaic_validation_policy.py", "test_prepare_pr.py"))
+            tests.update(("test_seerr_validation_policy.py", "test_prepare_pr.py"))
         elif path.startswith("scripts/test_") and path.endswith(".py"):
             tests.add(Path(path).name)
         elif classification.is_offline_tooling_test_support_path(path):

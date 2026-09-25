@@ -5,7 +5,7 @@ Seerr upstream Drafts. It complements the operating contract in
 [UPSTREAM_SYNC.md](UPSTREAM_SYNC.md); it does not replace machine evidence,
 Git history, PR review, or validation.
 
-Mosaic PR numbers, paths, product rules, and historical decisions are not Seerr
+Unrelated PR numbers, paths, product rules, and historical decisions are not Seerr
 evidence and are intentionally not carried into this ledger.
 
 ## What belongs here
@@ -58,6 +58,6 @@ direct merge, branch replacement, or force push.
 
 ## Seerr resolution entries
 
-No Seerr upstream semantic resolution has been recorded in this adapted ledger
+No Seerr upstream semantic resolution has been recorded in this ledger
 yet. Add the first entry only from a completed authenticated Seerr resolver
-session; do not pre-populate it from Mosaic history or planning assumptions.
+session; do not pre-populate it from unrelated history or planning assumptions.

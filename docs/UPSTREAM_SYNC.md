@@ -1,8 +1,8 @@
 # Repository and upstream synchronization policy
 
 This document is the operating contract for observing, classifying, publishing,
-and resolving upstream Seerr changes. It adapts Mosaic's current authority model
-without granting new automation authority.
+and resolving upstream Seerr changes. It uses a strict authority model without
+granting new automation authority.
 
 ## Repository topology
 

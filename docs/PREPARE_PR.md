@@ -5,7 +5,7 @@
 the operator's **READY TO PUBLISH** decision. Passing tests or an agent's belief
 that work is ready is not publication authority.
 
-This document preserves the Mosaic publication contract as adapted for Seerr.
+This document defines the Seerr downstream pull-request publication contract.
 
 ## Repository authority
 

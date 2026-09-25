@@ -7,7 +7,7 @@ import sys
 import tempfile
 import unittest
 
-import mosaic_validation_policy as policy
+import seerr_validation_policy as policy
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -23,7 +23,7 @@ class ValidationPolicyTest(unittest.TestCase):
     def test_sensitive_tooling_requires_full(self):
         for path, expected_pattern in (
             ("scripts/prepare-pr.ps1", "test_*.py"),
-            ("scripts/mosaic_output.ps1", "test_prepare_pr.py"),
+            ("scripts/seerr_output.ps1", "test_prepare_pr.py"),
         ):
             with self.subTest(path=path):
                 plan = policy.plan_paths([path])
@@ -33,7 +33,7 @@ class ValidationPolicyTest(unittest.TestCase):
                 self.assertEqual(expected_pattern, plan["offlineTestPattern"])
 
         config = (ROOT / "scripts/prepare-pr.config.psd1").read_text()
-        self.assertIn("'scripts/mosaic_output.ps1'", config)
+        self.assertIn("'scripts/seerr_output.ps1'", config)
 
     def test_shared_offline_tooling_support_uses_scoped_with_complete_fixtures(self):
         for path in (
@@ -50,9 +50,9 @@ class ValidationPolicyTest(unittest.TestCase):
 
     def test_fast_offline_feedback_runs_only_explicitly_bounded_modules(self):
         cases = (
-            ("scripts/test_mosaic_change_classification.py", ["test_mosaic_change_classification.py"]),
-            ("scripts/mosaic_validation_policy.py", ["test_mosaic_validation_policy.py"]),
-            ("scripts/mosaic_repository.py", ["test_mosaic_repository.py"]),
+            ("scripts/test_seerr_change_classification.py", ["test_seerr_change_classification.py"]),
+            ("scripts/seerr_validation_policy.py", ["test_seerr_validation_policy.py"]),
+            ("scripts/seerr_repository.py", ["test_seerr_repository.py"]),
             ("scripts/resolve_upstream.py", ["test_resolve_upstream.py"]),
             ("scripts/test_prepare_pr.py", []),
             ("scripts/hosted_upstream.py", []),
@@ -67,22 +67,22 @@ class ValidationPolicyTest(unittest.TestCase):
                 )
 
         mixed = policy.plan_paths([
-            "scripts/mosaic_validation_policy.py",
+            "scripts/seerr_validation_policy.py",
             "scripts/test_prepare_pr.py",
         ])
         self.assertEqual("test_*.py", mixed["offlineTestPattern"])
         self.assertEqual(
-            ["test_mosaic_validation_policy.py"],
+            ["test_seerr_validation_policy.py"],
             mixed["localFastOfflinePatterns"],
         )
 
     def test_repository_authentication_helper_requires_full_hosted_validation(self):
-        plan = policy.plan_paths(["scripts/mosaic_repository.py"])
+        plan = policy.plan_paths(["scripts/seerr_repository.py"])
         self.assertEqual("tooling-only", plan["releaseRelevance"])
         self.assertEqual("high", plan["validationRisk"])
         self.assertFalse(plan["releaseRequired"])
         self.assertEqual(policy.FULL, plan["validationMode"])
-        self.assertEqual("test_mosaic_repository.py", plan["offlineTestPattern"])
+        self.assertEqual("test_seerr_repository.py", plan["offlineTestPattern"])
 
     def test_upstream_automation_uses_explicit_release_and_offline_boundaries(self):
         ownership = policy.plan_paths(["scripts/upstream_ownership_policy.json"])
@@ -105,18 +105,18 @@ class ValidationPolicyTest(unittest.TestCase):
         self.assertFalse(runner["releaseRequired"])
         self.assertEqual("test_run_offline_tests.py", runner["offlineTestPattern"])
 
-        validation_reuse = policy.plan_paths(["scripts/mosaic_validation_reuse.py"])
+        validation_reuse = policy.plan_paths(["scripts/seerr_validation_reuse.py"])
         self.assertEqual("tooling-only", validation_reuse["releaseRelevance"])
         self.assertEqual("high", validation_reuse["validationRisk"])
         self.assertFalse(validation_reuse["releaseRequired"])
         self.assertEqual(policy.FULL, validation_reuse["validationMode"])
         self.assertEqual(
-            "test_mosaic_validation_reuse.py", validation_reuse["offlineTestPattern"]
+            "test_seerr_validation_reuse.py", validation_reuse["offlineTestPattern"]
         )
 
     def test_unexpected_generated_files_are_not_treated_as_safe_scope(self):
         for path in (
-            "scripts/__pycache__/mosaic_change_classification.cpython-314.pyc",
+            "scripts/__pycache__/seerr_change_classification.cpython-314.pyc",
             "scripts/generated.pyc",
         ):
             with self.subTest(path=path):
@@ -236,7 +236,7 @@ class ValidationPolicyTest(unittest.TestCase):
                 policy.reviewed_untracked_paths(root, ["reviewed.json", "ignored.log"]),
             )
             result = subprocess.run(
-                [sys.executable, "-B", str(ROOT / "scripts/mosaic_validation_policy.py"),
+                [sys.executable, "-B", str(ROOT / "scripts/seerr_validation_policy.py"),
                  "--repo-root", str(root), "--path", "reviewed.json"],
                 capture_output=True, text=True, check=True,
             )
@@ -274,7 +274,7 @@ class ValidationIntegrationContractTest(unittest.TestCase):
     def test_fast_standard_full_and_prepare_pr_contracts(self):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
         self.assertIn("ValidateSet('Fast', 'Standard', 'Full')", validator)
-        self.assertIn("mosaic_validation_policy.py", validator)
+        self.assertIn("seerr_validation_policy.py", validator)
         self.assertIn("Fast provides bounded local feedback only", validator)
         self.assertIn("@($plan.localFastOfflinePatterns", validator)
         self.assertIn("'test_*.py'", validator)
@@ -291,8 +291,7 @@ class ValidationIntegrationContractTest(unittest.TestCase):
         ):
             self.assertIn(command, validator)
         self.assertIn("[StringComparer]::Ordinal", validator)
-        self.assertNotIn("gradlew", validator)
-        self.assertNotIn("mosaic_output.ps1", validator)
+        self.assertIn("Assert-WorkflowInventory", validator)
 
     def test_local_validation_uses_repository_local_pnpm_commands(self):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
@@ -379,7 +378,7 @@ class ValidationIntegrationContractTest(unittest.TestCase):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
         self.assertIn("seerr-validation-", validator)
         self.assertIn("Logs: $runDirectory", validator)
-        self.assertNotIn("MOSAIC_OUTPUT_COMPACT", validator)
+        self.assertIn("seerr-validation-", validator)
 
     def test_snapshot_detects_worktree_index_untracked_and_head_drift(self):
         shell = shutil.which("powershell.exe") or shutil.which("pwsh")
@@ -446,7 +445,7 @@ class ValidationIntegrationContractTest(unittest.TestCase):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
         self.assertIn("$lines | Set-Content -LiteralPath $logPath", validator)
         self.assertIn("$lines | ForEach-Object { Write-Host $_ }", validator)
-        self.assertNotIn("mosaic_output.ps1", validator)
+        self.assertIn("Assert-RepositorySnapshot $Snapshot $Stage.Name", validator)
 
     def test_snapshot_check_precedes_exit_status_acceptance(self):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()

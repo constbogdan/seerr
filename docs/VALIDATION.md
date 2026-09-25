@@ -121,9 +121,8 @@ authenticates its repository/ref publication boundary. Validation does not
 publish GHCR packages, tags, Releases, Pages, Helm artifacts, or other delivery
 outputs.
 
-No Mosaic Android, Gradle, APK, signing, Development, Stable, Hold, or release-
-promotion concept belongs to Seerr validation. Those were separate Mosaic
-delivery authorities, not generic source-validation guarantees.
+Image publication, signing, and release promotion do not belong to local Seerr
+validation and are not generic source-validation guarantees.
 
 ## Failure and recovery
 

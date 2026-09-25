@@ -624,13 +624,12 @@ class HostedSyncTests(unittest.TestCase):
         self.assertIn('blocking_pr: ${{ steps.observe.outputs.blocking_pr_number }}', observe)
         self.assertIn('blocking_head: ${{ steps.observe.outputs.blocking_pr_head_sha }}', observe)
         self.assertIn('if: always()', execution)
-        self.assertNotIn('MOSAIC_', workflow)
+        self.assertIn("github.repository == 'constbogdan/seerr'", workflow)
         self.assertEqual(2, workflow.count('uses: ./.github/actions/setup'))
         setup = (Path(__file__).resolve().parent.parent / '.github/actions/setup/action.yml').read_text()
         self.assertIn('actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97', setup)
         self.assertIn("python-version: '3.14'", setup)
-        for product_specific in ('setup-java', 'setup-android', 'gradle', 'ANDROID_', 'NDK_'):
-            self.assertNotIn(product_specific, setup)
+        self.assertIn('using: "composite"', setup)
 
     def test_seerr_repository_drives_exact_git_and_api_targets(self):
         repository = "constbogdan/seerr"

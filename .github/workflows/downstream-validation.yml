@@ -80,7 +80,7 @@ jobs:
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           VALIDATION_CLASS: FULL
-        run: python3 -B scripts/mosaic_validation_reuse.py record
+        run: python3 -B scripts/seerr_validation_reuse.py record
 
       - name: Upload PR validation evidence
         if: success() && github.event_name == 'pull_request'

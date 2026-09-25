@@ -8,7 +8,7 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "scripts"))
 
-import mosaic_validation_reuse as reuse
+import seerr_validation_reuse as reuse
 
 
 MAIN = "c" * 40
@@ -230,7 +230,7 @@ class ValidationReuseTests(unittest.TestCase):
         self.assertEqual(1, step_names.count(reuse.RECORD_STEP))
         self.assertEqual(1, step_names.count(reuse.UPLOAD_STEP))
         self.assertIn(
-            "run: python3 -B scripts/mosaic_validation_reuse.py record", workflow
+            "run: python3 -B scripts/seerr_validation_reuse.py record", workflow
         )
         self.assertIn("PR_NUMBER: ${{ github.event.pull_request.number }}", workflow)
         self.assertIn("PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", workflow)
@@ -390,7 +390,9 @@ class ValidationReuseTests(unittest.TestCase):
                 path.name for path in Path(result["evidencePath"]).iterdir()
             )
             self.assertEqual(["validation-evidence.json"], files)
-            self.assertNotIn("apk", json.dumps(result).lower())
+            self.assertTrue(
+                result["artifactName"].startswith("seerr-pr-policy-v1-full-pr-7-")
+            )
 
     def test_record_rejects_unknown_class_or_parent_mismatch(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -443,11 +445,11 @@ class ValidationReuseTests(unittest.TestCase):
             return f"{BASE} {HEAD}"
         raise AssertionError(args)
 
-    def test_reuse_contract_contains_no_android_or_image_publication_evidence(self):
-        source = (ROOT / "scripts/mosaic_validation_reuse.py").read_text(encoding="utf-8")
+    def test_reuse_contract_is_full_validation_only_and_non_publishing(self):
+        source = (ROOT / "scripts/seerr_validation_reuse.py").read_text(encoding="utf-8")
         workflow = (ROOT / reuse.WORKFLOW).read_text(encoding="utf-8")
-        self.assertNotIn("APK", source)
-        self.assertNotIn("android", source.lower())
+        self.assertIn('CONTRACT = "pr-policy-v1"', source)
+        self.assertEqual({"FULL"}, reuse.VALIDATION_CLASSES)
         self.assertNotIn("packages: write", workflow)
         self.assertNotIn("docker", workflow.lower())
 

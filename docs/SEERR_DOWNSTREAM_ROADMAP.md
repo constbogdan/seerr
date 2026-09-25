@@ -29,8 +29,8 @@ downstream home.
 - `origin/downstream-main`: `f74657aa501e1fc28bf314673a0cedde167d47e6`.
 - Current infrastructure branch: `chore/downstream-image-publication`.
 - Upstream queue-sync contribution: [seerr-team/seerr#3535](https://github.com/seerr-team/seerr/pull/3535), open against `develop`.
-- Fresh prototype: uncommitted work in `C:\Projects\Wholphin\seerr-discovery` on `feature/fresh`; it has not been transplanted downstream.
-- Local integration harness: `C:\Projects\Wholphin\seerr-harness`.
+- Fresh prototype: uncommitted work in the separate `seerr-discovery` workspace on `feature/fresh`; it has not been transplanted downstream.
+- Local integration harness: the separate `seerr-harness` workspace.
 
 ## Phase 1 — safe downstream foundation
 
@@ -59,5 +59,5 @@ downstream home.
 - Richer release provenance and changelog presentation.
 - Automated canary deployment and rollback.
 
-Do not copy Mosaic's full release or upstream-resolution machinery unless repeated
+Do not add broader release or upstream-resolution machinery unless repeated
 Seerr maintenance demonstrates a concrete need.

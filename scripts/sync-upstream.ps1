@@ -109,7 +109,7 @@ try {
             $conflicts | ForEach-Object { Write-Host "  $_" }
             Write-Host ''
             Write-Host 'Inspect ours, upstream, the common base, callers, and tests. Never choose ours/theirs mechanically.'
-            Write-Host 'After resolving: git add the files, run Standard validation, then Full validation, commit, push, and open a PR into downstream-main.'
+            Write-Host 'After resolving: git add the files, run appropriate local validation, then Full validation, commit, push, and open a PR into downstream-main.'
             exit 2
         }
         throw "git merge upstream/develop failed with exit code $mergeExitCode."
@@ -118,7 +118,7 @@ try {
     Write-Host ''
     Write-Host "Upstream merge completed on '$syncBranch'."
     Write-Host 'Review the merge and high-risk auto-merged integration files. Git may have fast-forwarded or created the normal merge commit.'
-    Write-Host 'Run Standard validation, then Full validation. Do not push or open the sync PR if validation fails.'
+    Write-Host 'Run appropriate local validation, then Full validation. Do not push or open the sync PR if validation fails.'
 } catch {
     Write-Error $_.Exception.Message
     exit 1

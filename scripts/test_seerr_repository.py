@@ -1,6 +1,6 @@
 import unittest
 
-import mosaic_repository as repository
+import seerr_repository as repository
 
 
 class RepositoryIdentityTests(unittest.TestCase):
@@ -9,7 +9,7 @@ class RepositoryIdentityTests(unittest.TestCase):
             "constbogdan/seerr",
             repository.authenticate_downstream_repository("constbogdan/seerr"),
         )
-        self.assertEqual("constbogdan/seerr", repository.MOSAIC_DOWNSTREAM_REPOSITORY)
+        self.assertEqual("constbogdan/seerr", repository.SEERR_DOWNSTREAM_REPOSITORY)
         self.assertEqual("seerr-team/seerr", repository.UPSTREAM_REPOSITORY)
         self.assertEqual("downstream-main", repository.PROTECTED_BRANCH)
 

@@ -1,8 +1,6 @@
 """Exact current downstream and upstream repository identities."""
 
 SEERR_DOWNSTREAM_REPOSITORY = "constbogdan/seerr"
-# Temporary compatibility for copied maintenance layers that are adapted later.
-MOSAIC_DOWNSTREAM_REPOSITORY = SEERR_DOWNSTREAM_REPOSITORY
 UPSTREAM_REPOSITORY = "seerr-team/seerr"
 PROTECTED_BRANCH = "downstream-main"
 

@@ -10,13 +10,13 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from mosaic_repository import (
-    MOSAIC_DOWNSTREAM_REPOSITORY,
+from seerr_repository import (
+    SEERR_DOWNSTREAM_REPOSITORY,
     authenticate_downstream_repository,
 )
 
 # Canonical downstream identity used by fixtures and live operations.
-REPOSITORY = MOSAIC_DOWNSTREAM_REPOSITORY
+REPOSITORY = SEERR_DOWNSTREAM_REPOSITORY
 WORKFLOW = ".github/workflows/downstream-validation.yml"
 JOB = "Downstream validation"
 CONTRACT = "pr-policy-v1"

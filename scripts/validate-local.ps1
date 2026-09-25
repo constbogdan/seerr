@@ -8,7 +8,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$policyScript = Join-Path $PSScriptRoot 'mosaic_validation_policy.py'
+$policyScript = Join-Path $PSScriptRoot 'seerr_validation_policy.py'
 $config = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'prepare-pr.config.psd1')
 $runDirectory = Join-Path ([IO.Path]::GetTempPath()) ("seerr-validation-" + [guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Path $runDirectory | Out-Null

@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 import unittest
 
-import mosaic_change_classification as classification
+import seerr_change_classification as classification
 
 
 class ClassificationTests(unittest.TestCase):
@@ -29,7 +29,7 @@ class ClassificationTests(unittest.TestCase):
                 classification.HIGH,
                 False,
             ),
-            "scripts/mosaic_output.ps1": (
+            "scripts/seerr_output.ps1": (
                 classification.TOOLING_ONLY,
                 classification.HIGH,
                 False,
@@ -169,7 +169,7 @@ class ClassificationTests(unittest.TestCase):
             ".github/workflows/upstream-sync.yml",
             "docs/downstream-workflow-inventory.txt",
             "scripts/prepare-pr.config.psd1",
-            "scripts/mosaic_output.ps1",
+            "scripts/seerr_output.ps1",
             "scripts/hosted_upstream.py",
             "docs/UPSTREAM_SYNC.md",
         ):
