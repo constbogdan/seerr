@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import re
 
 import seerr_validation_policy as policy
 
@@ -379,7 +380,8 @@ class ValidationIntegrationContractTest(unittest.TestCase):
             timeout=30,
         )
         self.assertNotEqual(0, result.returncode)
-        self.assertIn("does not exist", result.stdout + result.stderr)
+        output = re.sub(r"\s+", " ", result.stdout + result.stderr)
+        self.assertIn("does not exist", output)
 
     def test_validator_uses_isolated_run_logs(self):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
