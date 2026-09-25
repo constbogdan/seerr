@@ -224,6 +224,64 @@ class VersionTests(unittest.TestCase):
         self.assertIn("org.opencontainers.image.revision", workflow)
         self.assertNotIn("paths:", workflow)
 
+    def test_current_manifest_annotations_restore_previous_identity(self):
+        source = "1" * 40
+        identity = version.previous_image_identity({
+            "Manifest": {
+                "Annotations": {
+                    version.REVISION_KEY: source,
+                    version.IMAGE_VERSION_KEY: "custom-v1.0.4",
+                }
+            }
+        })
+        self.assertEqual(
+            {"previousSha": source, "previousVersionTag": "custom-v1.0.4"},
+            identity,
+        )
+
+    def test_legacy_image_config_labels_restore_previous_identity(self):
+        source = "2" * 40
+        identity = version.previous_image_identity({
+            "Image": {
+                "config": {
+                    "Labels": {
+                        version.REVISION_KEY: source,
+                        version.IMAGE_VERSION_KEY: "custom-v1.0.4",
+                    }
+                }
+            }
+        })
+        self.assertEqual(source, identity["previousSha"])
+        self.assertEqual("custom-v1.0.4", identity["previousVersionTag"])
+
+    def test_missing_partial_malformed_or_contradictory_metadata_refuses(self):
+        valid = {
+            version.REVISION_KEY: "3" * 40,
+            version.IMAGE_VERSION_KEY: "custom-v1.0.4",
+        }
+        cases = (
+            {},
+            {"Manifest": {"Annotations": {version.REVISION_KEY: "3" * 40}}},
+            {"Manifest": {"Annotations": {**valid, version.REVISION_KEY: "not-a-sha"}}},
+            {"Manifest": {"Annotations": {**valid, version.IMAGE_VERSION_KEY: "v1.0.4"}}},
+            {
+                "Manifest": {"Annotations": valid},
+                "Image": {"config": {"Labels": {
+                    **valid, version.REVISION_KEY: "4" * 40,
+                }}},
+            },
+        )
+        for metadata in cases:
+            with self.subTest(metadata=metadata), self.assertRaises(ValueError):
+                version.previous_image_identity(metadata)
+
+    def test_workflow_metadata_discovery_is_controlled_and_backward_compatible(self):
+        workflow = (Path(__file__).parent.parent / ".github/workflows/downstream-image.yml").read_text()
+        self.assertIn("--format '{{json .}}'", workflow)
+        self.assertIn("--parse-image-metadata", workflow)
+        self.assertNotIn("jq -er", workflow)
+        self.assertIn("if ! docker buildx imagetools inspect", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()
