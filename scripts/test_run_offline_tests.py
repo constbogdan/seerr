@@ -29,6 +29,8 @@ class OfflineTestRunnerTests(unittest.TestCase):
                 GITHUB_TOKEN="fixture-github-token",
                 SYNC_APP_ID="12345",
                 SYNC_APP_PRIVATE_KEY="fixture-private-key",
+                SYNC_BOT_CLIENT_ID="fixture-bot-client-id",
+                SYNC_BOT_PRIVATE_KEY="fixture-bot-private-key",
                 SYNC_PUBLISH_TOKEN="fixture-publish-token",
             )
             result = subprocess.run(
@@ -52,6 +54,8 @@ class OfflineTestRunnerTests(unittest.TestCase):
                     self.assertNotIn('GITHUB_TOKEN', os.environ)
                     self.assertNotIn('SYNC_APP_ID', os.environ)
                     self.assertNotIn('SYNC_APP_PRIVATE_KEY', os.environ)
+                    self.assertNotIn('SYNC_BOT_CLIENT_ID', os.environ)
+                    self.assertNotIn('SYNC_BOT_PRIVATE_KEY', os.environ)
                     self.assertNotIn('SYNC_PUBLISH_TOKEN', os.environ)
         """)
         self.assertEqual(0, result.returncode, result.stderr)

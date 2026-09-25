@@ -29,6 +29,11 @@ class ClassificationTests(unittest.TestCase):
                 classification.HIGH,
                 False,
             ),
+            "scripts/mosaic_output.ps1": (
+                classification.TOOLING_ONLY,
+                classification.HIGH,
+                False,
+            ),
             "server/lib/watchlistsync.test.ts": (
                 classification.VALIDATION_ONLY,
                 classification.NORMAL,
@@ -164,6 +169,7 @@ class ClassificationTests(unittest.TestCase):
             ".github/workflows/upstream-sync.yml",
             "docs/downstream-workflow-inventory.txt",
             "scripts/prepare-pr.config.psd1",
+            "scripts/mosaic_output.ps1",
             "scripts/hosted_upstream.py",
             "docs/UPSTREAM_SYNC.md",
         ):

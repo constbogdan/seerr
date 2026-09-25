@@ -227,10 +227,37 @@ class ValidationReuseTests(unittest.TestCase):
             self.assertEqual(1, step_names.count(name), name)
         self.assertIn("github.repository == 'constbogdan/seerr'", workflow)
         self.assertNotIn("packages: write", workflow)
-        # Reuse remains a fail-closed primitive until a later authorized workflow
-        # pass wires record/upload steps into the hosted job.
-        self.assertNotIn(reuse.RECORD_STEP, workflow)
-        self.assertNotIn(reuse.UPLOAD_STEP, workflow)
+        self.assertEqual(1, step_names.count(reuse.RECORD_STEP))
+        self.assertEqual(1, step_names.count(reuse.UPLOAD_STEP))
+        self.assertIn(
+            "run: python3 -B scripts/mosaic_validation_reuse.py record", workflow
+        )
+        self.assertIn("PR_NUMBER: ${{ github.event.pull_request.number }}", workflow)
+        self.assertIn("PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}", workflow)
+        self.assertIn("PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}", workflow)
+        self.assertIn("VALIDATION_CLASS: FULL", workflow)
+        self.assertIn(
+            "name: ${{ steps.pr-validation-evidence.outputs.artifact_name }}",
+            workflow,
+        )
+        self.assertIn(
+            "path: ${{ steps.pr-validation-evidence.outputs.evidence_path }}",
+            workflow,
+        )
+        self.assertIn(
+            "if: success() && github.event_name == 'pull_request'", workflow
+        )
+        self.assertIn(
+            "uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+            workflow,
+        )
+        self.assertLess(
+            workflow.index("      - name: Build"),
+            workflow.index(reuse.RECORD_STEP),
+        )
+        self.assertLess(
+            workflow.index(reuse.RECORD_STEP), workflow.index(reuse.UPLOAD_STEP)
+        )
 
     def test_validation_class_requires_matching_full_step_outcome(self):
         self.assertFalse(

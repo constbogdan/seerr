@@ -122,7 +122,8 @@ def classify_path(value):
         )):
             risk = HIGH if _matches(name, (
                 "mosaic_*.py", "seerr_*.py", "hosted_upstream.py",
-                "sync-upstream.ps1", "resolve-upstream.ps1", "prepare-pr*",
+                "mosaic_output.ps1", "sync-upstream.ps1",
+                "resolve-upstream.ps1", "prepare-pr*",
             )) else NORMAL
             return PathClassification(path, TOOLING_ONLY, risk, "repository automation")
         return PathClassification(path, UNKNOWN, HIGH, "unclassified script")

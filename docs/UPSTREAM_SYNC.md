@@ -123,6 +123,28 @@ The lifecycle is safely rerunnable:
   remote state; and
 - closed PR decisions are not silently reopened or duplicated.
 
+## Local/manual synchronization
+
+`scripts/sync-upstream.ps1` is a distinct local review helper. It coexists with
+the hosted managed-Draft lifecycle; it does not invoke the resolver or replace
+hosted synchronization.
+
+Run it only from the repository root with a clean working tree on local
+`downstream-main`. The helper fetches `origin/downstream-main` and
+`upstream/develop`, refuses a locally divergent protected branch, and advances a
+behind local `downstream-main` only through `git merge --ff-only`.
+
+It then creates the date-named local review branch
+`chore/sync-upstream-YYYY-MM-DD`. A conflicting local branch or
+`origin/<branch>` identity is refused rather than overwritten. On that local
+branch the helper performs the native merge of `upstream/develop`. Textual
+conflicts remain in the working tree with the affected paths and semantic-review
+guidance so the operator can deliberately resolve them.
+
+The helper stops at a local, reviewable workspace. It cannot push, create or
+update a PR, delegate to `resolve-upstream.ps1`, acquire publication authority,
+or mutate GitHub state.
+
 ## Semantic resolution
 
 `scripts/resolve-upstream.ps1` is the only supported local entry point for an

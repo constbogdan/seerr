@@ -19,6 +19,16 @@ repository, or required-check context requires validation again.
 The stable required job name is `Downstream validation`. Branch protection and
 GitHub remain responsible for deciding whether that check authorizes merge.
 
+After every successful authoritative pull-request run, the workflow records and
+uploads retained `FULL` validation evidence. The producer authenticates the exact
+`constbogdan/seerr` repository, pull-request number, base SHA, head SHA, tested
+synthetic merge SHA and tree, run ID, attempt, workflow, and job. Evidence is
+created only after all authoritative validation steps succeed. Recording this
+artifact does not itself grant protected-main, merge, publication, or image
+authority; any future consumer must independently reject missing, ambiguous,
+expired, stale, foreign, or mismatched evidence through the checked-in exact-tree
+reuse contract.
+
 ## Full Seerr contract
 
 Authoritative hosted validation uses the repository's pinned Node and pnpm

@@ -24,6 +24,7 @@ FULL_VALIDATION_PATTERNS = (
     "scripts/upstream_ownership_policy.json",
     "scripts/mosaic_repository.py",
     "scripts/mosaic_validation_reuse.py",
+    "scripts/mosaic_output.ps1",
     "scripts/seerr_downstream_version.py",
     "scripts/prepare-pr.ps1",
     "scripts/prepare-pr.config.psd1",
@@ -60,6 +61,7 @@ OFFLINE_TEST_MAP = {
     "scripts/mosaic_change_classification.py": "test_mosaic_change_classification.py",
     "scripts/mosaic_repository.py": "test_mosaic_repository.py",
     "scripts/mosaic_validation_reuse.py": "test_mosaic_validation_reuse.py",
+    "scripts/mosaic_output.ps1": "test_prepare_pr.py",
     "scripts/seerr_downstream_version.py": "test_seerr_downstream_version.py",
 }
 

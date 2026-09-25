@@ -44,6 +44,7 @@
         'scripts/resolve-upstream.ps1'
         'scripts/sync-upstream.ps1'
         'scripts/prepare-pr.ps1'
+        'scripts/mosaic_output.ps1'
         'scripts/prepare-pr.config.psd1'
         'scripts/upstream_ownership_policy.json'
         'scripts/seerr_downstream_version.py'

@@ -26,6 +26,8 @@ def main(argv=None):
         "GITHUB_TOKEN",
         "SYNC_APP_ID",
         "SYNC_APP_PRIVATE_KEY",
+        "SYNC_BOT_CLIENT_ID",
+        "SYNC_BOT_PRIVATE_KEY",
         "SYNC_PUBLISH_TOKEN",
     ):
         os.environ.pop(key, None)

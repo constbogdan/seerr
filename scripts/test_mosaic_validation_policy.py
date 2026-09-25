@@ -21,11 +21,19 @@ class ValidationPolicyTest(unittest.TestCase):
         self.assertEqual("", plan["offlineTestPattern"])
 
     def test_sensitive_tooling_requires_full(self):
-        plan = policy.plan_paths(["scripts/prepare-pr.ps1"])
-        self.assertEqual("tooling-only", plan["releaseRelevance"])
-        self.assertEqual("high", plan["validationRisk"])
-        self.assertEqual(policy.FULL, plan["validationMode"])
-        self.assertEqual("test_*.py", plan["offlineTestPattern"])
+        for path, expected_pattern in (
+            ("scripts/prepare-pr.ps1", "test_*.py"),
+            ("scripts/mosaic_output.ps1", "test_prepare_pr.py"),
+        ):
+            with self.subTest(path=path):
+                plan = policy.plan_paths([path])
+                self.assertEqual("tooling-only", plan["releaseRelevance"])
+                self.assertEqual("high", plan["validationRisk"])
+                self.assertEqual(policy.FULL, plan["validationMode"])
+                self.assertEqual(expected_pattern, plan["offlineTestPattern"])
+
+        config = (ROOT / "scripts/prepare-pr.config.psd1").read_text()
+        self.assertIn("'scripts/mosaic_output.ps1'", config)
 
     def test_shared_offline_tooling_support_uses_scoped_with_complete_fixtures(self):
         for path in (

@@ -17,6 +17,7 @@
     "docs/downstream-workflow-inventory.txt": "DOWNSTREAM-OWNED",
     "scripts/hosted_upstream.py": "DOWNSTREAM-OWNED",
     "scripts/mosaic_change_classification.py": "DOWNSTREAM-OWNED",
+    "scripts/mosaic_output.ps1": "DOWNSTREAM-OWNED",
     "scripts/mosaic_repository.py": "DOWNSTREAM-OWNED",
     "scripts/mosaic_validation_policy.py": "DOWNSTREAM-OWNED",
     "scripts/mosaic_validation_reuse.py": "DOWNSTREAM-OWNED",
