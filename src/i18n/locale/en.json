@@ -920,6 +920,7 @@
   "components.Settings.SettingsAbout.appDataPath": "Data Directory",
   "components.Settings.SettingsAbout.contribute": "Make a Contribution",
   "components.Settings.SettingsAbout.documentation": "Documentation",
+  "components.Settings.SettingsAbout.downstreamBuild": "Downstream Build",
   "components.Settings.SettingsAbout.gettingsupport": "Getting Support",
   "components.Settings.SettingsAbout.githubdiscussions": "GitHub Discussions",
   "components.Settings.SettingsAbout.outofdate": "Out of Date",
