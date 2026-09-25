@@ -1341,6 +1341,7 @@
   "components.Setup.setup": "Setup",
   "components.Setup.signin": "Sign in to your account",
   "components.Setup.signinMessage": "Get started by signing in",
+  "components.Setup.signinStep": "Sign In",
   "components.Setup.signinWithEmby": "Enter your Emby details",
   "components.Setup.signinWithJellyfin": "Enter your Jellyfin details",
   "components.Setup.signinWithPlex": "Enter your Plex details",
