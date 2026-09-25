@@ -20,9 +20,9 @@ Dockhand/NAS deployment and rollback path.
   `ghcr.io/constbogdan/seerr` only after a push to authenticated
   `downstream-main`. It uses `custom-v1.0.N`, full-SHA, and rolling `custom`
   tags and reports the authoritative digest in the workflow summary.
-- `N` is the protected-main first-parent distance from epoch `f74657aa`; this
-  uses deterministic allocation while the `custom-` namespace avoids official
-  Seerr version identity.
+- `N` advances only for a required image. Exact-range classification begins at
+  the rolling image's authenticated source/version annotations; docs/tooling-only
+  merges leave the image and version unchanged.
 - GHCR metadata and [package documentation](SEERR_DOWNSTREAM_PACKAGE.md) identify
   the image as a personal downstream build, not an official Seerr release.
 

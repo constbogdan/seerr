@@ -103,7 +103,7 @@ def classify_path(value):
         return PathClassification(path, TOOLING_ONLY, LOW, "repository metadata")
 
     if path == "scripts/seerr_downstream_version.py":
-        return PathClassification(path, PRODUCT_RELEVANT, HIGH, "image version metadata")
+        return PathClassification(path, TOOLING_ONLY, HIGH, "image publication metadata")
 
     if path.startswith("scripts/"):
         name = path.removeprefix("scripts/")

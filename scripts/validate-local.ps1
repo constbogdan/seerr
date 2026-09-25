@@ -10,8 +10,13 @@ $ErrorActionPreference = 'Stop'
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $policyScript = Join-Path $PSScriptRoot 'seerr_validation_policy.py'
 $config = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'prepare-pr.config.psd1')
-$runDirectory = Join-Path ([IO.Path]::GetTempPath()) ("seerr-validation-" + [guid]::NewGuid().ToString('N'))
-New-Item -ItemType Directory -Path $runDirectory | Out-Null
+. (Join-Path $PSScriptRoot 'seerr_output.ps1')
+
+$validationLogRoot = Join-Path ([IO.Path]::GetTempPath()) ("seerr-validation-" + [guid]::NewGuid().ToString('N'))
+$legacyLogPath = Join-Path $validationLogRoot 'validation.log'
+$output = New-MaintenanceRunOutput -RepositoryRoot $repoRoot -Kind validation -LegacyLogPath $legacyLogPath -RunDirectoryRoot $validationLogRoot
+$runDirectory = $output.RunDirectory
+Write-MaintenanceRunLog $output "Seerr local validation ($Level)"
 
 function Get-TextHash([string]$Value) {
     $bytes = [Text.Encoding]::UTF8.GetBytes($Value)
@@ -51,7 +56,8 @@ function Get-RepositorySnapshot {
     $headTree = Get-GitText @('rev-parse', 'HEAD^{tree}')
     $index = Get-TextHash (Get-GitText @('diff', '--cached', '--binary', 'HEAD', '--'))
     $working = Get-TextHash (Get-GitText @('diff', '--binary', '--'))
-    $untracked = @(Get-GitText @('ls-files', '--others', '--exclude-standard') -split "`n" | Where-Object { $_ })
+    $untrackedText = Get-GitText @('ls-files', '--others', '--exclude-standard')
+    $untracked = @(($untrackedText -split "`n") | Where-Object { $_ })
     $untrackedIdentity = foreach ($path in $untracked) {
         "$path`0$(Get-GitText @('hash-object', '--', $path))"
     }
@@ -117,36 +123,31 @@ function Assert-WorkflowInventory {
 
 function Invoke-ValidationStage {
     param([int]$Number, [int]$Total, $Stage, $Snapshot)
-    Write-Host "[$Number/$Total] $($Stage.Name) [RUN]"
-    $logPath = Join-Path $runDirectory $Stage.Log
-    $previousErrorAction = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    if ($Stage.Action) {
-        try {
-            $lines = @(& $Stage.Action 2>&1)
-            $exitCode = 0
-        } catch {
-            $lines = @($_.Exception.Message)
-            $exitCode = 1
+    Start-MaintenanceStage $output $Number $Total $Stage.Name $Stage.Log
+    $exitCode = 0
+    try {
+        if ($Stage.Action) {
+            & $Stage.Action
+        } else {
+            $exitCode = Invoke-MaintenanceLoggedCommand $output $Stage.File @($Stage.Args) $Stage.Display -EchoOutput
         }
-    } else {
-        $lines = @(& $Stage.File @($Stage.Args) 2>&1)
-        $exitCode = $LASTEXITCODE
+    } catch {
+        Write-MaintenanceStageLog $output $_.Exception.Message
+        $exitCode = 1
     }
-    $ErrorActionPreference = $previousErrorAction
-    $lines | Set-Content -LiteralPath $logPath -Encoding utf8
-    $lines | ForEach-Object { Write-Host $_ }
     try {
         Assert-RepositorySnapshot $Snapshot $Stage.Name
     } catch {
-        Write-Host "[$Number/$Total] $($Stage.Name) [FAIL]"
+        Fail-MaintenanceStage $output $_.Exception.Message
+        $output.CurrentStageName = $null
         throw
     }
     if ($exitCode -ne 0) {
-        Write-Host "[$Number/$Total] $($Stage.Name) [FAIL]"
-        throw "$($Stage.Name) failed with exit code $exitCode. Full log: $logPath"
+        Fail-MaintenanceStage $output "Command exited with code $exitCode."
+        $output.CurrentStageName = $null
+        throw "$($Stage.Name) failed with exit code $exitCode."
     }
-    Write-Host "[$Number/$Total] $($Stage.Name) [PASS]"
+    Complete-MaintenanceStage $output
 }
 
 try {
@@ -185,8 +186,9 @@ try {
     Write-Host "Selected local path: $effectiveMode"
     Write-Host "Validation risk: $($plan.validationRisk)"
     if ($Level -eq 'Fast' -and $plan.validationMode -eq 'full') {
-        Write-Host 'Fast provides bounded local feedback only; authoritative Downstream validation still requires Full.'
+        Write-Host 'Fast provides local feedback only; authoritative PR CI will run the required Full policy.'
     }
+    Write-MaintenanceRunLog $output "RequestedLevel=$Level; EffectiveMode=$effectiveMode; ReleaseRelevance=$($plan.releaseRelevance); ValidationRisk=$($plan.validationRisk); ChangedPaths=$(@($plan.paths).Count); Filters=$($selectedTests -join ',')"
 
     $stages = [Collections.Generic.List[object]]::new()
     $scopedPaths = @($plan.paths | ForEach-Object { $_.path } | Where-Object { Test-Path -LiteralPath (Join-Path $repoRoot $_) })
@@ -201,6 +203,15 @@ try {
     } else {
         @()
     }
+    $deferredOfflineToPr = (
+        $Level -eq 'Fast' -and
+        $plan.offlineTestPattern -and
+        ($plan.offlineTestPattern -eq 'test_*.py' -or $plan.offlineTestPattern -notin $offlinePatterns)
+    )
+    if ($deferredOfflineToPr) {
+        Write-Host 'Fast deferred heavyweight or complete offline tooling to authoritative PR CI.'
+        Write-MaintenanceRunLog $output 'Heavyweight or complete offline tooling deferred to authoritative PR CI.'
+    }
     foreach ($offlinePattern in $offlinePatterns) {
         $multipleOfflinePatterns = $offlinePatterns.Count -gt 1
         $offlineName = if ($multipleOfflinePatterns) { "Offline tooling tests ($offlinePattern)" } else { 'Offline tooling tests' }
@@ -213,22 +224,22 @@ try {
     }
 
     if (-not $isFullPath -and $formattedPaths.Count) {
-        $stages.Add([pscustomobject]@{ Name = 'Changed-scope formatting'; Log = 'format-check.log'; File = $pnpm; Args = @('exec', 'prettier', '--check', '--') + $formattedPaths })
+        $stages.Add([pscustomobject]@{ Name = 'Changed-scope formatting'; Log = 'format-check.log'; File = $pnpm; Args = @('exec', 'prettier', '--check', '--') + $formattedPaths; Display = 'pnpm exec prettier --check -- <changed paths>' })
     }
     if (-not $isFullPath -and $effectiveMode -eq 'focused' -and $selectedTests.Count) {
-        $stages.Add([pscustomobject]@{ Name = 'Focused tests'; Log = 'focused-tests.log'; File = $pnpm; Args = @('test') + $selectedTests })
+        $stages.Add([pscustomobject]@{ Name = 'Focused tests'; Log = 'focused-tests.log'; File = $pnpm; Args = @('test') + $selectedTests; Display = 'pnpm test <focused tests>' })
     }
     if ($isFullPath) {
-        $stages.Add([pscustomobject]@{ Name = 'Install dependencies'; Log = 'install.log'; File = $pnpm; Args = @('install', '--frozen-lockfile') })
-        $stages.Add([pscustomobject]@{ Name = 'Internationalization consistency'; Log = 'i18n.log'; File = $node; Args = @('bin/check-i18n.js') })
-        $stages.Add([pscustomobject]@{ Name = 'Formatting'; Log = 'format-check.log'; File = $pnpm; Args = @('format:check') })
-        $stages.Add([pscustomobject]@{ Name = 'Lint'; Log = 'lint.log'; File = $pnpm; Args = @('lint') })
-        $stages.Add([pscustomobject]@{ Name = 'Typecheck'; Log = 'typecheck.log'; File = $pnpm; Args = @('typecheck') })
-        $stages.Add([pscustomobject]@{ Name = 'Unit tests'; Log = 'tests.log'; File = $pnpm; Args = @('test') })
-        $stages.Add([pscustomobject]@{ Name = 'Build'; Log = 'build.log'; File = $pnpm; Args = @('build') })
+        $stages.Add([pscustomobject]@{ Name = 'Install dependencies'; Log = 'install.log'; File = $pnpm; Args = @('install', '--frozen-lockfile'); Display = 'pnpm install --frozen-lockfile' })
+        $stages.Add([pscustomobject]@{ Name = 'Internationalization consistency'; Log = 'i18n.log'; File = $node; Args = @('bin/check-i18n.js'); Display = 'node bin/check-i18n.js' })
+        $stages.Add([pscustomobject]@{ Name = 'Formatting'; Log = 'format-check.log'; File = $pnpm; Args = @('format:check'); Display = 'pnpm format:check' })
+        $stages.Add([pscustomobject]@{ Name = 'Lint'; Log = 'lint.log'; File = $pnpm; Args = @('lint'); Display = 'pnpm lint' })
+        $stages.Add([pscustomobject]@{ Name = 'Typecheck'; Log = 'typecheck.log'; File = $pnpm; Args = @('typecheck'); Display = 'pnpm typecheck' })
+        $stages.Add([pscustomobject]@{ Name = 'Unit tests'; Log = 'tests.log'; File = $pnpm; Args = @('test'); Display = 'pnpm test' })
+        $stages.Add([pscustomobject]@{ Name = 'Build'; Log = 'build.log'; File = $pnpm; Args = @('build'); Display = 'pnpm build' })
         $stages.Add([pscustomobject]@{ Name = 'Workflow inventory'; Log = 'workflow-inventory.log'; Action = { Assert-WorkflowInventory } })
     }
-    $stages.Add([pscustomobject]@{ Name = 'Git whitespace check'; Log = 'git-diff-check.log'; File = 'git'; Args = @('diff', '--check') })
+    $stages.Add([pscustomobject]@{ Name = 'Git whitespace check'; Log = 'git-diff-check.log'; File = 'git'; Args = @('diff', '--check'); Display = 'git diff --check' })
 
     $snapshot = Get-RepositorySnapshot
 
@@ -236,10 +247,12 @@ try {
         $stage = $stages[$index]
         Invoke-ValidationStage ($index + 1) $stages.Count $stage $snapshot
     }
-    Write-Host "SUCCESS: $Level validation completed ($effectiveMode)."
-    Write-Host "Logs: $runDirectory"
+    Complete-MaintenanceRun $output "SUCCESS: $Level validation completed ($effectiveMode)."
     $global:LASTEXITCODE = 0
 } catch {
+    if ($output.CurrentStageName) { Fail-MaintenanceStage $output $_.Exception.Message }
+    if ($output.Timer.IsRunning) { $output.Timer.Stop() }
+    Write-MaintenanceRunLog $output "Validation failed: $($_.Exception.Message)"
     Write-Error $_.Exception.Message
     Write-Host "Logs: $runDirectory"
     exit 1
