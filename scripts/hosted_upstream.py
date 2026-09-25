@@ -23,6 +23,7 @@ from mosaic_repository import (
     SEERR_DOWNSTREAM_REPOSITORY,
     UPSTREAM_REPOSITORY,
     authenticate_downstream_repository,
+    authenticate_workflow_repository,
 )
 
 
@@ -31,6 +32,7 @@ UPSTREAM = UPSTREAM_REPOSITORY
 UPSTREAM_BRANCH = "develop"
 DOWNSTREAM_REF = f"refs/heads/{PROTECTED_BRANCH}"
 UPSTREAM_REF = f"refs/heads/{UPSTREAM_BRANCH}"
+WORKFLOW_PATH = ".github/workflows/upstream-sync.yml"
 URLS = {"origin": f"https://github.com/{ORIGIN}.git",
         "upstream": f"https://github.com/{UPSTREAM}.git"}
 # Reviewed, already integrated official upstream commit at implementation time.
@@ -1153,7 +1155,7 @@ def main():
     failed = False
     try:
         try:
-            repository = authenticate_downstream_repository(raw_repository)
+            repository = authenticate_workflow_repository(os.environ, WORKFLOW_PATH)
         except ValueError as error:
             raise IdentityError(
                 "Hosted execution requires the canonical downstream repository identity."

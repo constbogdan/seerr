@@ -5,9 +5,7 @@
 the operator's **READY TO PUBLISH** decision. Passing tests or an agent's belief
 that work is ready is not publication authority.
 
-This document preserves the Mosaic publication contract for Seerr. The copied
-implementation must not be used until its repository, branch, validation, and
-presentation constants have been adapted and its Seerr tests pass.
+This document preserves the Mosaic publication contract as adapted for Seerr.
 
 ## Repository authority
 

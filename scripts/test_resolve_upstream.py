@@ -451,6 +451,29 @@ class ResolveUpstreamTests(unittest.TestCase):
         self.assertIn("-Pr must be a positive integer", normalized_native_output(completed))
         self.assertEqual("", captured)
 
+    def test_local_sync_helper_preserves_manual_safety_contract(self):
+        wrapper = MODULE_PATH.with_name("sync-upstream.ps1").read_text(encoding="utf-8")
+        for required in (
+            "'rev-parse', '--show-toplevel'",
+            "'status', '--porcelain=v1', '--untracked-files=all'",
+            "if ($branch -ne 'downstream-main')",
+            "'fetch', 'origin', 'downstream-main'",
+            "'fetch', 'upstream', 'develop'",
+            "'rev-list', '--left-right', '--count', 'downstream-main...origin/downstream-main'",
+            "'merge', '--ff-only', 'origin/downstream-main'",
+            '"chore/sync-upstream-$date"',
+            'Test-GitRef "refs/heads/$syncBranch"',
+            'Test-GitRef "refs/remotes/origin/$syncBranch"',
+            "'switch', '-c', $syncBranch, 'downstream-main'",
+            "git merge --no-edit upstream/develop",
+            "git diff --name-only --diff-filter=U",
+            "Never choose ours/theirs mechanically.",
+            "Do not push or open the sync PR if validation fails.",
+        ):
+            self.assertIn(required, wrapper)
+        for forbidden in ("git push", "gh pr", "prepare-pr.ps1", "resolve-upstream.ps1"):
+            self.assertNotIn(forbidden, wrapper)
+
     def test_wrong_repository_refuses_before_checkout(self):
         runner = FakeRunner(origin="https://github.com/example/wrong.git")
         with self.assertRaisesRegex(resolve.Refusal, "Expected origin"):

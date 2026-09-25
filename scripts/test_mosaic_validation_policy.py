@@ -282,6 +282,7 @@ class ValidationIntegrationContractTest(unittest.TestCase):
             "@('diff', '--check')",
         ):
             self.assertIn(command, validator)
+        self.assertIn("[StringComparer]::Ordinal", validator)
         self.assertNotIn("gradlew", validator)
         self.assertNotIn("mosaic_output.ps1", validator)
 

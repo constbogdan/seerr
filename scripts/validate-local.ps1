@@ -104,12 +104,12 @@ function Get-ValidationPlan([string]$Python) {
 function Assert-WorkflowInventory {
     $expectedPath = Join-Path $repoRoot 'docs/downstream-workflow-inventory.txt'
     $expected = @(Get-Content -LiteralPath $expectedPath | Where-Object { $_ })
-    $actual = @(
+    [string[]]$actual = @(
         Get-ChildItem -LiteralPath (Join-Path $repoRoot '.github/workflows') -File |
             Where-Object { $_.Extension -in @('.yml', '.yaml') } |
-            ForEach-Object Name |
-            Sort-Object -CaseSensitive
+            ForEach-Object Name
     )
+    [Array]::Sort($actual, [StringComparer]::Ordinal)
     if (($expected -join "`n") -cne ($actual -join "`n")) {
         throw 'Workflow inventory changed; review inherited workflow safety and update the inventory explicitly.'
     }

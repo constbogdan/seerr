@@ -1033,6 +1033,24 @@ class HostedSyncTests(unittest.TestCase):
             self.assertEqual(sync.main(), 1)
         self.assertEqual(json.loads(output.read_text())["outcome"], "blocked")
 
+    def test_hosted_cli_requires_exact_protected_workflow_ref(self):
+        output = self.root / "wrong-workflow-ref.json"
+        runtime = {
+            "GITHUB_ACTIONS": "true",
+            "GITHUB_REPOSITORY": sync.ORIGIN,
+            "GITHUB_REF": sync.DOWNSTREAM_REF,
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_WORKFLOW_REF": (
+                f"{sync.ORIGIN}/{sync.WORKFLOW_PATH}@refs/heads/develop"
+            ),
+            "RUNNER_TEMP": str(self.root),
+        }
+        with patch.dict(os.environ, runtime), patch(
+            "sys.argv", ["hosted_upstream", "--output", str(output)]
+        ):
+            self.assertEqual(sync.main(), 1)
+        self.assertEqual("blocked", json.loads(output.read_text())["outcome"])
+
     def test_github_subprocess_credentials_are_operation_scoped(self):
         github = sync.GitHub()
         with patch.dict(os.environ, {"GH_TOKEN": "read-only-repository-token"}), patch.object(sync, "command") as run:
@@ -1164,6 +1182,7 @@ class HostedSyncTests(unittest.TestCase):
         output = self.root / "blocked.json"
         runtime = {"GITHUB_ACTIONS": "true", "GITHUB_REPOSITORY": sync.ORIGIN,
                    "GITHUB_REF": sync.DOWNSTREAM_REF, "GITHUB_EVENT_NAME": "workflow_dispatch",
+                   "GITHUB_WORKFLOW_REF": f"{sync.ORIGIN}/{sync.WORKFLOW_PATH}@{sync.DOWNSTREAM_REF}",
                    "RUNNER_TEMP": str(self.root), "GITHUB_STEP_SUMMARY": str(self.root / "summary.md"),
                    "GITHUB_OUTPUT": str(self.root / "outputs")}
         def conflict(git, gh, observation):
@@ -1195,6 +1214,7 @@ class HostedSyncTests(unittest.TestCase):
             "GITHUB_REPOSITORY": sync.ORIGIN,
             "GITHUB_REF": sync.DOWNSTREAM_REF,
             "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_WORKFLOW_REF": f"{sync.ORIGIN}/{sync.WORKFLOW_PATH}@{sync.DOWNSTREAM_REF}",
             "RUNNER_TEMP": str(self.root),
             "GITHUB_STEP_SUMMARY": str(summary),
             "GITHUB_OUTPUT": str(self.root / "sanitized-outputs"),
@@ -1243,6 +1263,7 @@ class HostedSyncTests(unittest.TestCase):
             "GITHUB_REPOSITORY": sync.ORIGIN,
             "GITHUB_REF": sync.DOWNSTREAM_REF,
             "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_WORKFLOW_REF": f"{sync.ORIGIN}/{sync.WORKFLOW_PATH}@{sync.DOWNSTREAM_REF}",
             "RUNNER_TEMP": str(self.root),
             "GITHUB_OUTPUT": str(self.root / "waiting-outputs"),
         })

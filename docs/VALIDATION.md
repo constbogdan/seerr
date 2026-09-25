@@ -4,10 +4,6 @@ This document owns the Seerr downstream validation contract. Validation proves
 the reviewed source state; it does not grant publication, merge, release, image,
 or semantic-resolution authority.
 
-The copied Mosaic validation scripts must not be run as Seerr tooling until
-their Android-specific commands, repository identities, path classification,
-and test selection have been adapted and their Seerr tests pass.
-
 ## Authority model
 
 Validation has two distinct layers:

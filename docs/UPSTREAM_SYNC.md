@@ -4,10 +4,6 @@ This document is the operating contract for observing, classifying, publishing,
 and resolving upstream Seerr changes. It adapts Mosaic's current authority model
 without granting new automation authority.
 
-The copied Mosaic implementation is not operational in Seerr until its exact
-repository, branch, policy, validation, and presentation identities have been
-adapted and tested.
-
 ## Repository topology
 
 - maintained fork: `constbogdan/seerr`;
