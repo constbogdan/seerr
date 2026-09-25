@@ -21,7 +21,7 @@ Dockhand/NAS deployment and rollback path.
   `downstream-main`. It uses `custom-v1.0.N`, full-SHA, and rolling `custom`
   tags and reports the authoritative digest in the workflow summary.
 - `N` is the protected-main first-parent distance from epoch `f74657aa`; this
-  adapts Mosaic's allocation model while the `custom-` namespace avoids official
+  uses deterministic allocation while the `custom-` namespace avoids official
   Seerr version identity.
 - GHCR metadata and [package documentation](SEERR_DOWNSTREAM_PACKAGE.md) identify
   the image as a personal downstream build, not an official Seerr release.
@@ -53,7 +53,7 @@ maintenance branch.
 
 ### Fresh
 
-The prototype is in `C:\Projects\Wholphin\seerr-discovery` on `feature/fresh` at
+The prototype is in the separate `seerr-discovery` workspace on `feature/fresh` at
 `a3dbbd94a654dcf9f4273d7ba754f66c6d71d799`. It contains tracked and untracked
 work and was observed 18 commits behind the audited `upstream/develop`. Preserve
 that workspace. Transplant it only after the downstream foundation exists, using
@@ -61,7 +61,7 @@ reviewable commits and focused tests.
 
 ### Local harness
 
-`C:\Projects\Wholphin\seerr-harness` is a clean, separate repository for running
+The `seerr-harness` workspace is a clean, separate repository for running
 queue or Fresh checkouts against isolated local configuration and real services.
 Keep it outside the Seerr source repository and outside hosted CI.
 

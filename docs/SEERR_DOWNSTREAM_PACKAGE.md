@@ -15,9 +15,8 @@ and provenance.
 - the published image digest is the authoritative deployment and rollback identity.
 
 `N` is the protected `downstream-main` first-parent distance from the fixed downstream image epoch.
-Upstream side-history commits do not independently allocate versions. This mirrors Mosaic's
-first-parent version model while the `custom-` namespace prevents confusion with official Seerr
-versions.
+Upstream side-history commits do not independently allocate versions. The first-parent model and
+`custom-` namespace prevent confusion with official Seerr versions.
 
 Each publication summary records the version, source SHA, digest, build link, comparison with the
 previous protected-main image, and whether authenticated upstream synchronization provenance was

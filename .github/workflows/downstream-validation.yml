@@ -27,6 +27,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0
 
       - name: Verify workflow inventory
         shell: bash
@@ -71,3 +72,23 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Record reusable PR validation evidence
+        if: success() && github.event_name == 'pull_request'
+        id: pr-validation-evidence
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          VALIDATION_CLASS: FULL
+        run: python3 -B scripts/seerr_validation_reuse.py record
+
+      - name: Upload PR validation evidence
+        if: success() && github.event_name == 'pull_request'
+        id: upload-pr-evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ steps.pr-validation-evidence.outputs.artifact_name }}
+          path: ${{ steps.pr-validation-evidence.outputs.evidence_path }}
+          retention-days: 7
+          compression-level: 0

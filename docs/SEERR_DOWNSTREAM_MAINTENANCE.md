@@ -101,7 +101,7 @@ verification proves that a versioned Release link materially improves review.
 
 ## Local and NAS verification
 
-`C:\Projects\Wholphin\seerr-harness` is the separate local integration harness.
+The separate `seerr-harness` workspace is the local integration harness.
 It can run selected Seerr checkouts against isolated local configuration and real
 Jellyfin/Sonarr/Radarr services, and provides status, stop, and configuration
 backup operations. It is not a CI runner and must not expose its credentials.

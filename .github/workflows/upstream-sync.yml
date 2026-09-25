@@ -1,0 +1,127 @@
+name: Upstream Synchronization
+run-name: Upstream check · ${{ github.event_name == 'schedule' && 'Scheduled' || 'Manual' }}
+
+on:
+  workflow_dispatch:
+  schedule:
+    # UTC is fixed: 08:00/17:00/23:00 Bucharest in winter, 09:00/18:00/00:00 in summer.
+    - cron: '0 6,15,21 * * *'
+
+permissions:
+  contents: read
+
+# Serializes attempts, including reruns. Never cancel publication halfway through.
+concurrency:
+  group: seerr-upstream-sync
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  observe:
+    name: Observe upstream integration
+    if: >-
+      github.repository == 'constbogdan/seerr' &&
+      github.ref == 'refs/heads/downstream-main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      outcome: ${{ steps.observe.outputs.outcome }}
+      upstream: ${{ steps.observe.outputs.upstream_sha }}
+      downstream: ${{ steps.observe.outputs.downstream_sha }}
+      blocking_pr: ${{ steps.observe.outputs.blocking_pr_number }}
+      blocking_head: ${{ steps.observe.outputs.blocking_pr_head_sha }}
+      existing_pr: ${{ steps.observe.outputs.existing_pr_number }}
+      existing_branch: ${{ steps.observe.outputs.existing_pr_branch }}
+      existing_head: ${{ steps.observe.outputs.existing_pr_head_sha }}
+    steps:
+      - name: Checkout trusted workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up trusted maintenance runtime
+        uses: ./.github/actions/setup
+      - name: Observe upstream changes with read-only access
+        id: observe
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONFIGURED_SCHEDULE: ${{ github.event.schedule || 'manual' }}
+        run: python3 scripts/hosted_upstream.py --output "$RUNNER_TEMP/observation.json"
+      - name: Save complete observation
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: upstream-observation-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/observation.json
+          retention-days: 14
+          if-no-files-found: error
+
+  publish:
+    name: Publish candidate
+    needs: observe
+    if: >-
+      github.repository == 'constbogdan/seerr' &&
+      github.ref == 'refs/heads/downstream-main' &&
+      needs.observe.outputs.outcome != 'no_delta'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout trusted workflow implementation
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - name: Set up trusted maintenance runtime
+        uses: ./.github/actions/setup
+      - name: Mint repository-scoped publication token
+        # Only candidate publication paths need the App's Contents/PR authority.
+        # An empty App output is expected when this step is skipped; it is not a binding failure.
+        if: contains(fromJSON('["ready","review_required","semantic_conflict"]'), needs.observe.outputs.outcome)
+        id: publication
+        continue-on-error: true # The helper records missing credentials in the retained outcome.
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.SYNC_BOT_CLIENT_ID }}
+          private-key: ${{ secrets.SYNC_BOT_PRIVATE_KEY }}
+          # These event fields become targets only after the job's exact repository/ref guard.
+          owner: ${{ github.repository_owner }}
+          repositories: ${{ github.event.repository.name }}
+          permission-contents: write
+          permission-pull-requests: write
+      - name: Recheck exact inputs and create or update candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SYNC_PUBLISH_TOKEN: ${{ steps.publication.outputs.token }}
+          EXPECTED_UPSTREAM: ${{ needs.observe.outputs.upstream }}
+          EXPECTED_DOWNSTREAM: ${{ needs.observe.outputs.downstream }}
+          EXPECTED_BLOCKING_PR: ${{ needs.observe.outputs.blocking_pr }}
+          EXPECTED_BLOCKING_HEAD: ${{ needs.observe.outputs.blocking_head }}
+          EXPECTED_EXISTING_PR: ${{ needs.observe.outputs.existing_pr }}
+          EXPECTED_EXISTING_BRANCH: ${{ needs.observe.outputs.existing_branch }}
+          EXPECTED_EXISTING_HEAD: ${{ needs.observe.outputs.existing_head }}
+          CONFIGURED_SCHEDULE: ${{ github.event.schedule || 'manual' }}
+        run: >-
+          python3 scripts/hosted_upstream.py --publish
+          --expected-upstream "$EXPECTED_UPSTREAM" --expected-downstream "$EXPECTED_DOWNSTREAM"
+          --expected-blocking-pr "$EXPECTED_BLOCKING_PR" --expected-blocking-head "$EXPECTED_BLOCKING_HEAD"
+          --expected-existing-pr "$EXPECTED_EXISTING_PR"
+          --expected-existing-branch "$EXPECTED_EXISTING_BRANCH"
+          --expected-existing-head "$EXPECTED_EXISTING_HEAD"
+          --output "$RUNNER_TEMP/outcome.json"
+      - name: Save complete publication outcome
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: upstream-outcome-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/outcome.json
+          retention-days: 14
+          if-no-files-found: error
