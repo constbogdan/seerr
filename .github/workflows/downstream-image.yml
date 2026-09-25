@@ -1,15 +1,11 @@
----
 # yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
 name: Downstream Image
 
 on:
   push:
-    branches:
-      - downstream-main
+    branches: [downstream-main]
 
-permissions:
-  contents: read
-  packages: write
+permissions: {}
 
 concurrency:
   group: downstream-image-${{ github.ref }}
@@ -19,10 +15,92 @@ env:
   IMAGE_NAME: ghcr.io/constbogdan/seerr
 
 jobs:
-  publish:
-    name: Publish downstream image
+  eligibility:
+    name: Determine image eligibility
     if: github.repository == 'constbogdan/seerr' && github.ref == 'refs/heads/downstream-main'
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      release_required: ${{ steps.plan.outputs.release_required }}
+      version_tag: ${{ steps.plan.outputs.version_tag }}
+      source_date_epoch: ${{ steps.plan.outputs.source_date_epoch }}
+      previous_sha: ${{ steps.plan.outputs.previous_sha }}
+      upstream_authenticated: ${{ steps.plan.outputs.upstream_authenticated }}
+      upstream_base_sha: ${{ steps.plan.outputs.upstream_base_sha }}
+      upstream_tip_sha: ${{ steps.plan.outputs.upstream_tip_sha }}
+      managed_candidate_sha: ${{ steps.plan.outputs.managed_candidate_sha }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authenticate eligibility context
+        shell: bash
+        run: |
+          test "$GITHUB_REPOSITORY" = 'constbogdan/seerr'
+          test "$GITHUB_REF" = 'refs/heads/downstream-main'
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry for metadata
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read previous published image identity
+        id: previous
+        shell: bash
+        run: |
+          if annotations="$(docker buildx imagetools inspect --format '{{json .Manifest.Annotations}}' "${IMAGE_NAME}:custom" 2>/dev/null)"; then
+            previous_sha="$(jq -er '.["org.opencontainers.image.revision"]' <<<"$annotations")"
+            previous_version_tag="$(jq -er '.["org.opencontainers.image.version"]' <<<"$annotations")"
+          else
+            previous_sha=''
+            previous_version_tag=''
+          fi
+          echo "previous_sha=$previous_sha" >> "$GITHUB_OUTPUT"
+          echo "previous_version_tag=$previous_version_tag" >> "$GITHUB_OUTPUT"
+
+      - name: Classify exact unpublished range
+        id: plan
+        env:
+          PREVIOUS_SHA: ${{ steps.previous.outputs.previous_sha }}
+          PREVIOUS_VERSION_TAG: ${{ steps.previous.outputs.previous_version_tag }}
+        run: >-
+          python3 -B scripts/seerr_downstream_version.py
+          --publication --plan-publication
+          --previous-sha "$PREVIOUS_SHA"
+          --previous-version-tag "$PREVIOUS_VERSION_TAG"
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Record skipped publication
+        if: steps.plan.outputs.release_required != 'true'
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## No downstream image required
+
+          The exact unpublished range `${{ steps.plan.outputs.previous_sha }}...${GITHUB_SHA}`
+          is `${{ steps.plan.outputs.release_relevance }}`. The rolling `custom` tag and
+          downstream version remain unchanged.
+          EOF
+
+  publish:
+    name: Publish downstream image
+    needs: eligibility
+    if: needs.eligibility.outputs.release_required == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -37,18 +115,11 @@ jobs:
           test "$GITHUB_REF" = 'refs/heads/downstream-main'
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
-      - name: Allocate downstream version
-        id: version
-        run: >-
-          python3 -B scripts/seerr_downstream_version.py
-          --publication
-          --github-output "$GITHUB_OUTPUT"
-
       - name: Set build metadata
         id: build_metadata
         shell: bash
         env:
-          SOURCE_DATE_EPOCH: ${{ steps.version.outputs.source_date_epoch }}
+          SOURCE_DATE_EPOCH: ${{ needs.eligibility.outputs.source_date_epoch }}
         run: |
           created="$(date -u --date="@${SOURCE_DATE_EPOCH}" +'%Y-%m-%dT%H:%M:%SZ')"
           echo "created=$created" >> "$GITHUB_OUTPUT"
@@ -71,7 +142,7 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ steps.version.outputs.version_tag }}
+            type=raw,value=${{ needs.eligibility.outputs.version_tag }}
             type=raw,value=${{ github.sha }}
             type=raw,value=custom
           labels: |
@@ -81,7 +152,7 @@ jobs:
             org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
             org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}/blob/downstream-main/docs/SEERR_DOWNSTREAM_PACKAGE.md
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version_tag }}
+            org.opencontainers.image.version=${{ needs.eligibility.outputs.version_tag }}
             org.opencontainers.image.created=${{ steps.build_metadata.outputs.created }}
           annotations: |
             org.opencontainers.image.title=Seerr personal downstream
@@ -90,7 +161,7 @@ jobs:
             org.opencontainers.image.url=${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}
             org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}/blob/downstream-main/docs/SEERR_DOWNSTREAM_PACKAGE.md
             org.opencontainers.image.revision=${{ github.sha }}
-            org.opencontainers.image.version=${{ steps.version.outputs.version_tag }}
+            org.opencontainers.image.version=${{ needs.eligibility.outputs.version_tag }}
             org.opencontainers.image.created=${{ steps.build_metadata.outputs.created }}
 
       - name: Build and publish image
@@ -103,8 +174,8 @@ jobs:
           push: true
           build-args: |
             COMMIT_TAG=${{ github.sha }}
-            BUILD_VERSION=${{ steps.version.outputs.version_tag }}
-            SOURCE_DATE_EPOCH=${{ steps.version.outputs.source_date_epoch }}
+            BUILD_VERSION=${{ needs.eligibility.outputs.version_tag }}
+            SOURCE_DATE_EPOCH=${{ needs.eligibility.outputs.source_date_epoch }}
           labels: ${{ steps.metadata.outputs.labels }}
           annotations: ${{ steps.metadata.outputs.annotations }}
           tags: ${{ steps.metadata.outputs.tags }}
@@ -116,25 +187,22 @@ jobs:
         shell: bash
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## Seerr downstream ${{ steps.version.outputs.version_tag }} published
+          ## Seerr downstream ${{ needs.eligibility.outputs.version_tag }} published
 
-          - **Image:** \`${IMAGE_NAME}\`
-          - **Version:** \`${{ steps.version.outputs.version_tag }}\`
-          - **Source SHA:** \`${GITHUB_SHA}\`
-          - **Immutable tag:** \`${IMAGE_NAME}:${GITHUB_SHA}\`
-          - **Version tag:** \`${IMAGE_NAME}:${{ steps.version.outputs.version_tag }}\`
-          - **Rolling tag:** \`${IMAGE_NAME}:custom\`
-          - **Digest:** \`${{ steps.publish.outputs.digest }}\`
+          - **Image:** `${IMAGE_NAME}`
+          - **Version:** `${{ needs.eligibility.outputs.version_tag }}`
+          - **Source SHA:** `${GITHUB_SHA}`
+          - **Immutable tag:** `${IMAGE_NAME}:${GITHUB_SHA}`
+          - **Version tag:** `${IMAGE_NAME}:${{ needs.eligibility.outputs.version_tag }}`
+          - **Rolling tag:** `${IMAGE_NAME}:custom`
+          - **Digest:** `${{ steps.publish.outputs.digest }}`
           - **Build:** [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
 
           ### Upstream synchronization
 
-          No authenticated upstream base/tip pair was recorded for this build. Future upstream-sync
-          automation must supply that durable provenance before this section claims upstream changes.
+          ${{ needs.eligibility.outputs.upstream_authenticated == 'true' && format('Authenticated managed candidate `{0}` integrated upstream `{1}...{2}`.', needs.eligibility.outputs.managed_candidate_sha, needs.eligibility.outputs.upstream_base_sha, needs.eligibility.outputs.upstream_tip_sha) || 'No authenticated managed upstream candidate exists in this publication range.' }}
 
           ### Downstream changes
 
-          [Compare the previous protected-main image with this version](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${{ steps.version.outputs.previous_sha }}...${GITHUB_SHA}).
-          Changes remain unclassified as direct-only until upstream-sync automation supplies the
-          authenticated base/tip pair needed to separate upstream and fork commits.
+          [Compare the previous published image with this version](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${{ needs.eligibility.outputs.previous_sha }}...${GITHUB_SHA}).
           EOF

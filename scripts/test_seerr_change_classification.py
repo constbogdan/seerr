@@ -60,9 +60,9 @@ class ClassificationTests(unittest.TestCase):
                 True,
             ),
             "scripts/seerr_downstream_version.py": (
-                classification.PRODUCT_RELEVANT,
+                classification.TOOLING_ONLY,
                 classification.HIGH,
-                True,
+                False,
             ),
             "config/.gitkeep": (
                 classification.TOOLING_ONLY,

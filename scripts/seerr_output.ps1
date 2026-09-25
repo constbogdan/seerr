@@ -48,10 +48,15 @@ function New-MaintenanceRunOutput {
     param(
         [Parameter(Mandatory)][string]$RepositoryRoot,
         [Parameter(Mandatory)][ValidateSet('validation', 'prepare-pr')][string]$Kind,
-        [Parameter(Mandatory)][string]$LegacyLogPath
+        [Parameter(Mandatory)][string]$LegacyLogPath,
+        [string]$RunDirectoryRoot
     )
     $runId = '{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $PID
-    $runDirectory = Join-Path $RepositoryRoot ".logs\$Kind\$runId"
+    $runDirectory = if ($RunDirectoryRoot) {
+        Join-Path $RunDirectoryRoot $runId
+    } else {
+        Join-Path $RepositoryRoot ".logs\$Kind\$runId"
+    }
     New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
     [pscustomobject]@{
         Kind = $Kind
@@ -147,11 +152,11 @@ function Start-MaintenanceStage {
     $Context.CurrentStageWriter.AutoFlush = $true
     Write-MaintenanceStageLog $Context "Stage: $Name"
     Write-MaintenanceStageLog $Context "Started: $(Get-Date -Format o)"
+    $link = Format-MaintenanceTerminalLink '[log]' $Context.CurrentStageLog ([IO.Path]::GetFileName($Context.CurrentStageLog))
     if ($env:MAINTENANCE_OUTPUT_COMPACT -eq '1') {
-        $link = Format-MaintenanceTerminalLink '[log]' $Context.CurrentStageLog ([IO.Path]::GetFileName($Context.CurrentStageLog))
         Write-Host ((Get-MaintenanceConsolePrefix) + ('[{0}/{1}] {2} [RUN]  {3}' -f $Number, $Total, $Name, $link))
     } else {
-        Write-Host ((Get-MaintenanceConsolePrefix) + ('[{0}/{1}] {2} [RUN]' -f $Number, $Total, $Name))
+        Write-Host ((Get-MaintenanceConsolePrefix) + ('[{0}/{1}] {2} [RUN]  {3}' -f $Number, $Total, $Name, $link))
     }
     Write-MaintenanceRunLog $Context "Stage started: $Name; Log=$($Context.CurrentStageLog)"
 }
@@ -222,7 +227,8 @@ function Invoke-MaintenanceLoggedCommand {
         [Parameter(Mandatory)]$Context,
         [Parameter(Mandatory)][string]$FilePath,
         [Parameter(Mandatory)][string[]]$Arguments,
-        [Parameter(Mandatory)][string]$DisplayCommand
+        [Parameter(Mandatory)][string]$DisplayCommand,
+        [switch]$EchoOutput
     )
     Write-MaintenanceRunLog $Context "Command: $DisplayCommand"
     $previousErrorAction = $ErrorActionPreference
@@ -231,6 +237,7 @@ function Invoke-MaintenanceLoggedCommand {
         & $FilePath @Arguments 2>&1 | ForEach-Object {
             $line = [string]$_
             Write-MaintenanceStageLog $Context $line
+            if ($EchoOutput) { Write-Host $line }
         }
         return $LASTEXITCODE
     } finally {

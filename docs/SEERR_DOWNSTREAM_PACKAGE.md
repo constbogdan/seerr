@@ -14,11 +14,11 @@ and provenance.
 - the full source SHA is an immutable source-identity tag.
 - the published image digest is the authoritative deployment and rollback identity.
 
-`N` is the protected `downstream-main` first-parent distance from the fixed downstream image epoch.
-Upstream side-history commits do not independently allocate versions. The first-parent model and
-`custom-` namespace prevent confusion with official Seerr versions.
+`N` advances only when the exact range since the previous published image contains a product-relevant
+or conservatively unknown change. Documentation-only and tooling-only merges do not publish or consume
+a version. The `custom-` namespace prevents confusion with official Seerr versions.
 
 Each publication summary records the version, source SHA, digest, build link, comparison with the
 previous protected-main image, and whether authenticated upstream synchronization provenance was
-available. Until upstream-sync automation records a durable upstream base/tip pair, the publisher
-does not claim one.
+available. Managed upstream provenance is claimed only when exact candidate trailers agree with native
+merge parents and ancestry; ordinary or ambiguous merge history is reported without an upstream claim.

@@ -84,6 +84,13 @@ class ValidationPolicyTest(unittest.TestCase):
         self.assertEqual(policy.FULL, plan["validationMode"])
         self.assertEqual("test_seerr_repository.py", plan["offlineTestPattern"])
 
+    def test_image_planner_is_high_risk_tooling_not_product_output(self):
+        plan = policy.plan_paths(["scripts/seerr_downstream_version.py"])
+        self.assertEqual("tooling-only", plan["releaseRelevance"])
+        self.assertFalse(plan["releaseRequired"])
+        self.assertEqual("high", plan["validationRisk"])
+        self.assertEqual(policy.FULL, plan["validationMode"])
+
     def test_upstream_automation_uses_explicit_release_and_offline_boundaries(self):
         ownership = policy.plan_paths(["scripts/upstream_ownership_policy.json"])
         self.assertEqual("tooling-only", ownership["releaseRelevance"])
@@ -275,7 +282,8 @@ class ValidationIntegrationContractTest(unittest.TestCase):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
         self.assertIn("ValidateSet('Fast', 'Standard', 'Full')", validator)
         self.assertIn("seerr_validation_policy.py", validator)
-        self.assertIn("Fast provides bounded local feedback only", validator)
+        self.assertIn("Fast provides local feedback only", validator)
+        self.assertIn("Fast deferred heavyweight or complete offline tooling", validator)
         self.assertIn("@($plan.localFastOfflinePatterns", validator)
         self.assertIn("'test_*.py'", validator)
         for command in (
@@ -341,10 +349,9 @@ class ValidationIntegrationContractTest(unittest.TestCase):
 
     def test_validator_records_stage_failures_and_logs(self):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
-        for marker in ("[RUN]", "[PASS]", "[FAIL]"):
-            self.assertIn(marker, validator)
+        for helper in ("Start-MaintenanceStage", "Complete-MaintenanceStage", "Fail-MaintenanceStage"):
+            self.assertIn(helper, validator)
         self.assertIn("failed with exit code", validator)
-        self.assertIn("Full log: $logPath", validator)
         self.assertIn("Write-Error $_.Exception.Message", validator)
 
     def test_validator_failure_is_nonzero(self):
@@ -441,11 +448,30 @@ class ValidationIntegrationContractTest(unittest.TestCase):
                 )
                 self.assertEqual(0, result.returncode, result.stdout + result.stderr)
 
+    def test_snapshot_hashes_multiple_untracked_paths_individually(self):
+        validator = (ROOT / "scripts/validate-local.ps1").read_text()
+        self.assertIn("$untrackedText = Get-GitText", validator)
+        self.assertIn("($untrackedText -split", validator)
+        self.assertNotIn("@(Get-GitText @('ls-files'", validator)
+
     def test_stage_output_is_captured_once(self):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()
-        self.assertIn("$lines | Set-Content -LiteralPath $logPath", validator)
-        self.assertIn("$lines | ForEach-Object { Write-Host $_ }", validator)
+        stage = validator.split("function Invoke-ValidationStage", 1)[1].split(
+            "\ntry {", 1
+        )[0]
+        self.assertIn("Invoke-MaintenanceLoggedCommand", validator)
+        self.assertIn("-EchoOutput", validator)
+        self.assertNotIn("$lines = @(&", stage)
         self.assertIn("Assert-RepositorySnapshot $Snapshot $Stage.Name", validator)
+
+    def test_validation_logs_are_outside_the_repository_and_linked_live(self):
+        validator = (ROOT / "scripts/validate-local.ps1").read_text()
+        output = (ROOT / "scripts/seerr_output.ps1").read_text()
+        self.assertIn("[IO.Path]::GetTempPath()", validator)
+        self.assertIn("-RunDirectoryRoot $validationLogRoot", validator)
+        self.assertIn("[string]$RunDirectoryRoot", output)
+        self.assertIn("$link", output)
+        self.assertIn("if ($EchoOutput) { Write-Host $line }", output)
 
     def test_snapshot_check_precedes_exit_status_acceptance(self):
         validator = (ROOT / "scripts/validate-local.ps1").read_text()

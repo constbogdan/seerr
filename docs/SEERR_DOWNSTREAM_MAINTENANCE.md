@@ -72,6 +72,9 @@ The downstream-owned `.github/workflows/downstream-image.yml` publishes:
 
 - only on pushes to reviewed `downstream-main` state;
 - only after exact `constbogdan/seerr` repository and branch authentication;
+- only when the exact range after the previously published `custom` image is
+  product-relevant or conservatively unknown; docs-only and tooling-only ranges
+  leave the image, rolling tag, and version unchanged;
 - `ghcr.io/constbogdan/seerr:custom-v1.0.N` as the human-readable immutable version tag;
 - `ghcr.io/constbogdan/seerr:<full-source-sha>` as the immutable source tag;
 - `ghcr.io/constbogdan/seerr:custom` as the rolling update tag;
@@ -80,19 +83,20 @@ The downstream-owned `.github/workflows/downstream-image.yml` publishes:
 - the published digest and run link in the workflow summary.
 
 The immutable digest is deployment authority; tags are discovery and convenience
-identities. `N` is the protected `downstream-main` first-parent distance from the
-fixed image-publication epoch `f74657aa501e1fc28bf314673a0cedde167d47e6`.
-The epoch is not publishable; the first subsequent protected-main merge is
-`custom-v1.0.1`. Upstream side-history does not allocate extra versions, and the
-`custom-` namespace prevents confusion with official Seerr releases.
+identities. `N` advances once for each required image, using the previous rolling
+image's authenticated source/version annotations as the exact classification
+baseline. Skipped documentation/tooling merges remain in the next unpublished
+range, so a later product publication compares the complete range without version
+gaps. The `custom-` namespace prevents confusion with official Seerr releases.
 
 The package description, manifest annotation, and [package documentation](SEERR_DOWNSTREAM_PACKAGE.md)
 identify this as a personal downstream build and link the official
 `seerr-team/seerr` project. The workflow summary is the current per-build release
 record: it includes version, source SHA, digest, build link, and comparison with
-the previous protected-main image. It keeps upstream-sync and downstream-change
-sections separate, but refuses to claim an upstream base/tip until future sync
-automation records that pair durably.
+the previous published image. It keeps upstream-sync and downstream-change
+sections separate. Upstream provenance is reported only when a managed candidate
+in the unpublished Git topology has exact upstream/downstream trailers matching
+its two parents; ordinary, malformed, or ambiguous merges produce no claim.
 
 No GitHub Release is created. A Release would require broader `contents: write`
 authority and Dockhand does not automatically associate one with the mutable
