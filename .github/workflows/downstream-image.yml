@@ -59,15 +59,14 @@ jobs:
         id: previous
         shell: bash
         run: |
-          if annotations="$(docker buildx imagetools inspect --format '{{json .Manifest.Annotations}}' "${IMAGE_NAME}:custom" 2>/dev/null)"; then
-            previous_sha="$(jq -er '.["org.opencontainers.image.revision"]' <<<"$annotations")"
-            previous_version_tag="$(jq -er '.["org.opencontainers.image.version"]' <<<"$annotations")"
-          else
-            previous_sha=''
-            previous_version_tag=''
+          metadata_file="${RUNNER_TEMP}/previous-image-metadata.json"
+          if ! docker buildx imagetools inspect --format '{{json .}}' "${IMAGE_NAME}:custom" > "$metadata_file"; then
+            echo 'Unable to inspect the existing rolling downstream image.' >&2
+            exit 1
           fi
-          echo "previous_sha=$previous_sha" >> "$GITHUB_OUTPUT"
-          echo "previous_version_tag=$previous_version_tag" >> "$GITHUB_OUTPUT"
+          python3 -B scripts/seerr_downstream_version.py \
+            --parse-image-metadata \
+            --github-output "$GITHUB_OUTPUT" < "$metadata_file"
 
       - name: Classify exact unpublished range
         id: plan

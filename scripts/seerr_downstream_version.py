@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 
 import seerr_change_classification as change_classification
 
@@ -16,6 +17,8 @@ REF = "refs/heads/downstream-main"
 VERSION_TAG = re.compile(r"custom-v1\.0\.([1-9][0-9]*)")
 UPSTREAM_TRAILER = re.compile(r"^Seerr-Upstream: ([0-9a-f]{40})$", re.MULTILINE)
 DOWNSTREAM_TRAILER = re.compile(r"^Seerr-Downstream: ([0-9a-f]{40})$", re.MULTILINE)
+REVISION_KEY = "org.opencontainers.image.revision"
+IMAGE_VERSION_KEY = "org.opencontainers.image.version"
 
 
 def git(root, *args):
@@ -230,6 +233,48 @@ def publication_plan(
     }
 
 
+def previous_image_identity(metadata):
+    """Extract one strict identity from current annotations or legacy image labels."""
+    candidates = set()
+    partial = False
+
+    def visit(value):
+        nonlocal partial
+        if isinstance(value, dict):
+            has_revision = REVISION_KEY in value
+            has_version = IMAGE_VERSION_KEY in value
+            if has_revision or has_version:
+                if not (has_revision and has_version):
+                    partial = True
+                else:
+                    candidates.add((value[REVISION_KEY], value[IMAGE_VERSION_KEY]))
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(metadata)
+    if partial:
+        raise ValueError("Previous image metadata contains an incomplete identity")
+    if not candidates:
+        raise ValueError("Previous image metadata contains no source/version identity")
+    if len(candidates) != 1:
+        raise ValueError("Previous image metadata contains contradictory identities")
+    source_sha, version_tag = candidates.pop()
+    if not isinstance(source_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", source_sha):
+        raise ValueError("Previous image source is not a full lowercase Git SHA")
+    if not isinstance(version_tag, str) or not VERSION_TAG.fullmatch(version_tag):
+        raise ValueError("Previous image version tag is malformed")
+    return {"previousSha": source_sha, "previousVersionTag": version_tag}
+
+
+def write_previous_image_outputs(path, identity):
+    with Path(path).open("a", encoding="utf-8", newline="\n") as output:
+        output.write(f"previous_sha={identity['previousSha']}\n")
+        output.write(f"previous_version_tag={identity['previousVersionTag']}\n")
+
+
 def write_github_outputs(path, identity):
     values = {
         "number": identity["number"],
@@ -260,9 +305,17 @@ if __name__ == "__main__":
     parser.add_argument("--plan-publication", action="store_true")
     parser.add_argument("--previous-sha", default="")
     parser.add_argument("--previous-version-tag", default="")
+    parser.add_argument("--parse-image-metadata", action="store_true")
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     try:
+        if args.parse_image_metadata:
+            if not args.github_output:
+                raise ValueError("Image metadata parsing requires --github-output")
+            identity = previous_image_identity(json.load(sys.stdin))
+            write_previous_image_outputs(args.github_output, identity)
+            print(json.dumps(identity, sort_keys=True))
+            raise SystemExit(0)
         root = Path(__file__).resolve().parent.parent
         identity = (
             publication_plan(
