@@ -156,6 +156,8 @@ try {
         'GITHUB_TOKEN',
         'SYNC_APP_ID',
         'SYNC_APP_PRIVATE_KEY',
+        'SYNC_BOT_CLIENT_ID',
+        'SYNC_BOT_PRIVATE_KEY',
         'SYNC_PUBLISH_TOKEN'
     )) {
         Remove-Item -LiteralPath "Env:$name" -ErrorAction SilentlyContinue
