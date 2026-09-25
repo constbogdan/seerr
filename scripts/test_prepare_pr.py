@@ -73,12 +73,12 @@ class PreparePrFixtureTest(unittest.TestCase):
             self.git("remote", "get-url", "origin").stdout.strip(),
         )
         self.assertIn(
-            "/github.com/constbogdan/Mosaic.git",
+            "/github.com/constbogdan/seerr.git",
             self.origin.as_posix(),
         )
         self.assertEqual(
-            self.remote_head("main"),
-            self.git("rev-parse", "refs/remotes/origin/main").stdout.strip(),
+            self.remote_head("downstream-main"),
+            self.git("rev-parse", "refs/remotes/origin/downstream-main").stdout.strip(),
         )
 
     def test_native_diagnostic_normalization_handles_ansi_wrapping_and_columns(self):
@@ -124,6 +124,13 @@ class PreparePrFixtureTest(unittest.TestCase):
                 )
                 assert_semantic_scope(self, result, 2, "tooling-only", "high")
 
+    def test_publication_source_has_no_bypass_or_direct_merge_path(self):
+        source = (ROOT / "scripts/prepare-pr.ps1").read_text(encoding="utf-8")
+        self.assertNotIn("--force", source)
+        self.assertNotIn("--admin", source)
+        self.assertNotIn("'pr', 'ready'", source)
+        self.assertIn("'--auto', '--merge', '--match-head-commit', $ExpectedHead", source)
+
     def setUp(self):
         if not POWERSHELL or not GIT:
             self.skipTest("PowerShell or Git is unavailable")
@@ -131,7 +138,7 @@ class PreparePrFixtureTest(unittest.TestCase):
         self.fixture_root = Path(self.temporary.name)
         self.root = self.fixture_root / "work"
         self.origin = (
-            self.fixture_root / "github.com" / "constbogdan" / "Mosaic.git"
+            self.fixture_root / "github.com" / "constbogdan" / "seerr.git"
         )
         self.global_git_config = self.fixture_root / "global.gitconfig"
         self.global_git_config.write_text("", encoding="utf-8")
@@ -146,7 +153,7 @@ class PreparePrFixtureTest(unittest.TestCase):
             "init",
             "--bare",
             "--quiet",
-            "--initial-branch=main",
+            "--initial-branch=downstream-main",
             str(self.origin),
         )
         (self.root / "scripts").mkdir()
@@ -165,6 +172,9 @@ class PreparePrFixtureTest(unittest.TestCase):
         (self.root / ".github/pull_request_template.md").write_text("fixture\n", encoding="utf-8")
         (self.root / ".gitignore").write_text(".logs/\n*.log\n", encoding="utf-8")
         (self.root / "file.txt").write_text("base\n", encoding="utf-8")
+        test_path = self.root / "server/lib/upstream.test.ts"
+        test_path.parent.mkdir(parents=True)
+        test_path.write_text("test('upstream fixture', () => {});\n", encoding="utf-8")
         (self.root / "scripts/validate-local.ps1").write_text(
             """[CmdletBinding()]
 param(
@@ -173,6 +183,7 @@ param(
     [string[]]$ChangedPath = @()
 )
 $repoRoot = Split-Path -Parent $PSScriptRoot
+$null = New-Item -ItemType Directory -Path (Join-Path $repoRoot '.logs') -Force
 $capture = Join-Path $repoRoot '.logs/fixture-validation.json'
 [pscustomobject]@{
     level = $Level
@@ -187,17 +198,17 @@ $global:LASTEXITCODE = 0
 """,
             encoding="utf-8",
         )
-        self.git("init", "--quiet", "--initial-branch=main")
+        self.git("init", "--quiet", "--initial-branch=downstream-main")
         self.git("config", "user.name", "Fixture User")
         self.git("config", "user.email", "fixture@example.invalid")
         self.git("config", "core.autocrlf", "true")
         self.git("remote", "add", "origin", self.origin.as_posix())
-        self.git("remote", "add", "upstream", "https://github.com/damontecres/Wholphin.git")
+        self.git("remote", "add", "upstream", "https://github.com/seerr-team/seerr.git")
         self.git("add", ".")
         self.git("commit", "--quiet", "-m", "fixture baseline")
-        self.git("push", "--quiet", "origin", "HEAD:refs/heads/main")
-        self.git("fetch", "--quiet", "origin", "main")
-        self.git("switch", "--quiet", "-c", "chore/cp4b3-fixture")
+        self.git("push", "--quiet", "origin", "HEAD:refs/heads/downstream-main")
+        self.git("fetch", "--quiet", "origin", "downstream-main")
+        self.git("switch", "--quiet", "-c", "chore/prepare-fixture")
         (self.root / "file.txt").write_text("reviewed\n", encoding="utf-8")
 
     def tearDown(self):
@@ -250,7 +261,7 @@ $global:LASTEXITCODE = 0
         )
 
     def state(self):
-        state_path = self.git("rev-parse", "--git-path", "wholphin-prepare-pr-state.json").stdout.strip()
+        state_path = self.git("rev-parse", "--git-path", "seerr-prepare-pr-state.json").stdout.strip()
         return json.loads((self.root / state_path).read_text(encoding="utf-8-sig"))
 
     def commit_current_worktree(self, message="docs: committed-only fixture"):
@@ -387,13 +398,15 @@ def view():
         merged_at = \"2026-09-14T00:00:00Z\"
     head_repository = repository
     if mode == \"wrong_repo\":
-        head_repository = \"someone/Wholphin\"
+        head_repository = \"someone/seerr\"
+    if mode == \"wrong_repo_case\":
+        head_repository = \"constbogdan/Seerr\"
     return {
         \"number\": 63,
         \"url\": \"https://example.invalid/pr/63\",
         \"state\": state,
         \"isDraft\": mode in {\"draft\", \"upstream_draft\"},
-        \"baseRefName\": \"develop\" if mode == \"wrong_base\" else \"main\",
+        \"baseRefName\": \"develop\" if mode == \"wrong_base\" else \"downstream-main\",
         \"headRefName\": \"other-branch\" if mode == \"wrong_head_branch\" else os.environ[\"FAKE_BRANCH\"],
         \"headRefOid\": head,
         \"headRepository\": {\"nameWithOwner\": head_repository},
@@ -491,8 +504,8 @@ raise SystemExit(2)
 
     def create_native_upstream_merge(self):
         first = self.commit_current_worktree("fix: downstream baseline")
-        base = self.git("rev-parse", "origin/main").stdout.strip()
-        base_tree = self.git("rev-parse", "origin/main^{tree}").stdout.strip()
+        base = self.git("rev-parse", "origin/downstream-main").stdout.strip()
+        base_tree = self.git("rev-parse", "origin/downstream-main^{tree}").stdout.strip()
         upstream = subprocess.run(
             [shutil.which("git"), "commit-tree", base_tree, "-p", base],
             cwd=self.root,
@@ -516,14 +529,14 @@ raise SystemExit(2)
 
     def create_reconciled_upstream_merge(self):
         remote_head = self.commit_current_worktree("fix: reviewed Draft head")
-        base = self.git("rev-parse", "origin/main").stdout.strip()
-        base_tree = self.git("rev-parse", "origin/main^{tree}").stdout.strip()
+        base = self.git("rev-parse", "origin/downstream-main").stdout.strip()
+        base_tree = self.git("rev-parse", "origin/downstream-main^{tree}").stdout.strip()
         current_main = subprocess.run(
             [GIT, "commit-tree", base_tree, "-p", base], cwd=self.root,
-            input="current main fixture\n", check=True, capture_output=True, text=True,
+            input="current downstream-main fixture\n", check=True, capture_output=True, text=True,
             env=self.git_environment,
         ).stdout.strip()
-        self.git("push", "origin", f"{current_main}:refs/heads/main")
+        self.git("push", "origin", f"{current_main}:refs/heads/downstream-main")
         reconciliation_tree = self.git("rev-parse", remote_head + "^{tree}").stdout.strip()
         reconciliation = subprocess.run(
             [GIT, "commit-tree", reconciliation_tree, "-p", remote_head, "-p", current_main],
@@ -547,7 +560,7 @@ raise SystemExit(2)
     def test_guided_success_is_concise_with_readable_link_fallbacks(self):
         env = {
             **self.fake_publish_env(),
-            "MOSAIC_TERMINAL_HYPERLINKS": "never",
+            "MAINTENANCE_TERMINAL_HYPERLINKS": "never",
         }
         result = self.prepare("Guided", env=env, check=False)
         diagnostic = normalized_native_output(result)
@@ -578,13 +591,13 @@ raise SystemExit(2)
             result.stdout,
         )
         self.assertIn("Auto-merge: ENABLED", result.stdout)
-        self.assertIn("Required CI / Full validation: PENDING", result.stdout)
+        self.assertIn("Required Downstream validation: PENDING", result.stdout)
         self.assertIn(
-            "Expected path: Conservative Android Full authoritative validation",
+            "Expected path: Full local feedback; authoritative Downstream validation",
             result.stdout,
         )
         self.assertIn("SUCCESS: prepare-pr completed in", result.stdout)
-        self.assertIn("Logs: .logs\\prepare-pr\\", result.stdout)
+        self.assertIn(str(self.root / ".git/seerr-prepare-pr-logs"), result.stdout)
         for noise in (
             "origin ->",
             "HEAD:",
@@ -595,7 +608,12 @@ raise SystemExit(2)
             "Staged tree:",
         ):
             self.assertNotIn(noise, result.stdout)
-        run_dirs = list((self.root / ".logs/prepare-pr").iterdir())
+        log_root = Path(
+            self.git("rev-parse", "--git-path", "seerr-prepare-pr-logs").stdout.strip()
+        )
+        if not log_root.is_absolute():
+            log_root = self.root / log_root
+        run_dirs = list(log_root.iterdir())
         latest = max(run_dirs, key=lambda path: path.stat().st_mtime_ns)
         self.assertEqual(6, len(list(latest.glob("[0-9][0-9]-*.log"))))
         forensic = (latest / "prepare-pr.log").read_text(encoding="utf-8")
@@ -609,14 +627,14 @@ raise SystemExit(2)
         ]
         self.assertTrue(repo_arguments)
         self.assertEqual(
-            ["constbogdan/Mosaic"] * len(repo_arguments),
+            ["constbogdan/seerr"] * len(repo_arguments),
             repo_arguments,
         )
 
     def test_guided_hyperlinks_use_osc8_and_normalize_to_semantic_labels(self):
         env = {
             **self.fake_publish_env(),
-            "MOSAIC_TERMINAL_HYPERLINKS": "always",
+            "MAINTENANCE_TERMINAL_HYPERLINKS": "always",
         }
         result = self.prepare("Guided", env=env, check=False)
         self.assertEqual(0, result.returncode, normalized_native_output(result))
@@ -634,19 +652,19 @@ raise SystemExit(2)
         self.assertIn("[log]", stage_lines[0])
         self.assertNotIn("[log]", stage_lines[1])
 
-    def test_expected_hosted_path_uses_existing_policy_for_non_android(self):
+    def test_expected_hosted_path_uses_existing_policy_for_scoped_scope(self):
         self.git("restore", "--", "file.txt")
         path = self.root / "scripts/test_terminal_fixture.py"
         path.write_text("# tooling fixture\n", encoding="utf-8")
         env = {
-            **self.fake_publish_env(scenario="non-android"),
-            "MOSAIC_TERMINAL_HYPERLINKS": "never",
+            **self.fake_publish_env(scenario="scoped"),
+            "MAINTENANCE_TERMINAL_HYPERLINKS": "never",
         }
         result = self.prepare("Guided", env=env, check=False)
         self.assertEqual(0, result.returncode, normalized_native_output(result))
         assert_semantic_scope(self, result, 1, "tooling-only", "normal")
         self.assertIn(
-            "Expected path: Non-Android authoritative validation",
+            "Expected path: Scoped local feedback; authoritative Downstream validation",
             result.stdout,
         )
         body = (Path(env["FAKE_GH_STATE"]) / "pr-body.md").read_text(encoding="utf-8")
@@ -658,43 +676,62 @@ raise SystemExit(2)
         self.assertIn("## Review-sensitive areas", body)
         self.assertLess(body.index("## Review-sensitive areas"),
                         body.index("<summary>Confirmed paths (1)</summary>"))
-        self.assertIn("Expected hosted path: Non-Android authoritative validation.", body)
-        self.assertIn("Development APK: not required", body)
+        self.assertIn("Expected hosted path: Scoped local feedback; authoritative Downstream validation.", body)
+        self.assertIn("Required Downstream validation: pending.", body)
+        self.assertNotIn("APK", body)
+        self.assertNotIn("release", body.lower())
 
-    def test_expected_hosted_path_uses_existing_policy_for_android(self):
+    def test_expected_hosted_path_uses_existing_policy_for_full_scope(self):
         self.git("restore", "--", "file.txt")
-        path = self.root / "app/src/main/java/example/Feature.kt"
+        path = self.root / "server/entity/Fixture.ts"
         path.parent.mkdir(parents=True)
-        path.write_text("class Feature\n", encoding="utf-8")
+        path.write_text("export class Fixture {}\n", encoding="utf-8")
         env = {
-            **self.fake_publish_env(scenario="android"),
-            "MOSAIC_TERMINAL_HYPERLINKS": "never",
+            **self.fake_publish_env(scenario="full"),
+            "MAINTENANCE_TERMINAL_HYPERLINKS": "never",
         }
         result = self.prepare("Guided", env=env, check=False)
         self.assertEqual(0, result.returncode, normalized_native_output(result))
-        assert_semantic_scope(self, result, 1, "apk-relevant", "normal")
+        assert_semantic_scope(self, result, 1, "product-relevant", "high")
         self.assertIn(
-            "Expected path: Android Full authoritative validation",
+            "Expected path: Full local feedback; authoritative Downstream validation",
             result.stdout,
         )
         body = (Path(env["FAKE_GH_STATE"]) / "pr-body.md").read_text(encoding="utf-8")
-        self.assertIn("Expected hosted path: Android Full authoritative validation.", body)
-        self.assertIn("Development APK: required after protected-main eligibility", body)
+        self.assertIn("Expected hosted path: Full local feedback; authoritative Downstream validation.", body)
+        self.assertIn("Required Downstream validation: pending.", body)
+        self.assertNotIn("APK", body)
 
     def test_default_local_checks_are_fast_and_preserve_explicit_filter(self):
         self.prepare("Audit")
-        self.prepare("Validate", "-TestFilter", "*FocusedFixtureTest")
+        self.prepare("Validate", "-TestFilter", "server/lib/upstream.test.ts")
         capture = json.loads(
             (self.root / ".logs/fixture-validation.json").read_text(encoding="utf-8-sig")
         )
         self.assertEqual("Fast", capture["level"])
-        self.assertEqual(["*FocusedFixtureTest"], capture["testFilter"])
+        self.assertEqual(["server/lib/upstream.test.ts"], capture["testFilter"])
         self.assertIn("file.txt", capture["changedPath"])
         state = self.state()
         self.assertEqual(2, state["version"])
         self.assertEqual("Checked", state["completedPhase"])
         self.assertEqual("Fast", state["localCheckLevel"])
         self.assertNotIn("validationResults", state)
+
+    def test_prepare_logs_are_repository_private_and_do_not_enter_scope(self):
+        result = self.prepare("Audit")
+        self.assertEqual(0, result.returncode, normalized_native_output(result))
+        log_root = Path(
+            self.git("rev-parse", "--git-path", "seerr-prepare-pr-logs").stdout.strip()
+        )
+        if not log_root.is_absolute():
+            log_root = self.root / log_root
+        self.assertTrue(log_root.is_dir())
+        self.assertTrue(any(log_root.iterdir()))
+        self.assertFalse((self.root / ".logs/prepare-pr").exists())
+        self.assertEqual(
+            ["file.txt"],
+            [entry[3:] for entry in self.git("status", "--short").stdout.splitlines()],
+        )
 
     def test_committed_only_clean_branch_can_publish_without_new_commit(self):
         reviewed_head = self.commit_current_worktree()
@@ -717,7 +754,7 @@ raise SystemExit(2)
         self.assertEqual(reviewed_head, self.remote_head())
         self.assertEqual(
             reviewed_head,
-            self.git("rev-parse", "refs/remotes/origin/chore/cp4b3-fixture").stdout.strip(),
+            self.git("rev-parse", "refs/remotes/origin/chore/prepare-fixture").stdout.strip(),
         )
         merge_commands = self.auto_merge_commands()
         self.assertEqual(1, len(merge_commands))
@@ -739,7 +776,7 @@ raise SystemExit(2)
         self.assertEqual(2, len(state["branchCommits"]))
         self.assertEqual(["file.txt", "second.txt"], state["publicationPaths"])
 
-    def test_clean_branch_equal_to_main_still_refuses(self):
+    def test_clean_branch_equal_to_protected_base_still_refuses(self):
         self.git("restore", "--", "file.txt")
         result = self.prepare("Audit", check=False)
         self.assertNotEqual(0, result.returncode)
@@ -747,6 +784,81 @@ raise SystemExit(2)
             "No modified, deleted, staged, untracked, or branch-only committed paths were found",
             normalized_native_output(result),
         )
+
+    def test_protected_branch_and_detached_head_refuse(self):
+        self.git("restore", "--", "file.txt")
+        self.git("switch", "--quiet", "downstream-main")
+        protected = self.prepare("Audit", check=False)
+        self.assertNotEqual(0, protected.returncode)
+        self.assertIn(
+            "Refusing to prepare or publish protected 'downstream-main'",
+            normalized_native_output(protected),
+        )
+
+        self.git("switch", "--quiet", "--detach")
+        detached = self.prepare("Audit", check=False)
+        self.assertNotEqual(0, detached.returncode)
+        self.assertIn("Detached HEAD is not supported", normalized_native_output(detached))
+
+    def test_stale_protected_base_refuses(self):
+        base = self.git("rev-parse", "origin/downstream-main").stdout.strip()
+        tree = self.git("rev-parse", "origin/downstream-main^{tree}").stdout.strip()
+        advanced = subprocess.run(
+            [GIT, "commit-tree", tree, "-p", base],
+            cwd=self.root,
+            input="advance protected base\n",
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.git_environment,
+        ).stdout.strip()
+        self.git("push", "--quiet", "origin", f"{advanced}:refs/heads/downstream-main")
+        self.git("fetch", "--quiet", "origin", "downstream-main")
+        result = self.prepare("Audit", check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "does not descend from validated origin/downstream-main",
+            normalized_native_output(result),
+        )
+
+    def test_protected_base_movement_after_validation_refuses_before_push(self):
+        self.prepare("Audit")
+        self.prepare("Validate")
+        self.prepare("Stage")
+        self.prepare("Commit", "-Title", "docs: validate base drift refusal")
+
+        base = self.git("rev-parse", "origin/downstream-main").stdout.strip()
+        tree = self.git("rev-parse", "origin/downstream-main^{tree}").stdout.strip()
+        advanced = subprocess.run(
+            [GIT, "commit-tree", tree, "-p", base],
+            cwd=self.root,
+            input="advance protected base after validation\n",
+            check=True,
+            capture_output=True,
+            text=True,
+            env=self.git_environment,
+        ).stdout.strip()
+        self.git("push", "--quiet", "origin", f"{advanced}:refs/heads/downstream-main")
+        self.git("update-ref", "refs/remotes/origin/downstream-main", base)
+
+        result = self.prepare(
+            "Publish",
+            env=self.fake_publish_env(scenario="base-drift-after-validation"),
+            check=False,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn(
+            "Protected 'downstream-main' moved after validation",
+            normalized_native_output(result),
+        )
+        self.assertIsNone(self.remote_head(self.branch_name()))
+        self.assertEqual([], self.auto_merge_commands("base-drift-after-validation"))
+
+    def test_out_of_scope_dirty_work_refuses(self):
+        (self.root / "unrelated.txt").write_text("unrelated\n", encoding="utf-8")
+        result = self.prepare("Audit", "-Files", "file.txt", check=False)
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("Out-of-scope dirty paths", normalized_native_output(result))
 
     def test_committed_and_uncommitted_work_uses_normal_commit_path(self):
         first = self.commit_current_worktree("docs: existing branch work")
@@ -769,8 +881,8 @@ raise SystemExit(2)
     def test_committed_only_remote_divergence_refuses_without_push(self):
         self.commit_current_worktree()
         self.prepare("Audit")
-        base = self.git("rev-parse", "origin/main").stdout.strip()
-        tree = self.git("rev-parse", "origin/main^{tree}").stdout.strip()
+        base = self.git("rev-parse", "origin/downstream-main").stdout.strip()
+        tree = self.git("rev-parse", "origin/downstream-main^{tree}").stdout.strip()
         divergent = subprocess.run(
             [shutil.which("git"), "commit-tree", tree, "-p", base],
             cwd=self.root,
@@ -814,6 +926,27 @@ raise SystemExit(2)
         self.assertFalse(any(args[:2] == ["pr", "create"] for args in gh_commands))
         self.assertEqual(1, len(self.auto_merge_commands()))
         self.assertEqual(reviewed_head, self.remote_head())
+
+    def test_existing_remote_branch_fast_forwards_and_reuses_exact_pr(self):
+        remote_head = self.commit_current_worktree("fix: first reviewed commit")
+        self.configure_remote_branch(remote_head)
+        (self.root / "second.txt").write_text("second\n", encoding="utf-8")
+        reviewed_head = self.commit_current_worktree("fix: second reviewed commit")
+        self.prepare("Audit")
+        result = self.prepare(
+            "Publish",
+            env=self.fake_publish_env(remote_sha=remote_head, pr_mode="existing"),
+            check=False,
+        )
+        self.assertEqual(0, result.returncode, normalized_native_output(result))
+        self.assertEqual(reviewed_head, self.remote_head())
+        self.assertIn("PR #63 reused", result.stdout)
+        merge = self.auto_merge_commands()
+        self.assertEqual(1, len(merge))
+        self.assertEqual(
+            reviewed_head,
+            merge[0][merge[0].index("--match-head-commit") + 1],
+        )
 
     def test_new_pr_is_authenticated_before_head_bound_native_auto_merge(self):
         reviewed_head = self.commit_current_worktree()
@@ -885,7 +1018,7 @@ raise SystemExit(2)
             "Guided",
             *identity,
             "-TestFilter",
-            "*UpstreamFixtureTest*",
+            "server/lib/upstream.test.ts",
             env=env,
             check=False,
         )
@@ -903,6 +1036,104 @@ raise SystemExit(2)
             0,
             self.git("merge-base", "--is-ancestor", first, published_head).returncode,
         )
+        managed_lists = [args for args in gh_commands if args[:2] == ["pr", "list"]]
+        self.assertTrue(managed_lists)
+        for command in managed_lists:
+            self.assertEqual("constbogdan/seerr", command[command.index("--repo") + 1])
+            self.assertEqual("downstream-main", command[command.index("--base") + 1])
+            self.assertEqual(self.branch_name(), command[command.index("--head") + 1])
+
+    def test_managed_native_merge_refuses_wrong_upstream_or_tree(self):
+        first, upstream, _, tree = self.create_native_upstream_merge()
+        cases = {
+            "upstream": ("-ExpectedMergeSecondParent", "9" * 40),
+            "tree": ("-ExpectedMergeTree", "8" * 40),
+        }
+        for name, (field, wrong_value) in cases.items():
+            with self.subTest(name=name):
+                identity = [
+                    "-PreserveMergeCommit",
+                    "-ExpectedMergeFirstParent", first,
+                    "-ExpectedMergeSecondParent", upstream,
+                    "-ExpectedMergeTree", tree,
+                    "-TestFilter", "server/lib/upstream.test.ts",
+                ]
+                identity[identity.index(field) + 1] = wrong_value
+                result = self.prepare(
+                    "Guided", *identity,
+                    env=self.fake_publish_env(
+                        remote_sha=first,
+                        pr_mode="upstream_draft",
+                        scenario=f"wrong-managed-{name}",
+                        list_head_before=first,
+                    ),
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+                diagnostic = normalized_native_output(result)
+                self.assertTrue(
+                    "exact reviewed native upstream-resolution" in diagnostic
+                    or "differs from the reviewed native upstream-resolution tree" in diagnostic
+                )
+
+    def test_reconciled_publication_refuses_wrong_candidate_or_protected_base(self):
+        remote, current_main, reconciliation, upstream, _, tree = (
+            self.create_reconciled_upstream_merge()
+        )
+        cases = {
+            "candidate": ("-ExpectedOriginalCandidate", "9" * 40),
+            "protected-base": ("-ExpectedCurrentMain", "8" * 40),
+        }
+        for name, (field, wrong_value) in cases.items():
+            with self.subTest(name=name):
+                identity = [
+                    "-PreserveReconciledUpstreamMerge",
+                    "-ExpectedRemoteDraftHead", remote,
+                    "-ExpectedOriginalCandidate", remote,
+                    "-ExpectedCurrentMain", current_main,
+                    "-ExpectedReconciliationCommit", reconciliation,
+                    "-ExpectedMergeFirstParent", reconciliation,
+                    "-ExpectedMergeSecondParent", upstream,
+                    "-ExpectedMergeTree", tree,
+                    "-TestFilter", "server/lib/upstream.test.ts",
+                ]
+                identity[identity.index(field) + 1] = wrong_value
+                result = self.prepare(
+                    "Guided", *identity,
+                    env=self.fake_publish_env(
+                        remote_sha=remote,
+                        pr_mode="upstream_draft",
+                        scenario=f"wrong-reconciled-{name}",
+                        list_head_before=remote,
+                    ),
+                    check=False,
+                )
+                self.assertNotEqual(0, result.returncode)
+                diagnostic = normalized_native_output(result)
+                self.assertTrue(
+                    "does not descend from the original candidate" in diagnostic
+                    or "current downstream-main" in diagnostic
+                )
+
+    def test_managed_publication_refuses_ambiguous_draft_identity(self):
+        first, upstream, _, tree = self.create_native_upstream_merge()
+        result = self.prepare(
+            "Guided",
+            "-PreserveMergeCommit",
+            "-ExpectedMergeFirstParent", first,
+            "-ExpectedMergeSecondParent", upstream,
+            "-ExpectedMergeTree", tree,
+            "-TestFilter", "server/lib/upstream.test.ts",
+            env=self.fake_publish_env(
+                remote_sha=first,
+                pr_mode="ambiguous",
+                scenario="ambiguous-managed-draft",
+            ),
+            check=False,
+        )
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("exactly one existing Draft PR", normalized_native_output(result))
+        self.assertEqual([], self.auto_merge_commands("ambiguous-managed-draft"))
 
     def test_reconciled_upstream_publication_authenticates_both_merge_layers(self):
         remote, current_main, reconciliation, upstream, final, tree = (
@@ -919,7 +1150,7 @@ raise SystemExit(2)
             "-ExpectedMergeTree", tree,
         )
         result = self.prepare(
-            "Guided", *identity, "-TestFilter", "*UpstreamFixtureTest*",
+            "Guided", *identity, "-TestFilter", "server/lib/upstream.test.ts",
             env=self.fake_publish_env(
                 remote_sha=remote, pr_mode="upstream_draft", list_head_before=remote,
             ), check=False,
@@ -942,7 +1173,7 @@ raise SystemExit(2)
             "-ExpectedMergeFirstParent", reconciliation,
             "-ExpectedMergeSecondParent", upstream,
             "-ExpectedMergeTree", tree,
-            "-TestFilter", "*UpstreamFixtureTest*",
+            "-TestFilter", "server/lib/upstream.test.ts",
             env=self.fake_publish_env(
                 remote_sha=remote, pr_mode="upstream_draft", scenario="head-immediate",
                 list_head_sequence=(remote, final),
@@ -963,7 +1194,7 @@ raise SystemExit(2)
             "-ExpectedMergeFirstParent", reconciliation,
             "-ExpectedMergeSecondParent", upstream,
             "-ExpectedMergeTree", tree,
-            "-TestFilter", "*UpstreamFixtureTest*",
+            "-TestFilter", "server/lib/upstream.test.ts",
             env=self.fake_publish_env(
                 remote_sha=remote, pr_mode="upstream_draft", scenario="head-stale-once",
                 list_head_sequence=(remote, remote, final),
@@ -986,7 +1217,7 @@ raise SystemExit(2)
             "-ExpectedMergeFirstParent", reconciliation,
             "-ExpectedMergeSecondParent", upstream,
             "-ExpectedMergeTree", tree,
-            "-TestFilter", "*UpstreamFixtureTest*",
+            "-TestFilter", "server/lib/upstream.test.ts",
             env=self.fake_publish_env(
                 remote_sha=remote, pr_mode="upstream_draft", scenario="head-timeout",
                 list_head_sequence=(remote, remote, remote, remote, remote),
@@ -1008,7 +1239,7 @@ raise SystemExit(2)
             "-ExpectedMergeFirstParent", reconciliation,
             "-ExpectedMergeSecondParent", upstream,
             "-ExpectedMergeTree", tree,
-            "-TestFilter", "*UpstreamFixtureTest*",
+            "-TestFilter", "server/lib/upstream.test.ts",
             env=self.fake_publish_env(
                 remote_sha=remote, pr_mode="upstream_draft", scenario="head-third",
                 list_head_sequence=(remote, "9" * 40),
@@ -1019,7 +1250,7 @@ raise SystemExit(2)
         lists = [args for args in self.fake_trace("gh", "head-third") if args[:2] == ["pr", "list"]]
         self.assertEqual(2, len(lists))
 
-    def test_reconciled_upstream_publication_refuses_main_or_remote_drift(self):
+    def test_reconciled_upstream_publication_refuses_base_or_remote_drift(self):
         remote, current_main, reconciliation, upstream, _, tree = (
             self.create_reconciled_upstream_merge()
         )
@@ -1032,7 +1263,7 @@ raise SystemExit(2)
             "-ExpectedMergeFirstParent", reconciliation,
             "-ExpectedMergeSecondParent", upstream,
             "-ExpectedMergeTree", tree,
-            "-TestFilter", "*UpstreamFixtureTest*",
+            "-TestFilter", "server/lib/upstream.test.ts",
         )
         drifted = list(common)
         drifted[drifted.index("-ExpectedRemoteDraftHead") + 1] = "9" * 40
@@ -1050,8 +1281,9 @@ raise SystemExit(2)
         self.prepare("Audit")
         cases = {
             "wrong_repo": "does not match expected repository",
-            "wrong_base": "does not match expected 'main'",
-            "wrong_head_branch": "does not match expected 'chore/cp4b3-fixture'",
+            "wrong_repo_case": "does not match expected repository",
+            "wrong_base": "does not match expected 'downstream-main'",
+            "wrong_head_branch": "does not match expected 'chore/prepare-fixture'",
             "wrong_head_sha": "does not match reviewed published HEAD",
         }
         for mode, expected in cases.items():
@@ -1069,9 +1301,9 @@ raise SystemExit(2)
                 self.assertIn(expected, normalized_native_output(result))
                 self.assertEqual([], self.auto_merge_commands(mode))
 
-    def test_mosaic_repository_is_authenticated_and_used_for_github_targets(self):
-        self.use_downstream_repository("constbogdan/Mosaic")
-        (self.root / "file.txt").write_text("mosaic transition\n", encoding="utf-8")
+    def test_seerr_repository_is_authenticated_and_used_for_github_targets(self):
+        self.use_downstream_repository("constbogdan/seerr")
+        (self.root / "file.txt").write_text("seerr transition\n", encoding="utf-8")
         result = self.prepare("Guided", env=self.fake_publish_env(), check=False)
         self.assertEqual(0, result.returncode, normalized_native_output(result))
         commands = self.fake_trace("gh")
@@ -1082,12 +1314,12 @@ raise SystemExit(2)
             if value == "--repo"
         ]
         self.assertTrue(targeted)
-        self.assertEqual({"constbogdan/Mosaic"}, set(targeted))
-        self.assertFalse(any("constbogdan/Wholphin" in " ".join(args) for args in commands))
+        self.assertEqual({"constbogdan/seerr"}, set(targeted))
+        self.assertFalse(any("seerr-team/seerr" in " ".join(args) for args in commands))
 
-    def test_repository_allowlist_is_mosaic_only_case_sensitive_and_closed(self):
-        for repository in ("constbogdan/Wholphin", "constbogdan/Mosaic2",
-                           "other/Mosaic", "constbogdan/mosaic"):
+    def test_repository_allowlist_is_seerr_only_case_sensitive_and_closed(self):
+        for repository in ("constbogdan/seerr2", "other/seerr",
+                           "seerr-team/seerr", "constbogdan/Seerr"):
             with self.subTest(repository=repository):
                 self.git(
                     "remote",

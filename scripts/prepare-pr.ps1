@@ -36,8 +36,14 @@ $config = Import-PowerShellDataFile -LiteralPath $configPath
 . (Join-Path $PSScriptRoot 'mosaic_output.ps1')
 $startingLocation = Get-Location
 $runId = '{0}-{1}' -f (Get-Date -Format 'yyyyMMdd-HHmmss'), $PID
-$runRelativeDirectory = ".logs\prepare-pr\$runId"
-$runDirectory = [IO.Path]::GetFullPath((Join-Path $repoRoot $runRelativeDirectory))
+$gitLogPathOutput = @(& git -C $repoRoot rev-parse --git-path 'seerr-prepare-pr-logs' 2>$null)
+$gitLogPathExitCode = $LASTEXITCODE
+$gitLogRoot = $gitLogPathOutput | Select-Object -First 1
+if ($gitLogPathExitCode -ne 0 -or -not $gitLogRoot) { throw 'Could not resolve the repository-private prepare-pr log directory.' }
+$gitLogRoot = [string]$gitLogRoot
+if (-not [IO.Path]::IsPathRooted($gitLogRoot)) { $gitLogRoot = Join-Path $repoRoot $gitLogRoot }
+$runDirectory = [IO.Path]::GetFullPath((Join-Path $gitLogRoot $runId))
+$runRelativeDirectory = $runDirectory
 New-Item -ItemType Directory -Path $runDirectory -Force | Out-Null
 $logPath = Join-Path $runDirectory 'prepare-pr.log'
 $summaryPath = Join-Path $runDirectory 'summary.txt'
@@ -89,7 +95,7 @@ function Write-Section([string]$Name) {
     $script:stageLogPath = [IO.Path]::GetFullPath((Join-Path $runDirectory ("{0:00}-{1}.log" -f $script:stageNumber, $safeName)))
     $script:stageTimer = [Diagnostics.Stopwatch]::StartNew()
     Set-Content -LiteralPath $script:stageLogPath -Value "Stage: $Name`nStarted: $(Get-Date -Format o)" -Encoding UTF8
-    $logLink = Format-MosaicTerminalLink '[log]' $script:stageLogPath ([IO.Path]::GetFileName($script:stageLogPath))
+    $logLink = Format-MaintenanceTerminalLink '[log]' $script:stageLogPath ([IO.Path]::GetFileName($script:stageLogPath))
     Write-Host ('[{0}/{1}] {2} [RUN]  {3}' -f $script:stageNumber, $script:totalStages, $Name, $logLink)
     Write-PrepareLog "Phase started: $Name"
 }
@@ -105,7 +111,6 @@ function Write-AuditDetail([string]$Name) {
 function Get-PrepareValidationPlan([string[]]$Paths) {
     $fallback = [pscustomobject]@{
         releaseRelevance = 'unknown'
-        releaseRequired = $true
         validationRisk = 'high'
         validationMode = 'full'
     }
@@ -140,9 +145,12 @@ function Get-PrepareValidationPlan([string[]]$Paths) {
 }
 
 function Get-ExpectedHostedPath([object]$Plan) {
-    if ($Plan.releaseRelevance -eq 'unknown') { return 'Conservative Android Full authoritative validation' }
-    if ($Plan.validationMode -eq 'non-android') { return 'Non-Android authoritative validation' }
-    return 'Android Full authoritative validation'
+    switch ([string]$Plan.validationMode) {
+        'scoped' { return 'Scoped local feedback; authoritative Downstream validation' }
+        'focused' { return 'Focused local feedback; authoritative Downstream validation' }
+        'full' { return 'Full local feedback; authoritative Downstream validation' }
+        default { return 'Conservative Full local feedback; authoritative Downstream validation' }
+    }
 }
 
 function Invoke-Git {
@@ -304,7 +312,7 @@ function Get-AuthenticatedPullRequest(
         throw 'GitHub returned a different PR identity than the unique published candidate.'
     }
     $headRepository = Get-PullRequestHeadRepository $pullRequest
-    if (-not $headRepository -or $headRepository -ine $Repository) {
+    if (-not $headRepository -or $headRepository -cne $Repository) {
         throw "PR head repository '$headRepository' does not match expected repository '$Repository'."
     }
     if ($pullRequest.baseRefName -cne $config.BaseBranch) {
@@ -347,7 +355,7 @@ function Enable-NativeAutoMerge(
 
     $settingsResult = Invoke-Gh -CommandPath $GhPath -Arguments @('api', "repos/$Repository")
     $settings = ConvertFrom-GhJson $settingsResult 'repository-settings'
-    if ($settings.full_name -ine $Repository) { throw 'GitHub returned settings for an unexpected repository.' }
+    if ($settings.full_name -cne $Repository) { throw 'GitHub returned settings for an unexpected repository.' }
     if (-not $settings.allow_merge_commit) {
         throw "Repository merge commits are disabled; '$method' cannot preserve the required exact-tree merge shape."
     }
@@ -583,7 +591,7 @@ function Get-StagedSnapshotHash([string[]]$Scope) {
 }
 
 function Get-StatePath {
-    return Get-GitText @('rev-parse', '--git-path', 'wholphin-prepare-pr-state.json')
+    return Get-GitText @('rev-parse', '--git-path', 'seerr-prepare-pr-state.json')
 }
 
 function Save-State([hashtable]$State) {
@@ -777,7 +785,7 @@ function Invoke-LocalChecks([object]$Preflight, [object]$State, [string]$Request
     $isUpstreamSync = $Preflight.Branch -like $config.UpstreamSyncBranchPattern
     $filters = @($TestFilter | Where-Object { $_ })
     if (-not $filters.Count -and $isUpstreamSync) {
-        throw 'Upstream-sync preparation requires meaningful focused JVM test patterns before authoritative hosted Full. Supply -TestFilter.'
+        throw 'Upstream-sync preparation requires exact focused Seerr test paths before authoritative Downstream validation. Supply -TestFilter.'
     }
 
     Write-PrepareLog "Local checks selected: $RequestedLevel; FocusedFilters=$($filters -join ',')"
@@ -785,18 +793,18 @@ function Invoke-LocalChecks([object]$Preflight, [object]$State, [string]$Request
     foreach ($filter in $filters) { $arguments += @('-TestFilter', $filter) }
     foreach ($path in @($State.publicationPaths)) { $arguments += @('-ChangedPath', $path) }
     if (-not $script:conciseMode) { Write-Host ".\$($config.ValidationScript) $($arguments -join ' ')" }
-    $previousCompact = $env:MOSAIC_OUTPUT_COMPACT
-    $previousPrefix = $env:MOSAIC_OUTPUT_PREFIX
+    $previousCompact = $env:MAINTENANCE_OUTPUT_COMPACT
+    $previousPrefix = $env:MAINTENANCE_OUTPUT_PREFIX
     if ($script:conciseMode) {
-        $env:MOSAIC_OUTPUT_COMPACT = '1'
-        $env:MOSAIC_OUTPUT_PREFIX = '  '
+        $env:MAINTENANCE_OUTPUT_COMPACT = '1'
+        $env:MAINTENANCE_OUTPUT_PREFIX = '  '
     }
     try {
         & (Join-Path $repoRoot $config.ValidationScript) -Level $RequestedLevel -TestFilter $filters -ChangedPath @($State.publicationPaths)
         $validationExitCode = $LASTEXITCODE
     } finally {
-        if ($null -eq $previousCompact) { Remove-Item Env:MOSAIC_OUTPUT_COMPACT -ErrorAction SilentlyContinue } else { $env:MOSAIC_OUTPUT_COMPACT = $previousCompact }
-        if ($null -eq $previousPrefix) { Remove-Item Env:MOSAIC_OUTPUT_PREFIX -ErrorAction SilentlyContinue } else { $env:MOSAIC_OUTPUT_PREFIX = $previousPrefix }
+        if ($null -eq $previousCompact) { Remove-Item Env:MAINTENANCE_OUTPUT_COMPACT -ErrorAction SilentlyContinue } else { $env:MAINTENANCE_OUTPUT_COMPACT = $previousCompact }
+        if ($null -eq $previousPrefix) { Remove-Item Env:MAINTENANCE_OUTPUT_PREFIX -ErrorAction SilentlyContinue } else { $env:MAINTENANCE_OUTPUT_PREFIX = $previousPrefix }
     }
     $validationLog = Join-Path $repoRoot 'validation.log'
     if (Test-Path -LiteralPath $validationLog) {
@@ -957,14 +965,14 @@ function Invoke-Commit([object]$Preflight, [object]$State) {
             $reconciliationParents = @((Get-GitText @('show', '-s', '--format=%P', $ExpectedReconciliationCommit)) -split '\s+' | Where-Object { $_ })
             if ($ExpectedReconciliationCommit -eq $ExpectedRemoteDraftHead) {
                 $containsMain = Invoke-Git -Arguments @('merge-base', '--is-ancestor', $ExpectedCurrentMain, $ExpectedRemoteDraftHead) -AllowFailure
-                if ($containsMain.ExitCode -ne 0) { throw 'Draft head does not contain authenticated current main.' }
+                if ($containsMain.ExitCode -ne 0) { throw 'Draft head does not contain the authenticated current protected branch.' }
             } elseif ($reconciliationParents.Count -ne 2 -or
                       $reconciliationParents[0] -ne $ExpectedRemoteDraftHead -or
                       $reconciliationParents[1] -ne $ExpectedCurrentMain) {
-                throw 'Reconciliation commit does not have exact parents [remote Draft head, current main].'
+                throw 'Reconciliation commit does not have exact parents [remote Draft head, current downstream-main].'
             }
             if ((Get-GitText @('rev-parse', "$($config.OriginRemote)/$($config.BaseBranch)")) -ne $ExpectedCurrentMain) {
-                throw 'Current protected main moved after reconciliation review.'
+                throw 'Current protected downstream-main moved after reconciliation review.'
             }
             foreach ($ancestorIdentity in @($ExpectedRemoteDraftHead, $ExpectedCurrentMain, $ExpectedMergeSecondParent)) {
                 $contains = Invoke-Git -Arguments @('merge-base', '--is-ancestor', $ancestorIdentity, 'HEAD') -AllowFailure
@@ -998,8 +1006,8 @@ function Invoke-Commit([object]$Preflight, [object]$State) {
 
 function New-PullRequestBody([object]$State) {
     $riskText = if (@($State.highRiskPaths).Count) { (@($State.highRiskPaths) | ForEach-Object { "- ``$($_)``" }) -join "`n" } else { 'None flagged.' }
-    $uiChanged = @($State.publicationPaths | Where-Object { $_ -like 'app/src/*/java/*/ui/*' -or $_ -like 'app/src/*/res/*' }).Count -gt 0
-    $applicationChanged = @($State.publicationPaths | Where-Object { $_ -like 'app/*' }).Count -gt 0
+    $uiChanged = @($State.publicationPaths | Where-Object { $_ -like 'src/components/*' -or $_ -like 'src/pages/*' }).Count -gt 0
+    $applicationChanged = @($State.publicationPaths | Where-Object { $_ -like 'server/*' -or $_ -like 'src/*' }).Count -gt 0
     $screenshots = if ($uiChanged) { 'Not supplied by prepare-pr; add screenshots or explain why they are not applicable before merge.' } else { 'Not applicable; no UI path was detected.' }
     $scopeText = (@($State.publicationPaths) | ForEach-Object { "- ``$($_)``" }) -join "`n"
     $scopeCount = @($State.publicationPaths).Count
@@ -1009,11 +1017,6 @@ function New-PullRequestBody([object]$State) {
     $separator = [char]0xB7
     $scopeSummary = "$scopeCount $scopeLabel $separator $($plan.releaseRelevance) $separator $($plan.validationRisk) risk"
     $hostedPath = Get-ExpectedHostedPath $plan
-    $releaseText = if ($plan.releaseRequired) {
-        'required after protected-main eligibility rechecks the merged range.'
-    } else {
-        'not required for the currently classified scope; protected main rechecks independently.'
-    }
     $localChecksText = if ($State.committedOnly -and -not $State.localCheckLevel) {
         'Not rerun for the already-committed clean scope; authoritative PR validation is pending.'
     } else {
@@ -1040,13 +1043,11 @@ $scopeText
 
 </details>
 
-## Validation and release
+## Validation
 
 - Local checks: $localChecksText
 - Expected hosted path: $hostedPath.
-- Required `CI / Full validation`: pending.
-- Development APK: $releaseText
-- Android TV/manual runtime validation: not recorded by prepare-pr; update if applicable.
+- Required `Downstream validation`: pending.
 
 ### Related issues
 
@@ -1081,6 +1082,17 @@ function Invoke-Publish([object]$Preflight, [object]$State) {
     $branch = $Preflight.Branch
     $originUrl = Get-GitText @('remote', 'get-url', $config.OriginRemote)
     $slug = Get-RepositorySlug $originUrl
+    $baseRemoteRef = "refs/heads/$($config.BaseBranch)"
+    $baseQuery = Invoke-Git -Arguments @('ls-remote', '--heads', $config.OriginRemote, $baseRemoteRef) -AllowFailure
+    if ($baseQuery.ExitCode -ne 0) { throw 'Could not authenticate the protected branch immediately before publication.' }
+    $baseRows = @($baseQuery.Output | Where-Object { $_ })
+    if ($baseRows.Count -ne 1) { throw 'Protected branch identity is missing or ambiguous immediately before publication.' }
+    $liveBaseCommit = (($baseRows[0] -split '\s+')[0]).Trim()
+    if ($liveBaseCommit -notmatch '^[0-9a-f]{40}$' -or
+        $liveBaseCommit -ne $Preflight.BaseCommit -or
+        $liveBaseCommit -ne $State.baseCommit) {
+        throw "Protected '$($config.BaseBranch)' moved after validation; publication is refused."
+    }
     if ($preserveUpstreamCommit) {
         $beforeResult = Invoke-Gh -CommandPath $gh.Source -Arguments @('pr', 'list', '--repo', $slug, '--base', $config.BaseBranch, '--head', $branch, '--state', 'open', '--json', 'number,url,isDraft,headRefOid') -AllowFailure
         if ($beforeResult.ExitCode -ne 0) { throw "GitHub CLI could not authenticate the existing Draft PR before push:`n$($beforeResult.Output -join [Environment]::NewLine)" }
@@ -1101,7 +1113,7 @@ function Invoke-Publish([object]$Preflight, [object]$State) {
             if ($remoteCommit -ne $ExpectedRemoteDraftHead) { throw 'Remote Draft head moved before reconciled publication.' }
             Invoke-Git -Arguments @('fetch', '--no-tags', $config.OriginRemote, $config.BaseBranch) | Out-Null
             if ((Get-GitText @('rev-parse', "$($config.OriginRemote)/$($config.BaseBranch)")) -ne $ExpectedCurrentMain) {
-                throw 'Current protected main moved before reconciled publication.'
+                throw 'Current protected downstream-main moved before reconciled publication.'
             }
         }
         Invoke-Git -Arguments @('fetch', '--no-tags', $config.OriginRemote, $remoteRef) | Out-Null
@@ -1112,6 +1124,15 @@ function Invoke-Publish([object]$Preflight, [object]$State) {
     } else {
         $pushResult = Invoke-Git -Arguments @('push', '-u', $config.OriginRemote, $branch)
         if (-not $script:conciseMode) { $pushResult.Output | ForEach-Object { Write-Host $_ } }
+    }
+
+    $publishedRemoteQuery = Invoke-Git -Arguments @('ls-remote', '--heads', $config.OriginRemote, $remoteRef) -AllowFailure
+    if ($publishedRemoteQuery.ExitCode -ne 0) { throw 'Could not authenticate the remote branch after push.' }
+    $publishedRemoteRows = @($publishedRemoteQuery.Output | Where-Object { $_ })
+    if ($publishedRemoteRows.Count -ne 1) { throw 'Published remote branch identity is missing or ambiguous.' }
+    $publishedRemoteCommit = (($publishedRemoteRows[0] -split '\s+')[0]).Trim()
+    if ($publishedRemoteCommit -notmatch '^[0-9a-f]{40}$' -or $publishedRemoteCommit -ne $State.commit) {
+        throw 'Published remote branch does not expose the exact reviewed commit.'
     }
 
     $prResult = $null
@@ -1147,7 +1168,7 @@ function Invoke-Publish([object]$Preflight, [object]$State) {
         $prDisposition = 'reused'
         Write-PrepareLog "Existing PR: $($existing -join ', ')"
     } else {
-        $bodyFile = Join-Path ([IO.Path]::GetTempPath()) ("wholphin-pr-{0}.md" -f [guid]::NewGuid())
+        $bodyFile = Join-Path ([IO.Path]::GetTempPath()) ("seerr-pr-{0}.md" -f [guid]::NewGuid())
         try {
             $pullRequestBody | Set-Content -LiteralPath $bodyFile -Encoding UTF8
             $createResult = Invoke-Gh -CommandPath $gh.Source -Arguments @('pr', 'create', '--repo', $slug, '--base', $config.BaseBranch, '--head', $branch, '--title', $State.approvedTitle, '--body-file', $bodyFile) -AllowFailure
@@ -1163,7 +1184,7 @@ function Invoke-Publish([object]$Preflight, [object]$State) {
         if ($existingPullRequests.Count -ne 1) { throw 'Expected exactly one open PR after creation; refusing ambiguous PR identity.' }
     }
     $pullRequest = $existingPullRequests[0]
-    $openLink = Format-MosaicTerminalLink '[open]' ([string]$pullRequest.url) ([string]$pullRequest.url)
+    $openLink = Format-MaintenanceTerminalLink '[open]' ([string]$pullRequest.url) ([string]$pullRequest.url)
     Write-Host "PR #$($pullRequest.number) $prDisposition  $openLink"
     if ($preserveUpstreamCommit) {
         Write-Host 'Auto-merge: EXCLUDED (upstream Draft requires human review).'
@@ -1174,7 +1195,7 @@ function Invoke-Publish([object]$Preflight, [object]$State) {
         if ($script:conciseMode) { Write-Host 'Auto-merge: ENABLED' }
         if (-not $script:conciseMode) { Write-Host 'GitHub will merge only after required protection succeeds.' }
     }
-    Write-Host 'Required CI / Full validation: PENDING'
+    Write-Host 'Required Downstream validation: PENDING'
     if (-not $script:validationPlan) { $script:validationPlan = Get-PrepareValidationPlan @($State.publicationPaths) }
     $expectedHostedPath = Get-ExpectedHostedPath $script:validationPlan
     Write-Host "Expected path: $expectedHostedPath"
@@ -1231,8 +1252,8 @@ try {
     Set-Location -LiteralPath $startingLocation
     $script:runTimer.Stop()
     if ($Phase -eq 'Guided' -and -not $script:prepareFailed -and $script:publishedPullRequest) {
-        $duration = Format-MosaicDuration $script:runTimer.Elapsed
-        $openLink = Format-MosaicTerminalLink '[open]' ([string]$script:publishedPullRequest.url) ([string]$script:publishedPullRequest.url)
+        $duration = Format-MaintenanceDuration $script:runTimer.Elapsed
+        $openLink = Format-MaintenanceTerminalLink '[open]' ([string]$script:publishedPullRequest.url) ([string]$script:publishedPullRequest.url)
         Write-Host "SUCCESS: prepare-pr completed in $duration"
         Write-Host "PR: #$($script:publishedPullRequest.number)  $openLink"
         Write-Host "Logs: $runRelativeDirectory"
