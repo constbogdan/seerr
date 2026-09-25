@@ -35,7 +35,7 @@ const messages = defineMessages('components.Setup', {
   finishing: 'Finishing…',
   continue: 'Continue',
   servertype: 'Choose Server Type',
-  signin: 'Sign In',
+  signinStep: 'Sign In',
   configuremediaserver: 'Configure Media Server',
   configureservices: 'Configure Services',
   librarieserror:
@@ -146,7 +146,7 @@ const Setup = () => {
             />
             <SetupSteps
               stepNumber={2}
-              description={intl.formatMessage(messages.signin)}
+              description={intl.formatMessage(messages.signinStep)}
               active={currentStep === 2}
               completed={currentStep > 2}
             />
