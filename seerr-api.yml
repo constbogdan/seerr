@@ -822,6 +822,284 @@ components:
           type: string
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
+    FreshCriteria:
+      type: object
+      additionalProperties: false
+      properties:
+        studio:
+          type: string
+        network:
+          type: string
+        status:
+          type: string
+        genre:
+          type: string
+        keywords:
+          type: string
+        excludeKeywords:
+          type: string
+        language:
+          type: string
+        withRuntimeGte:
+          type: string
+        withRuntimeLte:
+          type: string
+        voteAverageGte:
+          type: string
+        voteAverageLte:
+          type: string
+        voteCountGte:
+          type: string
+        voteCountLte:
+          type: string
+        watchProviders:
+          type: string
+        watchRegion:
+          type: string
+        certification:
+          type: string
+        certificationGte:
+          type: string
+        certificationLte:
+          type: string
+        certificationCountry:
+          type: string
+        sortBy:
+          type: string
+    FreshSettings:
+      type: object
+      required:
+        - enabled
+        - baseUrl
+        - filterId
+        - candidateWindowDays
+        - maximumItems
+        - movieCriteria
+        - tvCriteria
+      properties:
+        enabled:
+          type: boolean
+        baseUrl:
+          type: string
+        apiToken:
+          type: string
+          writeOnly: true
+        apiTokenConfigured:
+          type: boolean
+          readOnly: true
+        filterId:
+          type: integer
+        candidateWindowDays:
+          type: integer
+          minimum: 1
+          maximum: 3650
+        maximumItems:
+          type: integer
+          minimum: 1
+          maximum: 100
+        movieCriteria:
+          $ref: '#/components/schemas/FreshCriteria'
+        tvCriteria:
+          $ref: '#/components/schemas/FreshCriteria'
+    FreshStatus:
+      type: object
+      required:
+        - status
+        - refreshing
+        - itemCount
+      properties:
+        status:
+          type: string
+          enum: [idle, ready, stale, unavailable, disabled]
+        refreshing:
+          type: boolean
+        lastRefresh:
+          type: string
+          format: date-time
+        lastAttempt:
+          type: string
+          format: date-time
+        itemCount:
+          type: integer
+        error:
+          type: string
+    FreshDiagnosticCounts:
+      type: object
+      required:
+        - autobrrReleasesInspected
+        - selectedFilterReleases
+        - eligibleMovieReleases
+        - eligibleTvReleases
+        - movieCandidates
+        - tvCandidates
+        - successfulMediaMatches
+        - noCandidateMatch
+        - movieYearMismatch
+        - ambiguousMatch
+        - outsideCandidateWindow
+        - duplicateMediaCollapsed
+        - excludedByMaximumItems
+        - finalFreshItems
+      properties:
+        autobrrReleasesInspected:
+          type: integer
+        selectedFilterReleases:
+          type: integer
+        eligibleMovieReleases:
+          type: integer
+        eligibleTvReleases:
+          type: integer
+        movieCandidates:
+          type: integer
+        tvCandidates:
+          type: integer
+        successfulMediaMatches:
+          type: integer
+        noCandidateMatch:
+          type: integer
+        movieYearMismatch:
+          type: integer
+        ambiguousMatch:
+          type: integer
+        outsideCandidateWindow:
+          type: integer
+        duplicateMediaCollapsed:
+          type: integer
+        excludedByMaximumItems:
+          type: integer
+        finalFreshItems:
+          type: integer
+    FreshDiagnosticDecision:
+      type: object
+      required:
+        - title
+        - mediaType
+        - gate
+        - outcome
+        - reason
+      properties:
+        title:
+          type: string
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        year:
+          type: integer
+        matchedIdentity:
+          type: object
+          required: [mediaType, tmdbId]
+          properties:
+            mediaType:
+              type: string
+              enum: [movie, tv]
+            tmdbId:
+              type: integer
+        gate:
+          type: string
+          enum:
+            [release-window, candidate-match, deduplication, projection-limit]
+        outcome:
+          type: string
+          enum: [accepted, rejected, collapsed, excluded]
+        reason:
+          type: string
+          enum:
+            - media_match_accepted
+            - no_candidate_match
+            - movie_year_mismatch
+            - ambiguous_candidate_match
+            - outside_candidate_window
+            - duplicate_media_collapsed
+            - maximum_items_excluded
+    FreshDiagnosticsSnapshot:
+      type: object
+      required:
+        - outcome
+        - startedAt
+        - completedAt
+        - counts
+        - decisions
+        - projection
+      properties:
+        outcome:
+          type: string
+          enum: [succeeded, failed]
+        startedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        failureReason:
+          type: string
+          enum: [fresh_refresh_failed]
+        counts:
+          $ref: '#/components/schemas/FreshDiagnosticCounts'
+        decisions:
+          type: array
+          maxItems: 100
+          items:
+            $ref: '#/components/schemas/FreshDiagnosticDecision'
+        projection:
+          type: object
+          required: [itemCount]
+          properties:
+            lastSuccessfulRefresh:
+              type: string
+              format: date-time
+            itemCount:
+              type: integer
+    FreshDiagnosticsResponse:
+      type: object
+      required: [latestAttempt, currentProjection]
+      properties:
+        latestAttempt:
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/FreshDiagnosticsSnapshot'
+        currentProjection:
+          $ref: '#/components/schemas/FreshStatus'
+    FreshResult:
+      oneOf:
+        - allOf:
+            - $ref: '#/components/schemas/MovieResult'
+            - type: object
+              required:
+                - freshFirstSeenAt
+              properties:
+                freshFirstSeenAt:
+                  type: string
+                  format: date-time
+        - allOf:
+            - $ref: '#/components/schemas/TvResult'
+            - type: object
+              required:
+                - freshFirstSeenAt
+              properties:
+                freshFirstSeenAt:
+                  type: string
+                  format: date-time
+    FreshResponse:
+      type: object
+      required:
+        - page
+        - totalPages
+        - totalResults
+        - results
+        - status
+      properties:
+        page:
+          type: integer
+        totalPages:
+          type: integer
+        totalResults:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/FreshResult'
+        status:
+          $ref: '#/components/schemas/FreshStatus'
     PersonResult:
       type: object
       properties:
@@ -5630,6 +5908,136 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Company'
+  /fresh:
+    get:
+      summary: Get Fresh media
+      description: Returns the bounded, ordered Fresh projection with native Seerr media state.
+      tags:
+        - search
+      responses:
+        '200':
+          description: Fresh media projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshResponse'
+  /settings/fresh:
+    get:
+      summary: Get Fresh settings
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Fresh settings without the API token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshSettings'
+    put:
+      summary: Update Fresh settings
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FreshSettings'
+      responses:
+        '200':
+          description: Updated Fresh settings without the API token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshSettings'
+  /settings/fresh/test:
+    post:
+      summary: Test Fresh autobrr connection
+      tags:
+        - settings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                baseUrl:
+                  type: string
+                apiToken:
+                  type: string
+                  writeOnly: true
+      responses:
+        '200':
+          description: Connection succeeded
+  /settings/fresh/filters:
+    post:
+      summary: Get browser-safe autobrr filter options
+      tags:
+        - settings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                baseUrl:
+                  type: string
+                apiToken:
+                  type: string
+                  writeOnly: true
+      responses:
+        '200':
+          description: Autobrr filter options
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    enabled:
+                      type: boolean
+  /settings/fresh/status:
+    get:
+      summary: Get Fresh refresh status
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Fresh refresh status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshStatus'
+  /settings/fresh/diagnostics:
+    get:
+      summary: Get the latest bounded Fresh refresh diagnostics
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Latest completed refresh attempt and current projection status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshDiagnosticsResponse'
+  /settings/fresh/refresh:
+    post:
+      summary: Force and await a Fresh refresh
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Fresh refresh status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshStatus'
   /discover/movies:
     get:
       summary: Discover movies

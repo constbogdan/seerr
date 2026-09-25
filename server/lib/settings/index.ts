@@ -1,4 +1,8 @@
 import { MediaServerType } from '@server/constants/server';
+import type {
+  FreshMovieCriteria,
+  FreshTvCriteria,
+} from '@server/lib/discoverCriteria';
 import { Permission } from '@server/lib/permissions';
 import { runMigrations } from '@server/lib/settings/migrator';
 import type { AvailableLocale } from '@server/types/languages';
@@ -185,6 +189,17 @@ export interface NetworkSettings {
   proxy: ProxySettings;
   dnsCache: DnsCacheSettings;
   apiRequestTimeout: number;
+}
+
+export interface FreshSettings {
+  enabled: boolean;
+  baseUrl: string;
+  apiToken: string;
+  filterId: number;
+  candidateWindowDays: number;
+  maximumItems: number;
+  movieCriteria: FreshMovieCriteria;
+  tvCriteria: FreshTvCriteria;
 }
 
 interface PublicSettings {
@@ -390,6 +405,7 @@ export interface AllSettings {
   notifications: NotificationSettings;
   jobs: Record<JobId, JobSettings>;
   network: NetworkSettings;
+  fresh: FreshSettings;
   metadataSettings: MetadataSettings;
   migrations: string[];
 }
@@ -637,6 +653,16 @@ class Settings {
         },
         apiRequestTimeout: 10000,
       },
+      fresh: {
+        enabled: false,
+        baseUrl: '',
+        apiToken: '',
+        filterId: 0,
+        candidateWindowDays: 90,
+        maximumItems: 20,
+        movieCriteria: {},
+        tvCriteria: {},
+      },
       migrations: [],
     };
     if (initialSettings) {
@@ -771,6 +797,14 @@ class Settings {
 
   set network(data: NetworkSettings) {
     this.data.network = mergeSettings(this.data.network, data);
+  }
+
+  get fresh(): FreshSettings {
+    return this.data.fresh;
+  }
+
+  set fresh(data: FreshSettings) {
+    this.data.fresh = mergeSettings(this.data.fresh, data);
   }
 
   get migrations(): string[] {

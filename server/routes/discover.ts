@@ -1,8 +1,5 @@
 import PlexTvAPI from '@server/api/plextv';
-import TheMovieDb, {
-  MovieSortOptionsIterable,
-  TvSortOptionsIterable,
-} from '@server/api/themoviedb';
+import TheMovieDb from '@server/api/themoviedb';
 import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
@@ -13,6 +10,12 @@ import type {
   GenreSliderItem,
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
+import {
+  MovieDiscoverCriteriaSchema,
+  TvDiscoverCriteriaSchema,
+  movieDiscoverOptions,
+  tvDiscoverOptions,
+} from '@server/lib/discoverCriteria';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { mapProductionCompany } from '@server/models/Movie';
@@ -26,7 +29,6 @@ import { mapNetwork } from '@server/models/Tv';
 import { isCollection, isMovie, isPerson } from '@server/utils/typeHelpers';
 import { Router } from 'express';
 import { sortBy } from 'lodash';
-import { z } from 'zod';
 
 export const createTmdbWithRegionLanguage = (user?: User): TheMovieDb => {
   const settings = getSettings();
@@ -62,82 +64,16 @@ export const createTmdbWithBlocklistSettings = (): TheMovieDb => {
 
 const discoverRoutes = Router();
 
-const QueryFilterOptions = z.object({
-  page: z.coerce.string().optional(),
-  primaryReleaseDateGte: z.coerce.string().optional(),
-  primaryReleaseDateLte: z.coerce.string().optional(),
-  firstAirDateGte: z.coerce.string().optional(),
-  firstAirDateLte: z.coerce.string().optional(),
-  studio: z.coerce.string().optional(),
-  genre: z.coerce.string().optional(),
-  keywords: z.coerce.string().optional(),
-  excludeKeywords: z.coerce.string().optional(),
-  language: z.coerce.string().optional(),
-  withRuntimeGte: z.coerce.string().optional(),
-  withRuntimeLte: z.coerce.string().optional(),
-  voteAverageGte: z.coerce.string().optional(),
-  voteAverageLte: z.coerce.string().optional(),
-  voteCountGte: z.coerce.string().optional(),
-  voteCountLte: z.coerce.string().optional(),
-  network: z.coerce.string().optional(),
-  watchProviders: z.coerce.string().optional(),
-  watchRegion: z.coerce.string().optional(),
-  status: z.coerce.string().optional(),
-  certification: z.coerce.string().optional(),
-  certificationGte: z.coerce.string().optional(),
-  certificationLte: z.coerce.string().optional(),
-  certificationCountry: z.coerce.string().optional(),
-  certificationMode: z.enum(['exact', 'range']).optional(),
-});
-
-export type FilterOptions = z.infer<typeof QueryFilterOptions>;
-const MovieApiQuerySchema = QueryFilterOptions.omit({
-  certificationMode: true,
-}).extend({
-  sortBy: z.enum(MovieSortOptionsIterable).optional().catch(undefined),
-});
-const TvApiQuerySchema = QueryFilterOptions.omit({
-  certificationMode: true,
-}).extend({
-  sortBy: z.enum(TvSortOptionsIterable).optional().catch(undefined),
-});
-
 discoverRoutes.get('/movies', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
   try {
-    const query = MovieApiQuerySchema.parse(req.query);
+    const query = MovieDiscoverCriteriaSchema.parse(req.query);
     const keywords = query.keywords;
-    const excludeKeywords = query.excludeKeywords;
 
-    const data = await tmdb.getDiscoverMovies({
-      page: Number(query.page),
-      sortBy: query.sortBy,
-      language: req.locale ?? query.language,
-      originalLanguage: query.language,
-      genre: query.genre,
-      studio: query.studio,
-      primaryReleaseDateLte: query.primaryReleaseDateLte
-        ? new Date(query.primaryReleaseDateLte).toISOString().split('T')[0]
-        : undefined,
-      primaryReleaseDateGte: query.primaryReleaseDateGte
-        ? new Date(query.primaryReleaseDateGte).toISOString().split('T')[0]
-        : undefined,
-      keywords,
-      excludeKeywords,
-      withRuntimeGte: query.withRuntimeGte,
-      withRuntimeLte: query.withRuntimeLte,
-      voteAverageGte: query.voteAverageGte,
-      voteAverageLte: query.voteAverageLte,
-      voteCountGte: query.voteCountGte,
-      voteCountLte: query.voteCountLte,
-      watchProviders: query.watchProviders,
-      watchRegion: query.watchRegion,
-      certification: query.certification,
-      certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
-    });
+    const data = await tmdb.getDiscoverMovies(
+      movieDiscoverOptions(query, req.locale ?? query.language)
+    );
 
     const media = await Media.getRelatedMedia(
       req.user,
@@ -419,38 +355,11 @@ discoverRoutes.get('/tv', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
   try {
-    const query = TvApiQuerySchema.parse(req.query);
+    const query = TvDiscoverCriteriaSchema.parse(req.query);
     const keywords = query.keywords;
-    const excludeKeywords = query.excludeKeywords;
-    const data = await tmdb.getDiscoverTv({
-      page: Number(query.page),
-      sortBy: query.sortBy,
-      language: req.locale ?? query.language,
-      genre: query.genre,
-      network: query.network ? Number(query.network) : undefined,
-      firstAirDateLte: query.firstAirDateLte
-        ? new Date(query.firstAirDateLte).toISOString().split('T')[0]
-        : undefined,
-      firstAirDateGte: query.firstAirDateGte
-        ? new Date(query.firstAirDateGte).toISOString().split('T')[0]
-        : undefined,
-      originalLanguage: query.language,
-      keywords,
-      excludeKeywords,
-      withRuntimeGte: query.withRuntimeGte,
-      withRuntimeLte: query.withRuntimeLte,
-      voteAverageGte: query.voteAverageGte,
-      voteAverageLte: query.voteAverageLte,
-      voteCountGte: query.voteCountGte,
-      voteCountLte: query.voteCountLte,
-      watchProviders: query.watchProviders,
-      watchRegion: query.watchRegion,
-      withStatus: query.status,
-      certification: query.certification,
-      certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
-    });
+    const data = await tmdb.getDiscoverTv(
+      tvDiscoverOptions(query, req.locale ?? query.language)
+    );
 
     const media = await Media.getRelatedMedia(
       req.user,
