@@ -55,6 +55,7 @@ class ValidationPolicyTest(unittest.TestCase):
             ("scripts/seerr_validation_policy.py", ["test_seerr_validation_policy.py"]),
             ("scripts/seerr_repository.py", ["test_seerr_repository.py"]),
             ("scripts/resolve_upstream.py", ["test_resolve_upstream.py"]),
+            ("scripts/seerr_downstream_release.py", ["test_seerr_downstream_release.py"]),
             ("scripts/test_prepare_pr.py", []),
             ("scripts/hosted_upstream.py", []),
             ("scripts/test_hosted_upstream.py", []),
@@ -86,11 +87,17 @@ class ValidationPolicyTest(unittest.TestCase):
         self.assertEqual("test_seerr_repository.py", plan["offlineTestPattern"])
 
     def test_image_planner_is_high_risk_tooling_not_product_output(self):
-        plan = policy.plan_paths(["scripts/seerr_downstream_version.py"])
-        self.assertEqual("tooling-only", plan["releaseRelevance"])
-        self.assertFalse(plan["releaseRequired"])
-        self.assertEqual("high", plan["validationRisk"])
-        self.assertEqual(policy.FULL, plan["validationMode"])
+        for path, expected_test in (
+            ("scripts/seerr_downstream_version.py", "test_seerr_downstream_version.py"),
+            ("scripts/seerr_downstream_release.py", "test_seerr_downstream_release.py"),
+        ):
+            with self.subTest(path=path):
+                plan = policy.plan_paths([path])
+                self.assertEqual("tooling-only", plan["releaseRelevance"])
+                self.assertFalse(plan["releaseRequired"])
+                self.assertEqual("high", plan["validationRisk"])
+                self.assertEqual(policy.FULL, plan["validationMode"])
+                self.assertEqual(expected_test, plan["offlineTestPattern"])
 
     def test_upstream_automation_uses_explicit_release_and_offline_boundaries(self):
         ownership = policy.plan_paths(["scripts/upstream_ownership_policy.json"])

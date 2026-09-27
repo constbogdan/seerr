@@ -25,8 +25,11 @@ jobs:
     outputs:
       release_required: ${{ steps.plan.outputs.release_required }}
       version_tag: ${{ steps.plan.outputs.version_tag }}
+      source_sha: ${{ steps.plan.outputs.source_sha }}
       source_date_epoch: ${{ steps.plan.outputs.source_date_epoch }}
       previous_sha: ${{ steps.plan.outputs.previous_sha }}
+      comparison_baseline_sha: ${{ steps.plan.outputs.comparison_baseline_sha }}
+      image_already_published: ${{ steps.plan.outputs.image_already_published }}
       upstream_authenticated: ${{ steps.plan.outputs.upstream_authenticated }}
       upstream_base_sha: ${{ steps.plan.outputs.upstream_base_sha }}
       upstream_tip_sha: ${{ steps.plan.outputs.upstream_tip_sha }}
@@ -100,6 +103,8 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      build_digest: ${{ steps.publish.outputs.digest }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -116,6 +121,7 @@ jobs:
 
       - name: Set build metadata
         id: build_metadata
+        if: needs.eligibility.outputs.image_already_published != 'true'
         shell: bash
         env:
           SOURCE_DATE_EPOCH: ${{ needs.eligibility.outputs.source_date_epoch }}
@@ -124,9 +130,11 @@ jobs:
           echo "created=$created" >> "$GITHUB_OUTPUT"
 
       - name: Set up Docker Buildx
+        if: needs.eligibility.outputs.image_already_published != 'true'
         uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
 
       - name: Log in to GitHub Container Registry
+        if: needs.eligibility.outputs.image_already_published != 'true'
         uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
@@ -135,6 +143,7 @@ jobs:
 
       - name: Extract image metadata
         id: metadata
+        if: needs.eligibility.outputs.image_already_published != 'true'
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6
         env:
           DOCKER_METADATA_ANNOTATIONS_LEVELS: manifest
@@ -165,6 +174,7 @@ jobs:
 
       - name: Build and publish image
         id: publish
+        if: needs.eligibility.outputs.image_already_published != 'true'
         uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           context: .
@@ -184,6 +194,7 @@ jobs:
           provenance: false
 
       - name: Publish summary
+        if: needs.eligibility.outputs.image_already_published != 'true'
         shell: bash
         run: |
           cat >> "$GITHUB_STEP_SUMMARY" <<EOF
@@ -205,4 +216,121 @@ jobs:
           ### Downstream changes
 
           [Compare the previous published image with this version](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${{ needs.eligibility.outputs.previous_sha }}...${GITHUB_SHA}).
+          EOF
+
+      - name: Record image publication recovery
+        if: needs.eligibility.outputs.image_already_published == 'true'
+        shell: bash
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Recovering downstream release publication
+
+          `${IMAGE_NAME}:${{ needs.eligibility.outputs.version_tag }}` already records
+          the exact protected source `${GITHUB_SHA}`. The image will not be rebuilt;
+          its immutable registry identity will be reverified before the missing Git
+          tag or GitHub Release is reconciled.
+          EOF
+
+  release:
+    name: Publish downstream release
+    needs: [eligibility, publish]
+    if: needs.eligibility.outputs.release_required == 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Authenticate release context
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+        run: |
+          test "$GITHUB_REPOSITORY" = 'constbogdan/seerr'
+          test "$GITHUB_REF" = 'refs/heads/downstream-main'
+          test "$GITHUB_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Log in to GitHub Container Registry for verification
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.repository_owner }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read published image identities
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+          VERSION_TAG: ${{ needs.eligibility.outputs.version_tag }}
+        run: |
+          docker buildx imagetools inspect --format '{{json .}}' \
+            "${IMAGE_NAME}:${VERSION_TAG}" > "${RUNNER_TEMP}/version-image.json"
+          docker buildx imagetools inspect --format '{{json .}}' \
+            "${IMAGE_NAME}:${SOURCE_SHA}" > "${RUNNER_TEMP}/source-image.json"
+          docker buildx imagetools inspect --format '{{json .}}' \
+            "${IMAGE_NAME}:custom" > "${RUNNER_TEMP}/rolling-image.json"
+
+      - name: Verify published image identity
+        id: image
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+          VERSION_TAG: ${{ needs.eligibility.outputs.version_tag }}
+          EXPECTED_DIGEST: ${{ needs.publish.outputs.build_digest }}
+          IMAGE_ALREADY_PUBLISHED: ${{ needs.eligibility.outputs.image_already_published }}
+        run: |
+          python3 -B scripts/seerr_downstream_release.py verify-image \
+            --source-sha "$SOURCE_SHA" \
+            --version-tag "$VERSION_TAG" \
+            --version-metadata "${RUNNER_TEMP}/version-image.json" \
+            --source-metadata "${RUNNER_TEMP}/source-image.json" \
+            --rolling-metadata "${RUNNER_TEMP}/rolling-image.json" \
+            --expected-digest "$EXPECTED_DIGEST" \
+            --image-already-published "$IMAGE_ALREADY_PUBLISHED" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Create or verify Git tag and GitHub Release
+        id: github_release
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+          BASELINE_SHA: ${{ needs.eligibility.outputs.comparison_baseline_sha }}
+          VERSION_TAG: ${{ needs.eligibility.outputs.version_tag }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.image_digest }}
+        run: |
+          python3 -B scripts/seerr_downstream_release.py publish-release \
+            --source-sha "$SOURCE_SHA" \
+            --baseline-sha "$BASELINE_SHA" \
+            --version-tag "$VERSION_TAG" \
+            --image-digest "$IMAGE_DIGEST" \
+            --notes "${RUNNER_TEMP}/release-notes.md" \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Publish release summary
+        shell: bash
+        env:
+          SOURCE_SHA: ${{ needs.eligibility.outputs.source_sha }}
+          VERSION_TAG: ${{ needs.eligibility.outputs.version_tag }}
+          IMAGE_DIGEST: ${{ steps.image.outputs.image_digest }}
+          RELEASE_URL: ${{ steps.github_release.outputs.url }}
+          RELEASE_OUTCOME: ${{ steps.github_release.outputs.outcome }}
+        run: |
+          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
+          ## Seerr downstream ${VERSION_TAG} release ${RELEASE_OUTCOME}
+
+          - **GitHub Release:** [${VERSION_TAG}](${RELEASE_URL})
+          - **Image:** `${IMAGE_NAME}:${VERSION_TAG}`
+          - **Source SHA:** `${SOURCE_SHA}`
+          - **Digest:** `${IMAGE_DIGEST}`
+          - **Build:** [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
           EOF

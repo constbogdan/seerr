@@ -48,6 +48,7 @@
         'scripts/prepare-pr.config.psd1'
         'scripts/upstream_ownership_policy.json'
         'scripts/seerr_downstream_version.py'
+        'scripts/seerr_downstream_release.py'
         'docs/PREPARE_PR.md'
         'docs/UPSTREAM_SYNC.md'
         'docs/UPSTREAM_RESOLUTION_DECISIONS.md'

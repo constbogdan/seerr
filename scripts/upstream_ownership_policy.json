@@ -27,6 +27,7 @@
     "scripts/resolve_upstream.py": "DOWNSTREAM-OWNED",
     "scripts/run_offline_tests.py": "DOWNSTREAM-OWNED",
     "scripts/seerr_downstream_version.py": "DOWNSTREAM-OWNED",
+    "scripts/seerr_downstream_release.py": "DOWNSTREAM-OWNED",
     "scripts/sync-upstream.ps1": "DOWNSTREAM-OWNED",
     "scripts/test_hosted_upstream.py": "DOWNSTREAM-OWNED",
     "scripts/test_seerr_change_classification.py": "DOWNSTREAM-OWNED",
@@ -37,6 +38,7 @@
     "scripts/test_resolve_upstream.py": "DOWNSTREAM-OWNED",
     "scripts/test_run_offline_tests.py": "DOWNSTREAM-OWNED",
     "scripts/test_seerr_downstream_version.py": "DOWNSTREAM-OWNED",
+    "scripts/test_seerr_downstream_release.py": "DOWNSTREAM-OWNED",
     "scripts/tooling_test_support.py": "DOWNSTREAM-OWNED",
     "scripts/upstream_ownership_policy.json": "DOWNSTREAM-OWNED",
     "scripts/validate-local.ps1": "DOWNSTREAM-OWNED"

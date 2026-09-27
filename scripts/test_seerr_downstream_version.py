@@ -162,6 +162,28 @@ class VersionTests(unittest.TestCase):
         self.assertTrue(required["releaseRequired"])
         self.assertEqual("custom-v1.0.12", required["versionTag"])
 
+    def test_rerun_after_image_publication_reuses_version_and_prior_release_baseline(self):
+        previous = self.git("rev-parse", "HEAD")
+        self.git("tag", "custom-v1.0.7", previous)
+        self.commit_path("server/feature.ts", "product\n", "product")
+        source = self.git("rev-parse", "HEAD")
+
+        recovered = self.plan(source, "custom-v1.0.8")
+
+        self.assertTrue(recovered["releaseRequired"])
+        self.assertTrue(recovered["imageAlreadyPublished"])
+        self.assertEqual("published-product-recovery", recovered["releaseRelevance"])
+        self.assertEqual("custom-v1.0.8", recovered["versionTag"])
+        self.assertEqual(8, recovered["number"])
+        self.assertEqual(source, recovered["previousSha"])
+        self.assertEqual(previous, recovered["comparisonBaselineSha"])
+
+    def test_published_image_recovery_refuses_without_prior_release_tag(self):
+        self.commit_path("server/feature.ts", "product\n", "product")
+        source = self.git("rev-parse", "HEAD")
+        with self.assertRaises(ValueError):
+            self.plan(source, "custom-v1.0.8")
+
     def test_managed_candidate_provenance_is_authenticated_from_topology(self):
         downstream = self.git("rev-parse", "HEAD")
         self.git("checkout", "-b", "upstream")
@@ -222,7 +244,24 @@ class VersionTests(unittest.TestCase):
         self.assertIn("packages: write", workflow)
         self.assertIn("--plan-publication", workflow)
         self.assertIn("org.opencontainers.image.revision", workflow)
+        self.assertIn("name: Publish downstream release", workflow)
+        self.assertIn("contents: write", workflow)
+        self.assertIn("packages: read", workflow)
+        self.assertIn("scripts/seerr_downstream_release.py verify-image", workflow)
+        self.assertIn("scripts/seerr_downstream_release.py publish-release", workflow)
+        self.assertIn("image_already_published", workflow)
+        self.assertIn("comparison_baseline_sha", workflow)
         self.assertNotIn("paths:", workflow)
+
+    def test_release_job_consumes_existing_eligibility_and_never_runs_for_skips(self):
+        workflow = (Path(__file__).parent.parent / ".github/workflows/downstream-image.yml").read_text()
+        release_job = workflow.split("\n  release:\n", 1)[1]
+        self.assertIn("needs: [eligibility, publish]", release_job)
+        self.assertIn(
+            "if: needs.eligibility.outputs.release_required == 'true'", release_job
+        )
+        self.assertNotIn("continue-on-error", release_job)
+        self.assertNotIn("workflow_dispatch", workflow)
 
     def test_workflow_tolerates_only_cache_export_failures(self):
         workflow = (Path(__file__).parent.parent / ".github/workflows/downstream-image.yml").read_text()

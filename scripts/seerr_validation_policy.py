@@ -26,6 +26,7 @@ FULL_VALIDATION_PATTERNS = (
     "scripts/seerr_validation_reuse.py",
     "scripts/seerr_output.ps1",
     "scripts/seerr_downstream_version.py",
+    "scripts/seerr_downstream_release.py",
     "scripts/prepare-pr.ps1",
     "scripts/prepare-pr.config.psd1",
     "scripts/validate-local.ps1",
@@ -63,6 +64,7 @@ OFFLINE_TEST_MAP = {
     "scripts/seerr_validation_reuse.py": "test_seerr_validation_reuse.py",
     "scripts/seerr_output.ps1": "test_prepare_pr.py",
     "scripts/seerr_downstream_version.py": "test_seerr_downstream_version.py",
+    "scripts/seerr_downstream_release.py": "test_seerr_downstream_release.py",
 }
 
 
@@ -74,6 +76,7 @@ BOUNDED_LOCAL_FAST_OFFLINE_PATTERNS = frozenset({
     "test_resolve_upstream.py",
     "test_run_offline_tests.py",
     "test_seerr_downstream_version.py",
+    "test_seerr_downstream_release.py",
 })
 
 
