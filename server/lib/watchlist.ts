@@ -109,6 +109,14 @@ export const getLocalWatchlist = async ({
     .take(WATCHLIST_PAGE_SIZE);
 
   const [results, totalResults] = await queryBuilder.getManyAndCount();
+  const unclassifiedItem = await getRepository(Watchlist)
+    .createQueryBuilder('watchlist')
+    .select('watchlist.id', 'id')
+    .where('watchlist.requestedById = :userId', { userId })
+    .andWhere('watchlist.genreIds IS NULL')
+    .limit(1)
+    .getRawOne<{ id: number }>();
+  const hasUnclassifiedItems = Boolean(unclassifiedItem);
 
   return {
     page: query.page,
@@ -117,6 +125,7 @@ export const getLocalWatchlist = async ({
     results,
     source: 'local',
     supportsPresentation: true,
+    hasUnclassifiedItems,
   };
 };
 
@@ -148,6 +157,7 @@ export const getPlexWatchlist = async ({
     })),
     source: 'plex',
     supportsPresentation: false,
+    hasUnclassifiedItems: false,
   };
 };
 

@@ -200,6 +200,7 @@ describe('local Watchlist query and ownership', () => {
     assert.equal(all.totalPages, 2);
     assert.equal(all.results.length, 20);
     assert.equal(all.results[0].title, 'Unknown Metadata');
+    assert.equal(all.hasUnclassifiedItems, true);
 
     const movies = await getLocalWatchlist({
       userId: user.id,
@@ -210,6 +211,7 @@ describe('local Watchlist query and ownership', () => {
     assert.equal(movies.results.length, 5);
     assert.ok(movies.results.every((row) => row.genreIds !== null));
     assert.ok(movies.results.every((row) => !row.genreIds?.includes(16)));
+    assert.equal(movies.hasUnclassifiedItems, true);
 
     const series = await getLocalWatchlist({
       userId: user.id,
@@ -228,6 +230,7 @@ describe('local Watchlist query and ownership', () => {
       animation.results.map((row) => row.title),
       ['Animated Series', 'Animated Movie']
     );
+    assert.equal(animation.hasUnclassifiedItems, true);
   });
 
   it('applies stable date and title ordering before pagination', async () => {

@@ -20,4 +20,5 @@ export interface WatchlistResponse {
   results: WatchlistItem[];
   source: 'local' | 'plex';
   supportsPresentation: boolean;
+  hasUnclassifiedItems: boolean;
 }

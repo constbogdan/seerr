@@ -83,6 +83,7 @@
   "components.Discover.DiscoverWatchlist.addedOldest": "Date Added: Oldest",
   "components.Discover.DiscoverWatchlist.all": "All",
   "components.Discover.DiscoverWatchlist.animation": "Animation",
+  "components.Discover.DiscoverWatchlist.classificationPending": "Some Watchlist items are still being classified. This category may be incomplete.",
   "components.Discover.DiscoverWatchlist.discoverwatchlist": "Your Watchlist",
   "components.Discover.DiscoverWatchlist.emptyCategory": "There are no Watchlist items in this category.",
   "components.Discover.DiscoverWatchlist.movies": "Movies",

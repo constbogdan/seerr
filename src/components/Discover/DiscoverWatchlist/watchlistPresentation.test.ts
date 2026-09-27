@@ -5,6 +5,7 @@ import { describe, it } from 'node:test';
 import {
   WATCHLIST_PREFERENCE_KEY,
   defaultWatchlistPreferences,
+  getWatchlistPreferenceKey,
   readWatchlistPreferences,
   resolveWatchlistPreferences,
 } from './preferences';
@@ -12,6 +13,11 @@ import {
 describe('Watchlist presentation preferences', () => {
   it('uses a versioned key and safe defaults for stale or invalid storage', () => {
     assert.equal(WATCHLIST_PREFERENCE_KEY, 'watchlist-presentation-v1');
+    assert.equal(
+      getWatchlistPreferenceKey(7),
+      'watchlist-presentation-v1:user-7'
+    );
+    assert.notEqual(getWatchlistPreferenceKey(7), getWatchlistPreferenceKey(8));
     assert.deepEqual(
       readWatchlistPreferences(null),
       defaultWatchlistPreferences
@@ -64,6 +70,8 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(page, /router\.pathname\.startsWith\('\/profile'\)/);
     assert.match(page, /router\.query\.userId/);
     assert.match(page, /firstResultData\?\.supportsPresentation/);
+    assert.match(page, /firstResultData\.hasUnclassifiedItems/);
+    assert.match(page, /getWatchlistPreferenceKey\(currentUser\.id\)/);
     assert.match(page, /value="animation"/);
     assert.match(page, /value="added_desc"/);
     assert.match(page, /value="added_asc"/);

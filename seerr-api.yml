@@ -5576,6 +5576,8 @@ paths:
                       - plex
                   supportsPresentation:
                     type: boolean
+                  hasUnclassifiedItems:
+                    type: boolean
                   results:
                     type: array
                     items:
@@ -7209,6 +7211,8 @@ paths:
                       - local
                       - plex
                   supportsPresentation:
+                    type: boolean
+                  hasUnclassifiedItems:
                     type: boolean
                   results:
                     type: array

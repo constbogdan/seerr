@@ -868,6 +868,7 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
         results: [],
         source: 'local',
         supportsPresentation: true,
+        hasUnclassifiedItems: false,
       });
     }
 

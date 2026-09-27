@@ -7,6 +7,9 @@ import {
 
 export const WATCHLIST_PREFERENCE_KEY = 'watchlist-presentation-v1';
 
+export const getWatchlistPreferenceKey = (userId: number): string =>
+  `${WATCHLIST_PREFERENCE_KEY}:user-${userId}`;
+
 export interface WatchlistPreferences {
   category: WatchlistCategory;
   sort: WatchlistSort;

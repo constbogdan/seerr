@@ -17,8 +17,8 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import {
-  WATCHLIST_PREFERENCE_KEY,
   defaultWatchlistPreferences,
+  getWatchlistPreferenceKey,
   readWatchlistPreferences,
   resolveWatchlistPreferences,
 } from './preferences';
@@ -36,6 +36,8 @@ const messages = defineMessages('components.Discover.DiscoverWatchlist', {
   titleDescending: 'Title: Z–A',
   sortBy: 'Sort by',
   emptyCategory: 'There are no Watchlist items in this category.',
+  classificationPending:
+    'Some Watchlist items are still being classified. This category may be incomplete.',
 });
 
 const DiscoverWatchlist = () => {
@@ -48,6 +50,9 @@ const DiscoverWatchlist = () => {
     id: Number(router.query.userId),
   });
   const { user: currentUser } = useUser();
+  const preferenceKey = currentUser?.id
+    ? getWatchlistPreferenceKey(currentUser.id)
+    : undefined;
 
   const {
     isLoadingInitialData,
@@ -61,7 +66,11 @@ const DiscoverWatchlist = () => {
     firstResultData,
   } = useDiscover<
     WatchlistItem,
-    { source: 'local' | 'plex'; supportsPresentation: boolean },
+    {
+      source: 'local' | 'plex';
+      supportsPresentation: boolean;
+      hasUnclassifiedItems: boolean;
+    },
     { category?: WatchlistCategory; sort?: WatchlistSort }
   >(
     `/api/v1/${
@@ -78,12 +87,12 @@ const DiscoverWatchlist = () => {
   );
 
   useEffect(() => {
-    if (!dedicatedPage || !router.isReady) {
+    if (!dedicatedPage || !router.isReady || !preferenceKey) {
       return;
     }
 
     const stored = readWatchlistPreferences(
-      window.localStorage.getItem(WATCHLIST_PREFERENCE_KEY)
+      window.localStorage.getItem(preferenceKey)
     );
     const resolved = resolveWatchlistPreferences({
       queryCategory:
@@ -95,11 +104,14 @@ const DiscoverWatchlist = () => {
       stored,
     });
     setPreferences(resolved);
-    window.localStorage.setItem(
-      WATCHLIST_PREFERENCE_KEY,
-      JSON.stringify(resolved)
-    );
-  }, [dedicatedPage, router.isReady, router.query.category, router.query.sort]);
+    window.localStorage.setItem(preferenceKey, JSON.stringify(resolved));
+  }, [
+    dedicatedPage,
+    preferenceKey,
+    router.isReady,
+    router.query.category,
+    router.query.sort,
+  ]);
 
   const updatePreference = (
     next: Partial<{
@@ -109,10 +121,9 @@ const DiscoverWatchlist = () => {
   ) => {
     const updated = { ...preferences, ...next };
     setPreferences(updated);
-    window.localStorage.setItem(
-      WATCHLIST_PREFERENCE_KEY,
-      JSON.stringify(updated)
-    );
+    if (preferenceKey) {
+      window.localStorage.setItem(preferenceKey, JSON.stringify(updated));
+    }
     updateQuery({
       category: updated.category === 'all' ? undefined : updated.category,
       sort: updated.sort === 'added_desc' ? undefined : updated.sort,
@@ -210,7 +221,11 @@ const DiscoverWatchlist = () => {
       isEmpty &&
       preferences.category !== 'all' ? (
         <div className="mt-64 w-full text-center text-2xl text-gray-400">
-          {intl.formatMessage(messages.emptyCategory)}
+          {intl.formatMessage(
+            firstResultData.hasUnclassifiedItems
+              ? messages.classificationPending
+              : messages.emptyCategory
+          )}
         </div>
       ) : (
         <ListView
