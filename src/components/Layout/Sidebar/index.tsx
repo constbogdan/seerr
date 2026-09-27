@@ -1,6 +1,7 @@
 import Badge from '@app/components/Common/Badge';
 import VersionStatus from '@app/components/Layout/VersionStatus';
 import useClickOutside from '@app/hooks/useClickOutside';
+import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition, TransitionChild } from '@headlessui/react';
@@ -10,6 +11,7 @@ import {
   ExclamationTriangleIcon,
   EyeSlashIcon,
   FilmIcon,
+  FireIcon,
   SparklesIcon,
   TvIcon,
   UsersIcon,
@@ -30,6 +32,7 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   issues: 'Issues',
   users: 'Users',
   settings: 'Settings',
+  fresh: 'Fresh',
 });
 
 interface SidebarProps {
@@ -50,6 +53,7 @@ interface SidebarLinkProps {
   requiredPermission?: Permission | Permission[];
   permissionType?: 'and' | 'or';
   dataTestId?: string;
+  requiresFresh?: boolean;
 }
 
 const SidebarLinks: SidebarLinkProps[] = [
@@ -58,6 +62,14 @@ const SidebarLinks: SidebarLinkProps[] = [
     messagesKey: 'dashboard',
     svgIcon: <SparklesIcon className="mr-3 h-6 w-6" />,
     activeRegExp: /^\/(discover\/?)?$/,
+  },
+  {
+    href: '/fresh',
+    messagesKey: 'fresh',
+    svgIcon: <FireIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/fresh/,
+    requiresFresh: true,
+    dataTestId: 'sidebar-menu-fresh',
   },
   {
     href: '/discover/movies',
@@ -129,6 +141,7 @@ const Sidebar = ({
   const navRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
   const intl = useIntl();
+  const { currentSettings } = useSettings();
   const { hasPermission } = useUser();
   useClickOutside(navRef, () => setClosed());
 
@@ -197,12 +210,15 @@ const Sidebar = ({
                       </span>
                     </div>
                     <nav className="mt-10 flex-1 space-y-4 px-4">
-                      {SidebarLinks.filter((link) =>
-                        link.requiredPermission
-                          ? hasPermission(link.requiredPermission, {
-                              type: link.permissionType ?? 'and',
-                            })
-                          : true
+                      {SidebarLinks.filter(
+                        (link) =>
+                          (!link.requiresFresh ||
+                            currentSettings.freshEnabled) &&
+                          (link.requiredPermission
+                            ? hasPermission(link.requiredPermission, {
+                                type: link.permissionType ?? 'and',
+                              })
+                            : true)
                       ).map((sidebarLink) => {
                         return (
                           <Link
@@ -265,12 +281,14 @@ const Sidebar = ({
                 </span>
               </div>
               <nav className="mt-8 flex-1 space-y-4 px-4">
-                {SidebarLinks.filter((link) =>
-                  link.requiredPermission
-                    ? hasPermission(link.requiredPermission, {
-                        type: link.permissionType ?? 'and',
-                      })
-                    : true
+                {SidebarLinks.filter(
+                  (link) =>
+                    (!link.requiresFresh || currentSettings.freshEnabled) &&
+                    (link.requiredPermission
+                      ? hasPermission(link.requiredPermission, {
+                          type: link.permissionType ?? 'and',
+                        })
+                      : true)
                 ).map((sidebarLink) => {
                   return (
                     <Link

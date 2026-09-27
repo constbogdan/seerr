@@ -187,6 +187,42 @@ export interface NetworkSettings {
   apiRequestTimeout: number;
 }
 
+export interface FreshSettings {
+  enabled: boolean;
+  baseUrl: string;
+  apiToken: string;
+  filterId: number;
+  cachedFilterName: string;
+  mediaEligibilityDays: number;
+  freshVisibilityDays: number;
+  includeGenreIds: number[];
+  excludeGenreIds: number[];
+  includeOriginalLanguages: string[];
+  excludeOriginalLanguages: string[];
+  includeContentRatings: string[];
+  excludeContentRatings: string[];
+  minimumTmdbScore: number;
+  minimumTmdbVotes: number;
+}
+
+const finalFreshSettings = (value?: Partial<FreshSettings>): FreshSettings => ({
+  enabled: value?.enabled ?? false,
+  baseUrl: value?.baseUrl ?? '',
+  apiToken: value?.apiToken ?? '',
+  filterId: value?.filterId ?? 0,
+  cachedFilterName: value?.cachedFilterName ?? '',
+  mediaEligibilityDays: value?.mediaEligibilityDays ?? 90,
+  freshVisibilityDays: value?.freshVisibilityDays ?? 7,
+  includeGenreIds: value?.includeGenreIds ?? [],
+  excludeGenreIds: value?.excludeGenreIds ?? [],
+  includeOriginalLanguages: value?.includeOriginalLanguages ?? [],
+  excludeOriginalLanguages: value?.excludeOriginalLanguages ?? [],
+  includeContentRatings: value?.includeContentRatings ?? [],
+  excludeContentRatings: value?.excludeContentRatings ?? [],
+  minimumTmdbScore: value?.minimumTmdbScore ?? 0,
+  minimumTmdbVotes: value?.minimumTmdbVotes ?? 0,
+});
+
 interface PublicSettings {
   initialized: boolean;
 }
@@ -220,6 +256,7 @@ interface FullPublicSettings extends PublicSettings {
   youtubeUrl: string;
   versionCheck: boolean;
   plexClientIdentifier: string;
+  freshEnabled: boolean;
 }
 
 export interface NotificationAgentConfig {
@@ -373,7 +410,9 @@ export type JobId =
   | 'jellyfin-full-scan'
   | 'image-cache-cleanup'
   | 'availability-sync'
-  | 'process-blocklisted-tags';
+  | 'process-blocklisted-tags'
+  | 'fresh-sync'
+  | 'fresh-reconciliation';
 
 export interface AllSettings {
   clientId: string;
@@ -390,6 +429,7 @@ export interface AllSettings {
   notifications: NotificationSettings;
   jobs: Record<JobId, JobSettings>;
   network: NetworkSettings;
+  fresh: FreshSettings;
   metadataSettings: MetadataSettings;
   migrations: string[];
 }
@@ -615,6 +655,12 @@ class Settings {
         'process-blocklisted-tags': {
           schedule: '0 30 1 */7 * *',
         },
+        'fresh-sync': {
+          schedule: '0 */5 * * * *',
+        },
+        'fresh-reconciliation': {
+          schedule: '0 15 3 * * *',
+        },
       },
       network: {
         csrfProtection: false,
@@ -637,11 +683,29 @@ class Settings {
         },
         apiRequestTimeout: 10000,
       },
+      fresh: {
+        enabled: false,
+        baseUrl: '',
+        apiToken: '',
+        filterId: 0,
+        cachedFilterName: '',
+        mediaEligibilityDays: 90,
+        freshVisibilityDays: 7,
+        includeGenreIds: [],
+        excludeGenreIds: [],
+        includeOriginalLanguages: [],
+        excludeOriginalLanguages: [],
+        includeContentRatings: [],
+        excludeContentRatings: [],
+        minimumTmdbScore: 0,
+        minimumTmdbVotes: 0,
+      },
       migrations: [],
     };
     if (initialSettings) {
       this.data = mergeSettings(this.data, initialSettings);
     }
+    this.data.fresh = finalFreshSettings(this.data.fresh);
   }
 
   get main(): MainSettings {
@@ -746,6 +810,7 @@ class Settings {
       youtubeUrl: this.data.main.youtubeUrl,
       versionCheck: this.data.main.versionCheck,
       plexClientIdentifier: this.data.clientId,
+      freshEnabled: this.data.fresh.enabled,
     };
   }
 
@@ -771,6 +836,14 @@ class Settings {
 
   set network(data: NetworkSettings) {
     this.data.network = mergeSettings(this.data.network, data);
+  }
+
+  get fresh(): FreshSettings {
+    return this.data.fresh;
+  }
+
+  set fresh(data: FreshSettings) {
+    this.data.fresh = finalFreshSettings(data);
   }
 
   get migrations(): string[] {
@@ -849,6 +922,12 @@ class Settings {
       this.data = merged;
     } else if (data) {
       this.data = JSON.parse(data);
+    }
+
+    const sanitizedFresh = finalFreshSettings(this.data.fresh);
+    if (JSON.stringify(sanitizedFresh) !== JSON.stringify(this.data.fresh)) {
+      this.data.fresh = sanitizedFresh;
+      change = true;
     }
 
     // generate keys and ids if it's missing

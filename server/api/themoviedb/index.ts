@@ -251,6 +251,25 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     }
   };
 
+  /** Fresh identity resolution must distinguish an empty result from an
+   * unavailable provider, so this intentionally preserves provider errors. */
+  public searchMoviesStrict = async ({
+    query,
+    page = 1,
+    includeAdult = false,
+    language = this.locale,
+    year,
+  }: SingleSearchOptions): Promise<TmdbSearchMovieResponse> =>
+    this.get<TmdbSearchMovieResponse>('/search/movie', {
+      params: {
+        query,
+        page,
+        include_adult: includeAdult,
+        language,
+        primary_release_year: year,
+      },
+    });
+
   public searchTvShows = async ({
     query,
     page = 1,
@@ -279,6 +298,24 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
       };
     }
   };
+
+  /** Error-preserving counterpart used by the durable Fresh resolver. */
+  public searchTvShowsStrict = async ({
+    query,
+    page = 1,
+    includeAdult = false,
+    language = this.locale,
+    year,
+  }: SingleSearchOptions): Promise<TmdbSearchTvResponse> =>
+    this.get<TmdbSearchTvResponse>('/search/tv', {
+      params: {
+        query,
+        page,
+        include_adult: includeAdult,
+        language,
+        first_air_date_year: year,
+      },
+    });
 
   public getPerson = async ({
     personId,

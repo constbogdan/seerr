@@ -19,6 +19,7 @@ const messages = defineMessages('components.Settings', {
   menuJobs: 'Jobs & Cache',
   menuAbout: 'About',
   menuMetadataProviders: 'Metadata Providers',
+  menuDiscoverySources: 'Discovery Sources',
 });
 
 type SettingsLayoutProps = {
@@ -64,6 +65,11 @@ const SettingsLayout = ({ children }: SettingsLayoutProps) => {
       text: intl.formatMessage(messages.menuMetadataProviders),
       route: '/settings/metadata',
       regex: /^\/settings\/metadata/,
+    },
+    {
+      text: intl.formatMessage(messages.menuDiscoverySources),
+      route: '/settings/discovery-sources/fresh',
+      regex: /^\/settings\/discovery-sources/,
     },
     {
       text: intl.formatMessage(messages.menuNotifications),
