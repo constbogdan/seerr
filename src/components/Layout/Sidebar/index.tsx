@@ -6,6 +6,7 @@ import { Permission, useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition, TransitionChild } from '@headlessui/react';
 import {
+  BookmarkIcon,
   ClockIcon,
   CogIcon,
   ExclamationTriangleIcon,
@@ -33,6 +34,7 @@ export const menuMessages = defineMessages('components.Layout.Sidebar', {
   users: 'Users',
   settings: 'Settings',
   fresh: 'Fresh',
+  watchlist: 'Watchlist',
 });
 
 interface SidebarProps {
@@ -76,6 +78,13 @@ const SidebarLinks: SidebarLinkProps[] = [
     messagesKey: 'browsemovies',
     svgIcon: <FilmIcon className="mr-3 h-6 w-6" />,
     activeRegExp: /^\/discover\/movies$/,
+  },
+  {
+    href: '/discover/watchlist',
+    messagesKey: 'watchlist',
+    svgIcon: <BookmarkIcon className="mr-3 h-6 w-6" />,
+    activeRegExp: /^\/discover\/watchlist$/,
+    dataTestId: 'sidebar-menu-watchlist',
   },
   {
     href: '/discover/tv',

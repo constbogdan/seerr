@@ -90,6 +90,7 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'download-sync-reset': 'Download Sync Reset',
     'image-cache-cleanup': 'Image Cache Cleanup',
     'process-blocklisted-tags': 'Process Blocklisted Tags',
+    'watchlist-metadata-backfill': 'Watchlist Metadata Backfill',
     'fresh-sync': 'Fresh Sync',
     'fresh-reconciliation': 'Fresh Reconciliation',
     editJobSchedule: 'Modify Job',

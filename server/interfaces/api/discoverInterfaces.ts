@@ -10,6 +10,7 @@ export interface WatchlistItem {
   tmdbId: number;
   mediaType: 'movie' | 'tv';
   title: string;
+  genreIds?: number[] | null;
 }
 
 export interface WatchlistResponse {
@@ -17,4 +18,6 @@ export interface WatchlistResponse {
   totalPages: number;
   totalResults: number;
   results: WatchlistItem[];
+  source: 'local' | 'plex';
+  supportsPresentation: boolean;
 }

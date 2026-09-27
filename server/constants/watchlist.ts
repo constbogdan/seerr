@@ -1,0 +1,15 @@
+export const watchlistCategories = [
+  'all',
+  'movies',
+  'series',
+  'animation',
+] as const;
+export type WatchlistCategory = (typeof watchlistCategories)[number];
+
+export const watchlistSorts = [
+  'added_desc',
+  'added_asc',
+  'title_asc',
+  'title_desc',
+] as const;
+export type WatchlistSort = (typeof watchlistSorts)[number];

@@ -4,6 +4,7 @@ import useClickOutside from '@app/hooks/useClickOutside';
 import { Permission, useUser } from '@app/hooks/useUser';
 import { Transition } from '@headlessui/react';
 import {
+  BookmarkIcon,
   ClockIcon,
   CogIcon,
   EllipsisHorizontalIcon,
@@ -15,6 +16,7 @@ import {
   UsersIcon,
 } from '@heroicons/react/24/outline';
 import {
+  BookmarkIcon as FilledBookmarkIcon,
   ClockIcon as FilledClockIcon,
   CogIcon as FilledCogIcon,
   ExclamationTriangleIcon as FilledExclamationTriangleIcon,
@@ -93,6 +95,14 @@ const MobileMenu = ({
       activeRegExp: /^\/discover\/tv$/,
     },
     {
+      href: '/discover/watchlist',
+      content: intl.formatMessage(menuMessages.watchlist),
+      svgIcon: <BookmarkIcon className="h-6 w-6" />,
+      svgIconSelected: <FilledBookmarkIcon className="h-6 w-6" />,
+      activeRegExp: /^\/discover\/watchlist$/,
+      dataTestId: 'mobile-menu-watchlist',
+    },
+    {
       href: '/requests',
       content: intl.formatMessage(menuMessages.requests),
       svgIcon: <ClockIcon className="h-6 w-6" />,
@@ -150,6 +160,9 @@ const MobileMenu = ({
       hasPermission(link.requiredPermission, {
         type: link.permissionType ?? 'and',
       })
+  );
+  const primaryLinks = filteredLinks.filter((link) =>
+    ['/', '/discover/movies', '/discover/tv', '/requests'].includes(link.href)
   );
 
   useEffect(() => {
@@ -227,48 +240,43 @@ const MobileMenu = ({
       </Transition>
       <div className="padding-bottom-safe border-t border-gray-600 bg-gray-800/90 backdrop-blur">
         <div className="flex h-full items-center justify-between px-6 py-4 text-gray-100">
-          {filteredLinks
-            .slice(0, filteredLinks.length === 5 ? 5 : 4)
-            .map((link) => {
-              const isActive =
-                router.pathname.match(link.activeRegExp) && !isOpen;
-              return (
-                <Link
-                  key={`mobile-menu-link-${link.href}`}
-                  href={link.href}
-                  className={`relative flex flex-col items-center space-y-1 ${
-                    isActive ? 'text-indigo-500' : ''
-                  }`}
-                >
-                  {cloneElement(
-                    isActive ? link.svgIconSelected : link.svgIcon,
-                    {
-                      className: 'h-6 w-6',
-                    }
+          {primaryLinks.map((link) => {
+            const isActive =
+              router.pathname.match(link.activeRegExp) && !isOpen;
+            return (
+              <Link
+                key={`mobile-menu-link-${link.href}`}
+                href={link.href}
+                className={`relative flex flex-col items-center space-y-1 ${
+                  isActive ? 'text-indigo-500' : ''
+                }`}
+              >
+                {cloneElement(isActive ? link.svgIconSelected : link.svgIcon, {
+                  className: 'h-6 w-6',
+                })}
+                {link.href === '/requests' &&
+                  pendingRequestsCount > 0 &&
+                  hasPermission(Permission.MANAGE_REQUESTS) && (
+                    <div className="absolute bottom-3 left-3">
+                      <Badge
+                        className={`bg-gradient-to-br ${
+                          router.pathname.match(link.activeRegExp)
+                            ? 'border-indigo-600 from-indigo-700 to-purple-700'
+                            : 'border-indigo-500 from-indigo-600 to-purple-600'
+                        } flex ${
+                          pendingRequestsCount > 99 ? 'w-6' : 'w-4'
+                        } h-4 items-center justify-center !px-[5px] !py-[7px] text-[8px]`}
+                      >
+                        {pendingRequestsCount > 99
+                          ? '99+'
+                          : pendingRequestsCount}
+                      </Badge>
+                    </div>
                   )}
-                  {link.href === '/requests' &&
-                    pendingRequestsCount > 0 &&
-                    hasPermission(Permission.MANAGE_REQUESTS) && (
-                      <div className="absolute bottom-3 left-3">
-                        <Badge
-                          className={`bg-gradient-to-br ${
-                            router.pathname.match(link.activeRegExp)
-                              ? 'border-indigo-600 from-indigo-700 to-purple-700'
-                              : 'border-indigo-500 from-indigo-600 to-purple-600'
-                          } flex ${
-                            pendingRequestsCount > 99 ? 'w-6' : 'w-4'
-                          } h-4 items-center justify-center !px-[5px] !py-[7px] text-[8px]`}
-                        >
-                          {pendingRequestsCount > 99
-                            ? '99+'
-                            : pendingRequestsCount}
-                        </Badge>
-                      </div>
-                    )}
-                </Link>
-              );
-            })}
-          {filteredLinks.length > 4 && filteredLinks.length !== 5 && (
+              </Link>
+            );
+          })}
+          {filteredLinks.length > primaryLinks.length && (
             <button
               className={`flex flex-col items-center space-y-1 ${
                 isOpen ? 'text-indigo-500' : ''
