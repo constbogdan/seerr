@@ -211,11 +211,42 @@ def publication_plan(
         previous_number = 0
         previous_version_tag = ""
 
-    classified = change_classification.classify_range(root, baseline, source)
+    image_already_published = bool(previous_sha and previous_sha == source)
+    if image_already_published:
+        if previous_number == 1:
+            comparison_baseline = epoch
+        else:
+            prior_version_tag = f"custom-v1.0.{previous_number - 1}"
+            comparison_baseline = git(
+                root, "rev-parse", f"refs/tags/{prior_version_tag}^{{commit}}"
+            )
+        if not _is_ancestor(root, comparison_baseline, source):
+            raise ValueError(
+                "Previous downstream release tag is not an ancestor of the published image"
+            )
+        classified = {
+            "releaseRequired": True,
+            "releaseRelevance": "published-product-recovery",
+            "validationRisk": "high",
+            "paths": [],
+            "baselineSha": comparison_baseline,
+            "currentSha": source,
+        }
+    else:
+        comparison_baseline = baseline
+        classified = change_classification.classify_range(root, baseline, source)
     required = bool(classified["releaseRequired"])
-    number = previous_number + 1 if required else previous_number
+    number = (
+        previous_number
+        if image_already_published
+        else previous_number + 1 if required else previous_number
+    )
     version_tag = f"custom-v1.0.{number}" if required else previous_version_tag
-    provenance = authenticated_upstream_provenance(root, baseline, source) if required else {}
+    provenance = (
+        authenticated_upstream_provenance(root, comparison_baseline, source)
+        if required
+        else {}
+    )
     return {
         **classified,
         **provenance,
@@ -227,6 +258,8 @@ def publication_plan(
         "sourceDateEpoch": int(git(root, "show", "-s", "--format=%ct", "HEAD")),
         "previousSha": baseline,
         "previousVersionTag": previous_version_tag,
+        "comparisonBaselineSha": comparison_baseline,
+        "imageAlreadyPublished": image_already_published,
         "dirty": dirty,
         "publication": publication,
         "epoch": epoch,
@@ -285,6 +318,12 @@ def write_github_outputs(path, identity):
         "source_date_epoch": identity["sourceDateEpoch"],
         "previous_sha": identity["previousSha"],
         "previous_version_tag": identity.get("previousVersionTag", ""),
+        "comparison_baseline_sha": identity.get(
+            "comparisonBaselineSha", identity["previousSha"]
+        ),
+        "image_already_published": str(
+            identity.get("imageAlreadyPublished", False)
+        ).lower(),
         "epoch": identity["epoch"],
         "release_required": str(identity.get("releaseRequired", True)).lower(),
         "release_relevance": identity.get("releaseRelevance", "product-relevant"),

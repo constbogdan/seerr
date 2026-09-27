@@ -80,7 +80,9 @@ The downstream-owned `.github/workflows/downstream-image.yml` publishes:
 - `ghcr.io/constbogdan/seerr:custom` as the rolling update tag;
 - `linux/amd64` using the inherited Seerr `Dockerfile`;
 - source, revision, version, and build-time OCI metadata;
-- the published digest and run link in the workflow summary.
+- the published digest and run link in the workflow summary;
+- an immutable Git tag and non-Draft GitHub Release only after all published
+  image identities have been authenticated.
 
 The immutable digest is deployment authority; tags are discovery and convenience
 identities. `N` advances once for each required image, using the previous rolling
@@ -98,10 +100,39 @@ sections separate. Upstream provenance is reported only when a managed candidate
 in the unpublished Git topology has exact upstream/downstream trailers matching
 its two parents; ordinary, malformed, or ambiguous merges produce no claim.
 
-No GitHub Release is created. A Release would require broader `contents: write`
-authority and Dockhand does not automatically associate one with the mutable
-`custom` tag. Reconsider a separate release step only after live Dockhand
-verification proves that a versioned Release link materially improves review.
+For every required product publication, the image workflow follows one authority
+chain:
+
+```text
+protected product merge
+  -> existing release eligibility and version allocation
+  -> GHCR publication
+  -> version/full-SHA/rolling-tag OCI verification
+  -> immutable Git tag
+  -> GitHub Release
+```
+
+The Git tag and OCI revision both identify the exact source SHA used for the
+image; neither is inferred from a later `downstream-main` head. An absent release
+tag is created at that SHA, a matching tag is reused, and a conflicting tag
+fails closed without being moved or force-updated. GitHub Releases follow the
+same policy: an absent Release is created, an exact existing Release is accepted
+idempotently, and conflicting source, title, notes, state, or assets are refused.
+
+Release notes are deterministic. They include only product-relevant first-parent
+changes since the previous downstream product release, plus the exact container,
+source SHA, and published digest. PR/commit titles are handled as untrusted text
+and passed to GitHub through structured JSON rather than executable shell input.
+The Release is a human-facing history record; GHCR and its immutable digest remain
+the deployment artifact and authority. No duplicate build artifact is attached.
+
+If image publication succeeds but tag/Release creation fails, a rerun recognizes
+the rolling image's exact current source/version, reuses that version, reverifies
+all three image tags, and completes the missing GitHub state without rebuilding or
+allocating `custom-v1.0.(N+1)`. Documentation, validation, and tooling-only merges
+remain `release_required=false`, so they create no image, tag, or Release. Only the
+post-verification release job receives `contents: write`; it uses the ephemeral
+workflow token and does not bypass branch protection.
 
 ## Local and NAS verification
 
