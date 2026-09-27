@@ -86,14 +86,16 @@ jobs:
       - name: Record skipped publication
         if: steps.plan.outputs.release_required != 'true'
         shell: bash
+        env:
+          PREVIOUS_SHA: ${{ steps.plan.outputs.previous_sha }}
+          RELEASE_RELEVANCE: ${{ steps.plan.outputs.release_relevance }}
         run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## No downstream image required
-
-          The exact unpublished range `${{ steps.plan.outputs.previous_sha }}...${GITHUB_SHA}`
-          is `${{ steps.plan.outputs.release_relevance }}`. The rolling `custom` tag and
-          downstream version remain unchanged.
-          EOF
+          {
+            echo '## No downstream image required'
+            echo
+            printf 'The exact unpublished range `%s...%s`\n' "$PREVIOUS_SHA" "$GITHUB_SHA"
+            printf 'is `%s`. The rolling `custom` tag and downstream version remain unchanged.\n' "$RELEASE_RELEVANCE"
+          } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
     name: Publish downstream image
@@ -196,40 +198,43 @@ jobs:
       - name: Publish summary
         if: needs.eligibility.outputs.image_already_published != 'true'
         shell: bash
+        env:
+          VERSION_TAG: ${{ needs.eligibility.outputs.version_tag }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+          PREVIOUS_SHA: ${{ needs.eligibility.outputs.previous_sha }}
+          UPSTREAM_SUMMARY: ${{ needs.eligibility.outputs.upstream_authenticated == 'true' && format('Authenticated managed candidate `{0}` integrated upstream `{1}...{2}`.', needs.eligibility.outputs.managed_candidate_sha, needs.eligibility.outputs.upstream_base_sha, needs.eligibility.outputs.upstream_tip_sha) || 'No authenticated managed upstream candidate exists in this publication range.' }}
         run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## Seerr downstream ${{ needs.eligibility.outputs.version_tag }} published
-
-          - **Image:** `${IMAGE_NAME}`
-          - **Version:** `${{ needs.eligibility.outputs.version_tag }}`
-          - **Source SHA:** `${GITHUB_SHA}`
-          - **Immutable tag:** `${IMAGE_NAME}:${GITHUB_SHA}`
-          - **Version tag:** `${IMAGE_NAME}:${{ needs.eligibility.outputs.version_tag }}`
-          - **Rolling tag:** `${IMAGE_NAME}:custom`
-          - **Digest:** `${{ steps.publish.outputs.digest }}`
-          - **Build:** [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
-
-          ### Upstream synchronization
-
-          ${{ needs.eligibility.outputs.upstream_authenticated == 'true' && format('Authenticated managed candidate `{0}` integrated upstream `{1}...{2}`.', needs.eligibility.outputs.managed_candidate_sha, needs.eligibility.outputs.upstream_base_sha, needs.eligibility.outputs.upstream_tip_sha) || 'No authenticated managed upstream candidate exists in this publication range.' }}
-
-          ### Downstream changes
-
-          [Compare the previous published image with this version](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/compare/${{ needs.eligibility.outputs.previous_sha }}...${GITHUB_SHA}).
-          EOF
+          {
+            printf '## Seerr downstream %s published\n\n' "$VERSION_TAG"
+            printf -- '- **Image:** `%s`\n' "$IMAGE_NAME"
+            printf -- '- **Version:** `%s`\n' "$VERSION_TAG"
+            printf -- '- **Source SHA:** `%s`\n' "$GITHUB_SHA"
+            printf -- '- **Immutable tag:** `%s:%s`\n' "$IMAGE_NAME" "$GITHUB_SHA"
+            printf -- '- **Version tag:** `%s:%s`\n' "$IMAGE_NAME" "$VERSION_TAG"
+            printf -- '- **Rolling tag:** `%s:custom`\n' "$IMAGE_NAME"
+            printf -- '- **Digest:** `%s`\n' "$IMAGE_DIGEST"
+            printf -- '- **Build:** [%s attempt %s](%s/%s/actions/runs/%s)\n\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+            echo '### Upstream synchronization'
+            echo
+            printf '%s\n\n' "$UPSTREAM_SUMMARY"
+            echo '### Downstream changes'
+            echo
+            printf '[Compare the previous published image with this version](%s/%s/compare/%s...%s).\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$PREVIOUS_SHA" "$GITHUB_SHA"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Record image publication recovery
         if: needs.eligibility.outputs.image_already_published == 'true'
         shell: bash
+        env:
+          VERSION_TAG: ${{ needs.eligibility.outputs.version_tag }}
         run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## Recovering downstream release publication
-
-          `${IMAGE_NAME}:${{ needs.eligibility.outputs.version_tag }}` already records
-          the exact protected source `${GITHUB_SHA}`. The image will not be rebuilt;
-          its immutable registry identity will be reverified before the missing Git
-          tag or GitHub Release is reconciled.
-          EOF
+          {
+            echo '## Recovering downstream release publication'
+            echo
+            printf '`%s:%s` already records the exact protected source `%s`.\n' "$IMAGE_NAME" "$VERSION_TAG" "$GITHUB_SHA"
+            echo 'The image will not be rebuilt; its immutable registry identity will be reverified'
+            echo 'before the missing Git tag or GitHub Release is reconciled.'
+          } >> "$GITHUB_STEP_SUMMARY"
 
   release:
     name: Publish downstream release
@@ -325,12 +330,11 @@ jobs:
           RELEASE_URL: ${{ steps.github_release.outputs.url }}
           RELEASE_OUTCOME: ${{ steps.github_release.outputs.outcome }}
         run: |
-          cat >> "$GITHUB_STEP_SUMMARY" <<EOF
-          ## Seerr downstream ${VERSION_TAG} release ${RELEASE_OUTCOME}
-
-          - **GitHub Release:** [${VERSION_TAG}](${RELEASE_URL})
-          - **Image:** `${IMAGE_NAME}:${VERSION_TAG}`
-          - **Source SHA:** `${SOURCE_SHA}`
-          - **Digest:** `${IMAGE_DIGEST}`
-          - **Build:** [${GITHUB_RUN_ID} attempt ${GITHUB_RUN_ATTEMPT}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
-          EOF
+          {
+            printf '## Seerr downstream %s release %s\n\n' "$VERSION_TAG" "$RELEASE_OUTCOME"
+            printf -- '- **GitHub Release:** [%s](%s)\n' "$VERSION_TAG" "$RELEASE_URL"
+            printf -- '- **Image:** `%s:%s`\n' "$IMAGE_NAME" "$VERSION_TAG"
+            printf -- '- **Source SHA:** `%s`\n' "$SOURCE_SHA"
+            printf -- '- **Digest:** `%s`\n' "$IMAGE_DIGEST"
+            printf -- '- **Build:** [%s attempt %s](%s/%s/actions/runs/%s)\n' "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID"
+          } >> "$GITHUB_STEP_SUMMARY"
