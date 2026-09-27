@@ -1,5 +1,6 @@
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
+import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
 import PageTitle from '@app/components/Common/PageTitle';
 import {
   FRESH_API_PATH,
@@ -68,19 +69,17 @@ const Fresh = () => {
       <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
         <Header>{intl.formatMessage(messages.fresh)}</Header>
         <div className="mt-2 flex flex-wrap gap-2">
-          <select
+          <MediaTypeFilter
             value={mediaType}
-            onChange={(event) =>
-              set(
-                'mediaType',
-                event.target.value === 'all' ? undefined : event.target.value
-              )
+            options={[
+              { value: 'all', label: intl.formatMessage(messages.all) },
+              { value: 'movie', label: intl.formatMessage(messages.movies) },
+              { value: 'tv', label: intl.formatMessage(messages.series) },
+            ]}
+            onChange={(value) =>
+              set('mediaType', value === 'all' ? undefined : value)
             }
-          >
-            <option value="all">{intl.formatMessage(messages.all)}</option>
-            <option value="movie">{intl.formatMessage(messages.movies)}</option>
-            <option value="tv">{intl.formatMessage(messages.series)}</option>
-          </select>
+          />
           <div className="flex">
             <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
               <BarsArrowDownIcon className="h-6 w-6" />

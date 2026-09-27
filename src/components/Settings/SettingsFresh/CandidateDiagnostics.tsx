@@ -1,5 +1,6 @@
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
+import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
 import {
   ArrowTopRightOnSquareIcon,
   ChevronRightIcon,
@@ -341,27 +342,16 @@ const CandidateDiagnostics = () => {
             onChange={(event) => change(() => setSearch(event.target.value))}
           />
         </div>
-        <Select
-          className="react-select-container"
-          classNamePrefix="react-select"
-          value={{
-            value: mediaType,
-            label:
-              mediaType === 'all'
-                ? 'All media'
-                : mediaType === 'movie'
-                  ? 'Movies'
-                  : 'Series',
-          }}
+        <MediaTypeFilter
+          id="freshCandidateMediaType"
+          value={mediaType}
           options={[
-            { value: 'all', label: 'All media' },
+            { value: 'all', label: 'All' },
             { value: 'movie', label: 'Movies' },
             { value: 'tv', label: 'Series' },
           ]}
-          onChange={(option) =>
-            change(() =>
-              setMediaType((option?.value ?? 'all') as typeof mediaType)
-            )
+          onChange={(value) =>
+            change(() => setMediaType(value as typeof mediaType))
           }
         />
         <Select

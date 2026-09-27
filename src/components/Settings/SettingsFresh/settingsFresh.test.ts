@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+// The node:test harness cannot resolve @app imports from its server tsconfig.
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import MediaTypeFilter from '../../Common/MediaTypeFilter';
 import {
   CONFIGURED_TOKEN_MASK,
   composeAutobrrBaseUrl,
@@ -181,6 +186,11 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /\/api\/v1\/settings\/fresh\/candidates\?/);
     assert.match(source, /page: String\(page\)/);
     assert.match(source, /mediaType/);
+    assert.match(source, /MediaTypeFilter/);
+    assert.match(source, /id="freshCandidateMediaType"/);
+    assert.match(source, /value: 'all'/);
+    assert.match(source, /value: 'movie'/);
+    assert.match(source, /value: 'tv'/);
     assert.match(source, /status/);
     assert.match(source, /sort/);
     assert.match(source, /Needs Attention/);
@@ -208,6 +218,28 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /candidate\.actionable/);
     assert.match(source, /\/resolve`/);
     assert.doesNotMatch(source, /latestAttempt/);
+  });
+
+  it('renders the native media icon segment adjacent to the media-type select', () => {
+    const markup = renderToStaticMarkup(
+      createElement(MediaTypeFilter, {
+        id: 'freshCandidateMediaType',
+        value: 'all',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'movie', label: 'Movies' },
+          { value: 'tv', label: 'Series' },
+        ],
+        onChange: () => undefined,
+      })
+    );
+    const control = markup.match(
+      /<div class="flex"><span class="[^"]*shrink-0[^"]*">[\s\S]*?<\/span><select id="freshCandidateMediaType"[^>]*>/
+    );
+
+    assert.ok(control, 'expected an adjacent icon segment and media select');
+    assert.match(control[0], /<svg/);
+    assert.match(control[0], /class="[^"]*rounded-r-only[^"]*"/);
   });
 
   it('uses native destructive confirmation for a completed Fresh rebuild', () => {
