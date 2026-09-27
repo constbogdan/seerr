@@ -274,6 +274,13 @@ class VersionTests(unittest.TestCase):
         )[0]
         self.assertNotIn("continue-on-error", publish_step)
 
+    def test_workflow_summaries_do_not_execute_markdown_backticks(self):
+        workflow = (Path(__file__).parent.parent / ".github/workflows/downstream-image.yml").read_text()
+        self.assertNotIn('cat >> "$GITHUB_STEP_SUMMARY" <<EOF', workflow)
+        self.assertEqual(4, workflow.count('} >> "$GITHUB_STEP_SUMMARY"'))
+        self.assertIn("printf 'The exact unpublished range `%s...%s`", workflow)
+        self.assertIn("printf -- '- **Image:** `%s`", workflow)
+
     def test_current_manifest_annotations_restore_previous_identity(self):
         source = "1" * 40
         identity = version.previous_image_identity({
