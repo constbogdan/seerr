@@ -224,6 +224,17 @@ class VersionTests(unittest.TestCase):
         self.assertIn("org.opencontainers.image.revision", workflow)
         self.assertNotIn("paths:", workflow)
 
+    def test_workflow_tolerates_only_cache_export_failures(self):
+        workflow = (Path(__file__).parent.parent / ".github/workflows/downstream-image.yml").read_text()
+        self.assertIn(
+            "cache-to: type=gha,mode=max,scope=downstream-linux-amd64,ignore-error=true",
+            workflow,
+        )
+        publish_step = workflow.split("- name: Build and publish image", 1)[1].split(
+            "- name: Publish summary", 1
+        )[0]
+        self.assertNotIn("continue-on-error", publish_step)
+
     def test_current_manifest_annotations_restore_previous_identity(self):
         source = "1" * 40
         identity = version.previous_image_identity({

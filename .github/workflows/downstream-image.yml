@@ -180,7 +180,7 @@ jobs:
           annotations: ${{ steps.metadata.outputs.annotations }}
           tags: ${{ steps.metadata.outputs.tags }}
           cache-from: type=gha,scope=downstream-linux-amd64
-          cache-to: type=gha,mode=max,scope=downstream-linux-amd64
+          cache-to: type=gha,mode=max,scope=downstream-linux-amd64,ignore-error=true
           provenance: false
 
       - name: Publish summary
