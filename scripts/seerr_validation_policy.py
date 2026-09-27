@@ -170,7 +170,14 @@ def focused_tests(paths, root):
     candidates = set(paths)
     for path in sorted(candidates):
         if path.startswith(TEST_ROOTS) and path.endswith(TEST_SUFFIXES):
-            selected.add(authenticated_test_filter(root, path, candidates))
+            try:
+                selected.add(authenticated_test_filter(root, path, candidates))
+            except ValueError as error:
+                if "does not exist" not in str(error):
+                    raise
+                # A reviewed deletion cannot be executed as focused evidence.
+                # Keep it as an unmapped input so policy escalates to Full.
+                fallback_paths.append(path)
             continue
         if not path.startswith(TEST_ROOTS) or not path.endswith((".ts", ".tsx")):
             continue

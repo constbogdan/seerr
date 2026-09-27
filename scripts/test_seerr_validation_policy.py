@@ -185,6 +185,15 @@ class ValidationPolicyTest(unittest.TestCase):
         self.assertEqual(policy.FOCUSED, plan["validationMode"])
         self.assertEqual([path], plan["focusedTests"])
 
+    def test_reviewed_deleted_test_escalates_to_full(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            missing = "server/lib/removedFeature.test.ts"
+            plan = policy.plan_paths([missing], root=root)
+            self.assertEqual(policy.FULL, plan["validationMode"])
+            self.assertEqual([], plan["focusedTests"])
+            self.assertEqual([missing], plan["focusedFallbackPaths"])
+
     def test_explicit_filter_remains_supported(self):
         test_path = "server/utils/userAgent.test.ts"
         plan = policy.plan_paths(["docs/PREPARE_PR.md"], [test_path])
