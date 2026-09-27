@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+// The node:test harness cannot resolve @app imports from its server tsconfig.
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import MediaTypeFilter from '../../Common/MediaTypeFilter';
 
 describe('Fresh native pagination integration', () => {
   const slider = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
@@ -23,8 +28,32 @@ describe('Fresh native pagination integration', () => {
   it('uses useDiscover for the complete paginated Fresh page', () => {
     assert.match(page, /useDiscover</);
     assert.match(page, /FRESH_API_PATH, \{ mediaType, sort \}/);
+    assert.match(page, /MediaTypeFilter/);
+    assert.match(page, /value: 'all'/);
+    assert.match(page, /value: 'movie'/);
+    assert.match(page, /value: 'tv'/);
     assert.match(page, /onScrollBottom=\{discover\.fetchMore\}/);
     assert.doesNotMatch(page, /applyFreshView|useSWR/);
+  });
+
+  it('renders the shared media icon segment used by the main Fresh page', () => {
+    const markup = renderToStaticMarkup(
+      createElement(MediaTypeFilter, {
+        value: 'all',
+        options: [
+          { value: 'all', label: 'All' },
+          { value: 'movie', label: 'Movies' },
+          { value: 'tv', label: 'Series' },
+        ],
+        onChange: () => undefined,
+      })
+    );
+    const control = markup.match(
+      /<div class="flex"><span class="[^"]*shrink-0[^"]*">[\s\S]*?<\/span><select class="[^"]*rounded-r-only[^"]*"[^>]*>/
+    );
+
+    assert.ok(control, 'expected an adjacent icon segment and media select');
+    assert.match(control[0], /<svg/);
   });
 
   it('leaves MediaSlider on its standard page query behavior', () => {

@@ -1,5 +1,6 @@
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
+import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
 import PageTitle from '@app/components/Common/PageTitle';
 import useDiscover from '@app/hooks/useDiscover';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
@@ -161,26 +162,33 @@ const DiscoverWatchlist = () => {
           </Header>
           {dedicatedPage && firstResultData?.supportsPresentation && (
             <div className="mt-2 flex flex-wrap gap-2">
-              <select
-                aria-label={intl.formatMessage(messages.discoverwatchlist)}
+              <MediaTypeFilter
                 value={preferences.category}
-                onChange={(event) =>
+                ariaLabel={intl.formatMessage(messages.discoverwatchlist)}
+                options={[
+                  {
+                    value: 'all',
+                    label: intl.formatMessage(messages.all),
+                  },
+                  {
+                    value: 'movies',
+                    label: intl.formatMessage(messages.movies),
+                  },
+                  {
+                    value: 'series',
+                    label: intl.formatMessage(messages.series),
+                  },
+                  {
+                    value: 'animation',
+                    label: intl.formatMessage(messages.animation),
+                  },
+                ]}
+                onChange={(value) =>
                   updatePreference({
-                    category: event.target.value as WatchlistCategory,
+                    category: value as WatchlistCategory,
                   })
                 }
-              >
-                <option value="all">{intl.formatMessage(messages.all)}</option>
-                <option value="movies">
-                  {intl.formatMessage(messages.movies)}
-                </option>
-                <option value="series">
-                  {intl.formatMessage(messages.series)}
-                </option>
-                <option value="animation">
-                  {intl.formatMessage(messages.animation)}
-                </option>
-              </select>
+              />
               <div className="flex">
                 <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
                   <BarsArrowDownIcon className="h-6 w-6" />

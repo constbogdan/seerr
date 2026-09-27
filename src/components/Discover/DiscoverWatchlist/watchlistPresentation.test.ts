@@ -72,7 +72,8 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(page, /firstResultData\?\.supportsPresentation/);
     assert.match(page, /firstResultData\.hasUnclassifiedItems/);
     assert.match(page, /getWatchlistPreferenceKey\(currentUser\.id\)/);
-    assert.match(page, /value="animation"/);
+    assert.match(page, /MediaTypeFilter/);
+    assert.match(page, /value: 'animation'/);
     assert.match(page, /value="added_desc"/);
     assert.match(page, /value="added_asc"/);
     assert.match(page, /value="title_asc"/);
