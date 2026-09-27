@@ -1,5 +1,9 @@
 import { Blocklist } from '@server/entity/Blocklist';
 import DiscoverSlider from '@server/entity/DiscoverSlider';
+import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshMedia from '@server/entity/FreshMedia';
+import FreshObservation from '@server/entity/FreshObservation';
+import { FreshSyncState } from '@server/entity/FreshSyncState';
 import Issue from '@server/entity/Issue';
 import IssueComment from '@server/entity/IssueComment';
 import Media from '@server/entity/Media';
@@ -27,6 +31,10 @@ const DB_SSL_PREFIX = 'DB_SSL_';
 const entities = [
   Blocklist,
   DiscoverSlider,
+  FreshCandidate,
+  FreshMedia,
+  FreshObservation,
+  FreshSyncState,
   Issue,
   IssueComment,
   Media,

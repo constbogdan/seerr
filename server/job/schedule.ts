@@ -2,6 +2,7 @@ import { MediaServerType } from '@server/constants/server';
 import blocklistedTagsProcessor from '@server/job/blocklistedTagsProcessor';
 import availabilitySync from '@server/lib/availabilitySync';
 import downloadTracker from '@server/lib/downloadtracker';
+import freshService from '@server/lib/fresh/service';
 import ImageProxy from '@server/lib/imageproxy';
 import refreshToken from '@server/lib/refreshToken';
 import {
@@ -263,5 +264,36 @@ export const startJobs = (): void => {
     cancelFn: () => blocklistedTagsProcessor.cancel(),
   });
 
+  scheduledJobs.push({
+    id: 'fresh-sync',
+    name: 'Fresh Sync',
+    type: 'process',
+    interval: 'minutes',
+    cronSchedule: jobs['fresh-sync'].schedule,
+    job: schedule.scheduleJob(jobs['fresh-sync'].schedule, () => {
+      logger.info('Starting scheduled job: Fresh Sync', { label: 'Jobs' });
+      void freshService.sync();
+    }),
+    running: () => freshService.running(),
+    cancelFn: () => freshService.cancel(),
+  });
+
+  scheduledJobs.push({
+    id: 'fresh-reconciliation',
+    name: 'Fresh Reconciliation',
+    type: 'process',
+    interval: 'days',
+    cronSchedule: jobs['fresh-reconciliation'].schedule,
+    job: schedule.scheduleJob(jobs['fresh-reconciliation'].schedule, () => {
+      logger.info('Starting scheduled job: Fresh Reconciliation', {
+        label: 'Jobs',
+      });
+      void freshService.reconcile();
+    }),
+    running: () => freshService.running(),
+    cancelFn: () => freshService.cancel(),
+  });
+
   logger.info('Scheduled jobs loaded', { label: 'Jobs' });
+  freshService.startCatchUp();
 };

@@ -1,7 +1,14 @@
 import type { AutobrrFilterOption } from '@server/api/autobrr';
-import type { FreshMediaResult } from '@server/lib/fresh';
+import { FreshContinuityStatus } from '@server/constants/fresh';
+import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshMedia from '@server/entity/FreshMedia';
+import FreshObservation from '@server/entity/FreshObservation';
+import { FreshSyncState } from '@server/entity/FreshSyncState';
+import Media from '@server/entity/Media';
+import { MediaRequest } from '@server/entity/MediaRequest';
+import { Watchlist } from '@server/entity/Watchlist';
+import type { FreshDiagnosticsSnapshot } from '@server/lib/fresh';
 import {
-  FRESH_CACHE_TTL_MS,
   FreshService,
   normalizeFreshSettings,
   publicFreshSettings,
@@ -16,76 +23,85 @@ const settings: FreshSettings = {
   baseUrl: 'https://autobrr.test/api/',
   apiToken: 'fixture-token',
   filterId: 7,
-  candidateWindowDays: 90,
-  maximumItems: 20,
-  movieCriteria: { genre: '18' },
-  tvCriteria: { network: '42' },
+  cachedFilterName: 'Fresh Movies & TV',
+  mediaEligibilityDays: 90,
+  freshVisibilityDays: 7,
+  includeGenreIds: [],
+  excludeGenreIds: [],
+  includeOriginalLanguages: [],
+  excludeOriginalLanguages: [],
+  includeContentRatings: [],
+  excludeContentRatings: [],
+  minimumTmdbScore: 0,
+  minimumTmdbVotes: 0,
 };
 
-const result = {
-  mediaType: 'movie',
-  tmdbId: 1,
-  firstSeenAt: '2026-09-01T00:00:00.000Z',
-  result: { id: 1 },
-} as FreshMediaResult;
+const diagnostics: FreshDiagnosticsSnapshot = {
+  operation: 'sync',
+  outcome: 'succeeded',
+  startedAt: '2026-09-26T10:00:00.000Z',
+  completedAt: '2026-09-26T10:00:01.000Z',
+  stages: {
+    configuration: 'succeeded',
+    filter_authentication: 'succeeded',
+    source_history: 'succeeded',
+    observation_persistence: 'succeeded',
+    checkpoint_commit: 'succeeded',
+    resolution_search: 'succeeded',
+    projection_update: 'succeeded',
+    retention: 'succeeded',
+    reconciliation: 'not_started',
+  },
+  counts: {
+    newAutobrrReleases: 0,
+    persistedObservations: 0,
+    replayedObservations: 0,
+    uniqueCandidates: 0,
+    alreadyResolved: 0,
+    resolutionAttempts: 0,
+    resolved: 0,
+    noMatch: 0,
+    ambiguous: 0,
+    transientFailures: 0,
+    outsideFreshWindow: 0,
+    newFreshMedia: 0,
+    existingFreshMediaUpdated: 0,
+    expiredFreshMedia: 0,
+    currentFreshMedia: 0,
+  },
+  decisions: [],
+  checkpoint: {},
+};
 
 function fixture() {
-  let now = Date.parse('2026-09-25T10:00:00.000Z');
-  let lastRefresh: string | undefined;
-  let pending: Promise<void> | undefined;
-  let resolvePending: (() => void) | undefined;
-  const forceValues: boolean[] = [];
-  let stateCreations = 0;
-  let filterCalls = 0;
+  let runs = 0;
+  let resolveRun: (() => void) | undefined;
   const filters: AutobrrFilterOption[] = [
     { id: 7, name: 'Fresh Movies & TV', enabled: true },
   ];
-  const deps: FreshServiceDependencies = {
-    now: () => now,
-    createState: () => {
-      stateCreations++;
-      return {
-        refresh: (force = false) => {
-          forceValues.push(force);
-          if (!pending) {
-            pending = new Promise<void>((resolve) => {
-              resolvePending = () => {
-                lastRefresh = new Date(now).toISOString();
-                pending = undefined;
-                resolve();
-              };
-            });
-          }
-          return pending;
-        },
-        orderedResults: () => [result],
-        get status() {
-          return {
-            status: lastRefresh ? ('ready' as const) : ('idle' as const),
-            refreshing: !!pending,
-            lastRefresh,
-            lastAttempt: undefined,
-            itemCount: lastRefresh ? 1 : 0,
-            error: undefined,
-          };
-        },
-      };
-    },
-    createAutobrr: () => ({
-      filters: async () => {
-        filterCalls++;
-        return filters;
+  const deps = {
+    engine: {
+      run: async () => {
+        runs++;
+        await new Promise<void>((resolve) => (resolveRun = resolve));
+        return { diagnostics };
       },
-    }),
-  };
+      cancel: () => undefined,
+    },
+    database: {
+      getRepository: () => ({
+        findOneBy: async () => undefined,
+        countBy: async () => 0,
+      }),
+    } as unknown as FreshServiceDependencies['database'],
+    createAutobrr: () => ({ filters: async () => filters }),
+    now: () => new Date('2026-09-26T10:00:00.000Z'),
+  } satisfies FreshServiceDependencies;
   return {
     deps,
-    forceValues,
     filters,
-    advance: (milliseconds: number) => (now += milliseconds),
-    complete: () => resolvePending?.(),
-    stateCreations: () => stateCreations,
-    filterCalls: () => filterCalls,
+    runs: () => runs,
+    complete: () => resolveRun?.(),
   };
 }
 
@@ -97,10 +113,17 @@ describe('Fresh application service', () => {
       enabled: true,
       baseUrl: 'https://autobrr.test',
       filterId: 7,
-      candidateWindowDays: 90,
-      maximumItems: 20,
-      movieCriteria: { genre: '18' },
-      tvCriteria: { network: '42' },
+      cachedFilterName: 'Fresh Movies & TV',
+      mediaEligibilityDays: 90,
+      freshVisibilityDays: 7,
+      includeGenreIds: [],
+      excludeGenreIds: [],
+      includeOriginalLanguages: [],
+      excludeOriginalLanguages: [],
+      includeContentRatings: [],
+      excludeContentRatings: [],
+      minimumTmdbScore: 0,
+      minimumTmdbVotes: 0,
       apiTokenConfigured: true,
     });
     assert.doesNotMatch(
@@ -111,14 +134,11 @@ describe('Fresh application service', () => {
       normalizeFreshSettings({ ...settings, apiToken: 'bad\nheader' })
     );
     assert.throws(() =>
-      normalizeFreshSettings({
-        ...settings,
-        movieCriteria: { primaryReleaseDateGte: '2026-01-01' } as never,
-      })
+      normalizeFreshSettings({ ...settings, mediaEligibilityDays: 366 })
     );
   });
 
-  it('does no source work when disabled', async () => {
+  it('does no synchronization work when disabled', async () => {
     const f = fixture();
     const service = new FreshService(f.deps);
     service.configure({
@@ -128,53 +148,22 @@ describe('Fresh application service', () => {
       apiToken: '',
       filterId: 0,
     });
-    assert.deepEqual(await service.results(), []);
-    assert.deepEqual(await service.refresh(), []);
-    assert.equal(f.stateCreations(), 0);
-    assert.equal(f.filterCalls(), 0);
-    assert.equal(service.status().status, 'disabled');
+    await service.sync();
+    assert.equal(f.runs(), 0);
+    assert.equal((await service.status()).status, 'disabled');
   });
 
-  it('refreshes lazily, serves TTL hits, and refreshes stale data in the background', async () => {
+  it('joins concurrent manual and scheduled synchronization', async () => {
     const f = fixture();
     const service = new FreshService(f.deps);
     service.configure(settings);
-    assert.equal(f.forceValues.length, 0);
-
-    const initial = service.results();
-    assert.deepEqual(f.forceValues, [false]);
-    f.complete();
-    assert.equal((await initial)[0].tmdbId, 1);
-
-    await service.results();
-    assert.deepEqual(f.forceValues, [false]);
-    f.advance(FRESH_CACHE_TTL_MS);
-    assert.equal((await service.results())[0].tmdbId, 1);
-    assert.deepEqual(f.forceValues, [false, false]);
-    assert.equal(service.status().status, 'stale');
-    assert.equal(service.status().refreshing, true);
-    f.complete();
-  });
-
-  it('shares concurrent initial work and manual refresh forces and awaits it', async () => {
-    const f = fixture();
-    const service = new FreshService(f.deps);
-    service.configure(settings);
-    const first = service.results();
-    const second = service.results();
-    assert.equal(f.forceValues.length, 2);
+    const first = service.sync();
+    const second = service.sync();
+    assert.equal(f.runs(), 1);
+    assert.equal(service.running(), true);
     f.complete();
     await Promise.all([first, second]);
-
-    const manual = service.refresh();
-    assert.equal(f.forceValues.at(-1), true);
-    let complete = false;
-    void manual.then(() => (complete = true));
-    await Promise.resolve();
-    assert.equal(complete, false);
-    f.complete();
-    await manual;
-    assert.equal(complete, true);
+    assert.equal(service.running(), false);
   });
 
   it('returns sanitized browser-safe filter options', async () => {
@@ -182,6 +171,254 @@ describe('Fresh application service', () => {
     const service = new FreshService(f.deps);
     service.configure(settings);
     assert.deepEqual(await service.filters(), f.filters);
-    assert.equal(f.filterCalls(), 1);
+  });
+
+  it('reevaluates persisted membership without running source synchronization', async () => {
+    const f = fixture();
+    let reevaluations = 0;
+    const service = new FreshService({
+      ...f.deps,
+      engine: {
+        ...f.deps.engine,
+        reevaluate: async () => {
+          reevaluations++;
+          return 12;
+        },
+      },
+    });
+    service.configure(settings);
+    await service.reevaluate();
+    assert.equal(reevaluations, 1);
+    assert.equal(f.runs(), 0);
+  });
+
+  it('rebuilds only Fresh-owned state before using the normal initial sync path', async () => {
+    const cleared: unknown[] = [];
+    let synchronizedSettings: FreshSettings | undefined;
+    let reconcile: boolean | undefined;
+    const service = new FreshService({
+      ...fixture().deps,
+      database: {
+        getRepository: (entity: unknown) =>
+          entity === FreshSyncState
+            ? { findOneBy: async () => undefined }
+            : { countBy: async () => 0 },
+        transaction: async (work: (manager: unknown) => Promise<void>) =>
+          work({
+            getRepository: (entity: unknown) => ({
+              createQueryBuilder: () => ({
+                delete: () => ({
+                  execute: async () => {
+                    cleared.push(entity);
+                  },
+                }),
+              }),
+            }),
+          }),
+      } as unknown as FreshServiceDependencies['database'],
+      engine: {
+        cancel: () => undefined,
+        run: async (receivedSettings, receivedReconcile) => {
+          synchronizedSettings = receivedSettings;
+          reconcile = receivedReconcile;
+          assert.deepEqual(cleared, [
+            FreshObservation,
+            FreshCandidate,
+            FreshMedia,
+            FreshSyncState,
+          ]);
+          return { diagnostics };
+        },
+      },
+    });
+    service.configure(settings);
+
+    await service.rebuild();
+
+    assert.deepEqual(cleared, [
+      FreshObservation,
+      FreshCandidate,
+      FreshMedia,
+      FreshSyncState,
+    ]);
+    assert.equal((cleared as unknown[]).includes(Media), false);
+    assert.equal((cleared as unknown[]).includes(Watchlist), false);
+    assert.equal((cleared as unknown[]).includes(MediaRequest), false);
+    assert.deepEqual(synchronizedSettings, {
+      ...settings,
+      baseUrl: 'https://autobrr.test',
+    });
+    assert.equal(synchronizedSettings?.apiToken, 'fixture-token');
+    assert.equal(synchronizedSettings?.filterId, 7);
+    assert.equal(reconcile, false);
+  });
+
+  it('coalesces concurrent rebuild and sync requests at the Fresh coordinator', async () => {
+    let transactions = 0;
+    let runs = 0;
+    let finish:
+      | ((value: { diagnostics: FreshDiagnosticsSnapshot }) => void)
+      | undefined;
+    const service = new FreshService({
+      ...fixture().deps,
+      database: {
+        getRepository: (entity: unknown) =>
+          entity === FreshSyncState
+            ? { findOneBy: async () => undefined }
+            : { countBy: async () => 0 },
+        transaction: async (work: (manager: unknown) => Promise<void>) => {
+          transactions++;
+          return work({
+            getRepository: () => ({
+              createQueryBuilder: () => ({
+                delete: () => ({ execute: async () => undefined }),
+              }),
+            }),
+          });
+        },
+      } as unknown as FreshServiceDependencies['database'],
+      engine: {
+        cancel: () => undefined,
+        run: async () => {
+          runs++;
+          return new Promise((resolve) => {
+            finish = resolve;
+          });
+        },
+      },
+    });
+    service.configure(settings);
+
+    const rebuild = service.rebuild();
+    await new Promise((resolve) => setImmediate(resolve));
+    const joinedSync = service.sync();
+    const joinedRebuild = service.rebuild();
+    assert.equal(transactions, 1);
+    assert.equal(runs, 1);
+    assert.equal((await service.status()).status, 'rebuilding');
+    finish?.({ diagnostics });
+    await Promise.all([rebuild, joinedSync, joinedRebuild]);
+    assert.equal(transactions, 1);
+    assert.equal(runs, 1);
+  });
+
+  it('fails rebuild truthfully when the normal initial sync fails', async () => {
+    const failedDiagnostics: FreshDiagnosticsSnapshot = {
+      ...diagnostics,
+      outcome: 'failed',
+      failingStage: 'source_history',
+      failureReason: 'source_unavailable',
+    };
+    const service = new FreshService({
+      ...fixture().deps,
+      database: {
+        getRepository: (entity: unknown) =>
+          entity === FreshSyncState
+            ? { findOneBy: async () => undefined }
+            : { countBy: async () => 0 },
+        transaction: async (work: (manager: unknown) => Promise<void>) =>
+          work({
+            getRepository: () => ({
+              createQueryBuilder: () => ({
+                delete: () => ({ execute: async () => undefined }),
+              }),
+            }),
+          }),
+      } as unknown as FreshServiceDependencies['database'],
+      engine: {
+        cancel: () => undefined,
+        run: async () => ({ diagnostics: failedDiagnostics }),
+      },
+    });
+    service.configure(settings);
+
+    await assert.rejects(() => service.rebuild(), /fresh_rebuild_failed/);
+    const result = await service.diagnostics();
+    assert.equal(result.latestAttempt?.outcome, 'failed');
+    assert.equal(result.latestAttempt?.failureReason, 'source_unavailable');
+    assert.doesNotMatch(JSON.stringify(result), /fixture-token/);
+  });
+
+  it('does not start initial sync when the transactional reset fails', async () => {
+    let runs = 0;
+    const service = new FreshService({
+      ...fixture().deps,
+      database: {
+        getRepository: (entity: unknown) =>
+          entity === FreshSyncState
+            ? { findOneBy: async () => undefined }
+            : { countBy: async () => 0 },
+        transaction: async () => {
+          throw new Error('database reset failed with private provider detail');
+        },
+      } as unknown as FreshServiceDependencies['database'],
+      engine: {
+        cancel: () => undefined,
+        run: async () => {
+          runs++;
+          return { diagnostics };
+        },
+      },
+    });
+    service.configure(settings);
+
+    await assert.rejects(() => service.rebuild(), /database reset failed/);
+    assert.equal(runs, 0);
+    assert.equal(service.running(), false);
+  });
+
+  it('returns defensive copies of bounded in-memory diagnostics', async () => {
+    const f = fixture();
+    const service = new FreshService(f.deps);
+    service.configure(settings);
+    const run = service.sync();
+    f.complete();
+    await run;
+    const first = await service.diagnostics();
+    first.latestAttempt?.decisions.push({
+      title: 'mutated client copy',
+      mediaType: 'movie',
+      normalizedTitle: 'mutated',
+      stage: 'configuration',
+      outcome: 'rejected',
+      reason: 'client_mutation',
+    });
+    const second = await service.diagnostics();
+    assert.equal(second.latestAttempt?.decisions.length, 0);
+  });
+
+  it('returns persistent pipeline state when no in-memory attempt exists', async () => {
+    const f = fixture();
+    const persistentState = new FreshSyncState({
+      checkpointReleaseId: '4084',
+      continuityStatus: FreshContinuityStatus.CURRENT,
+      lastSuccessfulSyncAt: new Date('2026-09-26T10:00:00.000Z'),
+      lastSuccessfulReconciliationAt: new Date('2026-09-26T03:15:00.000Z'),
+    });
+    const service = new FreshService({
+      ...f.deps,
+      database: {
+        getRepository: (entity: unknown) =>
+          entity === FreshSyncState
+            ? { findOneBy: async () => persistentState }
+            : entity === FreshMedia
+              ? { countBy: async () => 194 }
+              : {},
+      } as unknown as FreshServiceDependencies['database'],
+    });
+    service.configure(settings);
+
+    const result = await service.diagnostics();
+    assert.equal(result.latestAttempt, null);
+    assert.deepEqual(result.currentProjection, {
+      status: 'ready',
+      refreshing: false,
+      lastRefresh: '2026-09-26T10:00:00.000Z',
+      lastReconciliation: '2026-09-26T03:15:00.000Z',
+      checkpoint: '4084',
+      itemCount: 194,
+      continuityStatus: FreshContinuityStatus.CURRENT,
+      error: undefined,
+    });
   });
 });

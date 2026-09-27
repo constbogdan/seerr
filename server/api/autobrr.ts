@@ -1,6 +1,7 @@
 import ExternalAPI from '@server/api/externalapi';
+import type { FreshMediaType } from '@server/constants/fresh';
 
-export type FreshMediaType = 'movie' | 'tv';
+export type { FreshMediaType } from '@server/constants/fresh';
 export interface AutobrrFilter {
   id: number;
 }
@@ -12,11 +13,23 @@ export interface AutobrrFilterOption extends AutobrrFilter {
 
 // Deliberately no URLs, raw names, action diagnostics, or transport objects.
 export interface FreshRelease {
+  releaseId: string;
   mediaType: FreshMediaType;
   title: string;
   year: number;
   observedAt: number;
+  availabilityType: FreshAvailabilityType;
 }
+
+export type FreshAvailabilityType = 'digital' | 'physical' | 'unknown';
+
+const availabilityType = (value: unknown): FreshAvailabilityType => {
+  if (typeof value !== 'string') return 'unknown';
+  const normalized = value.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (normalized === 'WEBDL') return 'digital';
+  if (normalized === 'BLURAY' || normalized === 'UHDBLURAY') return 'physical';
+  return 'unknown';
+};
 
 const record = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -30,6 +43,9 @@ export const safeTitle = (value: unknown): value is string =>
 
 export interface FreshReleasePage {
   releases: FreshRelease[];
+  releaseIds: string[];
+  newestReleaseId?: string;
+  oldestReleaseId?: string;
   nextCursor: number;
   filterObserved: boolean;
   counts: {
@@ -83,6 +99,7 @@ export function parseReleasePage(
   }
   let previous = cursor || Number.MAX_SAFE_INTEGER;
   const releases: FreshRelease[] = [];
+  const releaseIds: string[] = [];
   let filterObserved = false;
   const counts = {
     inspected: 0,
@@ -91,7 +108,8 @@ export function parseReleasePage(
     eligibleTv: 0,
   };
   for (const row of data.data) {
-    // IDs are needed only to verify traversal; never retain the upstream row.
+    // IDs establish the persistent source checkpoint. Store only the validated
+    // decimal identifier, never the raw upstream row.
     if (
       !record(row) ||
       !Number.isSafeInteger(row.id) ||
@@ -101,6 +119,7 @@ export function parseReleasePage(
       throw new Error('Invalid autobrr release ordering');
     }
     counts.inspected++;
+    releaseIds.push(String(row.id));
     previous = Number(row.id);
     const selected =
       Array.isArray(row.action_status) &&
@@ -135,7 +154,14 @@ export function parseReleasePage(
         ? Number(row.year)
         : 0;
     if (mediaType === 'movie' && !year) continue;
-    releases.push({ mediaType, title: row.title.trim(), year, observedAt });
+    releases.push({
+      releaseId: String(row.id),
+      mediaType,
+      title: row.title.trim(),
+      year,
+      observedAt,
+      availabilityType: availabilityType(row.source),
+    });
     if (mediaType === 'movie') counts.eligibleMovies++;
     else counts.eligibleTv++;
   }
@@ -143,7 +169,15 @@ export function parseReleasePage(
   if (nextCursor !== (data.data.length ? previous : 0)) {
     throw new Error('Invalid autobrr release cursor');
   }
-  return { releases, nextCursor, filterObserved, counts };
+  return {
+    releases,
+    releaseIds,
+    newestReleaseId: releaseIds[0],
+    oldestReleaseId: releaseIds.at(-1),
+    nextCursor,
+    filterObserved,
+    counts,
+  };
 }
 
 export default class Autobrr extends ExternalAPI {
