@@ -53,16 +53,15 @@ maintenance branch.
 
 ### Fresh
 
-The prototype is in the separate `seerr-discovery` workspace on `feature/fresh` at
-`a3dbbd94a654dcf9f4273d7ba754f66c6d71d799`. It contains tracked and untracked
-work and was observed 18 commits behind the audited `upstream/develop`. Preserve
-that workspace. Transplant it only after the downstream foundation exists, using
-reviewable commits and focused tests.
+Fresh is merged into `downstream-main` and maintained in this repository. The
+authoritative released implementation is `custom-v1.0.7`; the earlier isolated
+prototype checkout has been retired. Continue Fresh maintenance from the primary
+Seerr checkout and preserve its persistent incremental architecture.
 
 ### Local harness
 
-The `seerr-harness` workspace is a clean, separate repository for running
-queue or Fresh checkouts against isolated local configuration and real services.
+The `seerr-harness` workspace is a separate repository for running queue or the
+primary Seerr checkout against isolated local configuration and real services.
 Keep it outside the Seerr source repository and outside hosted CI.
 
 ## Immediate next actions
@@ -77,7 +76,6 @@ Keep it outside the Seerr source repository and outside hosted CI.
 
 ## Deferred
 
-- Fresh transplant.
 - Direct/on-demand Download Sync refresh.
 - Automated upstream detection and sync-PR creation.
 - Stable downstream image channel.

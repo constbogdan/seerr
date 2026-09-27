@@ -29,7 +29,7 @@ downstream home.
 - `origin/downstream-main`: `f74657aa501e1fc28bf314673a0cedde167d47e6`.
 - Current infrastructure branch: `chore/downstream-image-publication`.
 - Upstream queue-sync contribution: [seerr-team/seerr#3535](https://github.com/seerr-team/seerr/pull/3535), open against `develop`.
-- Fresh prototype: uncommitted work in the separate `seerr-discovery` workspace on `feature/fresh`; it has not been transplanted downstream.
+- Fresh discovery: merged into `downstream-main` and released as `custom-v1.0.7`.
 - Local integration harness: the separate `seerr-harness` workspace.
 
 ## Phase 1 — safe downstream foundation
@@ -48,7 +48,7 @@ downstream home.
 
 ## Phase 2 — downstream features and repeatable upkeep
 
-- [ ] Transplant Fresh onto a current `downstream-main` topic branch with focused tests.
+- [x] Deliver persistent Fresh discovery with focused tests and downstream release validation.
 - [ ] Evaluate direct/on-demand Download Sync refresh as a separate downstream feature.
 - [ ] Add automated upstream change detection.
 - [ ] Add reusable upstream sync-PR generation if manual sync becomes costly.
