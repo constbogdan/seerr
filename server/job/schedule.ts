@@ -14,6 +14,7 @@ import { radarrScanner } from '@server/lib/scanners/radarr';
 import { sonarrScanner } from '@server/lib/scanners/sonarr';
 import type { JobId } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import watchlistMetadataBackfill from '@server/lib/watchlistMetadata';
 import watchlistSync from '@server/lib/watchlistsync';
 import logger from '@server/logger';
 import schedule from 'node-schedule';
@@ -262,6 +263,25 @@ export const startJobs = (): void => {
     }),
     running: () => blocklistedTagsProcessor.status().running,
     cancelFn: () => blocklistedTagsProcessor.cancel(),
+  });
+
+  scheduledJobs.push({
+    id: 'watchlist-metadata-backfill',
+    name: 'Watchlist Metadata Backfill',
+    type: 'process',
+    interval: 'minutes',
+    cronSchedule: jobs['watchlist-metadata-backfill'].schedule,
+    job: schedule.scheduleJob(
+      jobs['watchlist-metadata-backfill'].schedule,
+      () => {
+        logger.info('Starting scheduled job: Watchlist Metadata Backfill', {
+          label: 'Jobs',
+        });
+        void watchlistMetadataBackfill.run();
+      }
+    ),
+    running: () => watchlistMetadataBackfill.running(),
+    cancelFn: () => watchlistMetadataBackfill.cancel(),
   });
 
   scheduledJobs.push({

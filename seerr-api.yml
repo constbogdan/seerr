@@ -73,10 +73,19 @@ components:
           example: 1
         ratingKey:
           type: string
-        type:
+        mediaType:
           type: string
+          enum:
+            - movie
+            - tv
         title:
           type: string
+        genreIds:
+          type: array
+          nullable: true
+          readOnly: true
+          items:
+            type: number
         media:
           $ref: '#/components/schemas/MediaInfo'
         createdAt:
@@ -5494,7 +5503,7 @@ paths:
             schema:
               $ref: '#/components/schemas/Watchlist'
       responses:
-        '200':
+        '201':
           description: Watchlist data returned
           content:
             application/json:
@@ -5527,9 +5536,10 @@ paths:
           description: Succesfully removed watchlist item
   /user/{userId}/watchlist:
     get:
-      summary: Get the Plex watchlist for a specific user
+      summary: Get the canonical watchlist for a specific user
       description: |
-        Retrieves a user's Plex Watchlist in a JSON object.
+        Retrieves the user's Plex Watchlist when Plex identity is configured,
+        otherwise their local Seerr Watchlist.
       tags:
         - users
         - watchlist
@@ -5559,6 +5569,13 @@ paths:
                     type: number
                   totalResults:
                     type: number
+                  source:
+                    type: string
+                    enum:
+                      - local
+                      - plex
+                  supportsPresentation:
+                    type: boolean
                   results:
                     type: array
                     items:
@@ -5569,8 +5586,11 @@ paths:
                           example: 1
                         ratingKey:
                           type: string
-                        type:
+                        mediaType:
                           type: string
+                          enum:
+                            - movie
+                            - tv
                         title:
                           type: string
   /user/{userId}/settings/main:
@@ -7137,7 +7157,7 @@ paths:
                       example: Genre Name
   /discover/watchlist:
     get:
-      summary: Get the Plex watchlist.
+      summary: Get the current user's canonical watchlist.
       tags:
         - search
       parameters:
@@ -7147,6 +7167,28 @@ paths:
             type: number
             example: 1
             default: 1
+        - in: query
+          name: category
+          description: Local Watchlist category. Ignored for Plex Watchlists.
+          schema:
+            type: string
+            default: all
+            enum:
+              - all
+              - movies
+              - series
+              - animation
+        - in: query
+          name: sort
+          description: Local Watchlist ordering. Ignored for Plex Watchlists.
+          schema:
+            type: string
+            default: added_desc
+            enum:
+              - added_desc
+              - added_asc
+              - title_asc
+              - title_desc
       responses:
         '200':
           description: Watchlist data returned
@@ -7161,6 +7203,13 @@ paths:
                     type: number
                   totalResults:
                     type: number
+                  source:
+                    type: string
+                    enum:
+                      - local
+                      - plex
+                  supportsPresentation:
+                    type: boolean
                   results:
                     type: array
                     items:
@@ -7171,8 +7220,11 @@ paths:
                           example: 1
                         ratingKey:
                           type: string
-                        type:
+                        mediaType:
                           type: string
+                          enum:
+                            - movie
+                            - tv
                         title:
                           type: string
   /request:

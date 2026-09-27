@@ -411,6 +411,7 @@ export type JobId =
   | 'image-cache-cleanup'
   | 'availability-sync'
   | 'process-blocklisted-tags'
+  | 'watchlist-metadata-backfill'
   | 'fresh-sync'
   | 'fresh-reconciliation';
 
@@ -654,6 +655,9 @@ class Settings {
         },
         'process-blocklisted-tags': {
           schedule: '0 30 1 */7 * *',
+        },
+        'watchlist-metadata-backfill': {
+          schedule: '0 */5 * * * *',
         },
         'fresh-sync': {
           schedule: '0 */5 * * * *',
