@@ -5,6 +5,10 @@ import DownloadBlock from '@app/components/DownloadBlock';
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
+import {
+  calculateDownloadProgress,
+  getAcquisitionPhaseMessage,
+} from '@app/utils/acquisitionPhase';
 import defineMessages from '@app/utils/defineMessages';
 import { MediaStatus } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
@@ -53,9 +57,12 @@ const StatusBadge = ({
   let mediaLink: string | undefined;
   let mediaLinkDescription: string | undefined;
 
-  const calculateDownloadProgress = (media: DownloadingItem) => {
-    return Math.round(((media?.size - media?.sizeLeft) / media?.size) * 100);
-  };
+  const acquisitionPhaseMessage = getAcquisitionPhaseMessage(
+    downloadItem[0]?.acquisitionPhase
+  );
+  const inProgressLabel = acquisitionPhaseMessage
+    ? intl.formatMessage(acquisitionPhaseMessage)
+    : intl.formatMessage(globalMessages.processing);
 
   if (
     mediaType &&
@@ -148,7 +155,9 @@ const StatusBadge = ({
       } transition-all duration-200 ease-in-out`}
       style={{
         width: `${
-          downloadItem ? calculateDownloadProgress(downloadItem[0]) : 0
+          downloadItem[0]
+            ? (calculateDownloadProgress(downloadItem[0]) ?? 0)
+            : 0
         }%`,
       }}
     />
@@ -184,7 +193,7 @@ const StatusBadge = ({
                   is4k ? messages.status4k : messages.status,
                   {
                     status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
+                      ? inProgressLabel
                       : intl.formatMessage(globalMessages.available),
                   }
                 )}
@@ -249,7 +258,7 @@ const StatusBadge = ({
                   is4k ? messages.status4k : messages.status,
                   {
                     status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
+                      ? inProgressLabel
                       : intl.formatMessage(globalMessages.partiallyavailable),
                   }
                 )}
@@ -314,7 +323,7 @@ const StatusBadge = ({
                   is4k ? messages.status4k : messages.status,
                   {
                     status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
+                      ? inProgressLabel
                       : intl.formatMessage(globalMessages.requested),
                   }
                 )}
@@ -403,7 +412,7 @@ const StatusBadge = ({
                   is4k ? messages.status4k : messages.status,
                   {
                     status: inProgress
-                      ? intl.formatMessage(globalMessages.processing)
+                      ? inProgressLabel
                       : intl.formatMessage(globalMessages.deleted),
                   }
                 )}

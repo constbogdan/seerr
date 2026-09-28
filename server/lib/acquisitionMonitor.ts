@@ -1,6 +1,8 @@
 import downloadTracker, {
+  type ConfirmedServarrImport,
   type DownloadTrackerUpdateOutcome,
 } from '@server/lib/downloadtracker';
+import jellyfinAvailabilityReconciler from '@server/lib/jellyfinAvailabilityReconciler';
 import logger from '@server/logger';
 
 export enum AcquisitionMonitorState {
@@ -31,6 +33,9 @@ interface AcquisitionMonitorOptions {
   now?: () => number;
   setTimer?: (callback: () => void, delay: number) => NodeJS.Timeout;
   clearTimer?: (timer: NodeJS.Timeout) => void;
+  onConfirmedImports?: (
+    imports: ConfirmedServarrImport[]
+  ) => Promise<void> | void;
 }
 
 export interface AcquisitionMonitorStatus {
@@ -74,6 +79,7 @@ export class AcquisitionMonitor {
     delay: number
   ) => NodeJS.Timeout;
   private readonly clearTimer: (timer: NodeJS.Timeout) => void;
+  private readonly onConfirmedImports?: AcquisitionMonitorOptions['onConfirmedImports'];
 
   constructor(
     private readonly tracker: AcquisitionTracker,
@@ -82,6 +88,7 @@ export class AcquisitionMonitor {
     this.now = options.now ?? Date.now;
     this.setTimer = options.setTimer ?? setTimeout;
     this.clearTimer = options.clearTimer ?? clearTimeout;
+    this.onConfirmedImports = options.onConfirmedImports;
   }
 
   public wake(reason: AcquisitionWakeReason): void {
@@ -192,6 +199,20 @@ export class AcquisitionMonitor {
       }
 
       this.applyOutcome(outcome, completedAt, wakeSequenceAtStart);
+      if (outcome.confirmedImports?.length && this.onConfirmedImports) {
+        void Promise.resolve(
+          this.onConfirmedImports(outcome.confirmedImports)
+        ).catch((error) => {
+          logger.error(
+            'Unable to request Jellyfin availability reconciliation',
+            {
+              label: 'Acquisition Monitor',
+              imports: outcome.confirmedImports?.length,
+              errorType: error instanceof Error ? error.name : 'UnknownError',
+            }
+          );
+        });
+      }
       const delay = this.nextDelay(outcome);
       if (delay !== undefined) {
         this.schedule(delay);
@@ -356,6 +377,9 @@ export class AcquisitionMonitor {
   }
 }
 
-const acquisitionMonitor = new AcquisitionMonitor(downloadTracker);
+const acquisitionMonitor = new AcquisitionMonitor(downloadTracker, {
+  onConfirmedImports: (imports) =>
+    jellyfinAvailabilityReconciler.request(imports),
+});
 
 export default acquisitionMonitor;

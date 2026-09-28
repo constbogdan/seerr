@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 
+import { MediaType } from '@server/constants/media';
 import {
   ACQUISITION_ACTIVE_INTERVAL_MS,
   ACQUISITION_FAILURE_BACKOFF_BASE_MS,
@@ -9,7 +10,10 @@ import {
   AcquisitionMonitor,
   AcquisitionMonitorState,
 } from '@server/lib/acquisitionMonitor';
-import type { DownloadTrackerUpdateOutcome } from '@server/lib/downloadtracker';
+import type {
+  ConfirmedServarrImport,
+  DownloadTrackerUpdateOutcome,
+} from '@server/lib/downloadtracker';
 
 const successfulOutcome = (
   overrides: Partial<DownloadTrackerUpdateOutcome> = {}
@@ -98,6 +102,45 @@ const buildMonitor = (
 };
 
 describe('AcquisitionMonitor', () => {
+  it('hands confirmed imports off without waiting for Jellyfin reconciliation', async () => {
+    const clock = new FakeClock();
+    let finishReconciliation: (() => void) | undefined;
+    const confirmedImports = [
+      {
+        mediaType: MediaType.MOVIE,
+        externalId: 123,
+        downloadId: 'synthetic-download',
+        serverAliases: [{ id: 1, is4k: false }],
+        episodes: [],
+      },
+    ];
+    const tracker = {
+      updateDownloads: mock.fn(async () =>
+        successfulOutcome({ confirmedImports })
+      ),
+      resetDownloadTracker: mock.fn(async () => undefined),
+    };
+    const handoff = mock.fn(
+      (imports: ConfirmedServarrImport[]) =>
+        new Promise<void>((resolve) => {
+          void imports;
+          finishReconciliation = resolve;
+        })
+    );
+    const monitor = new AcquisitionMonitor(tracker, {
+      now: clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      onConfirmedImports: handoff,
+    });
+
+    await monitor.refresh('background');
+    assert.equal(handoff.mock.callCount(), 1);
+    assert.deepEqual(handoff.mock.calls[0].arguments[0], confirmedImports);
+    assert.equal(monitor.getStatus().refreshing, false);
+    finishReconciliation?.();
+  });
+
   it('keeps an authoritative empty background refresh idle', async () => {
     const { clock, monitor } = buildMonitor();
 

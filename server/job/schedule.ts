@@ -4,6 +4,7 @@ import acquisitionMonitor from '@server/lib/acquisitionMonitor';
 import availabilitySync from '@server/lib/availabilitySync';
 import freshService from '@server/lib/fresh/service';
 import ImageProxy from '@server/lib/imageproxy';
+import jellyfinRecentScanCoordinator from '@server/lib/jellyfinRecentScanCoordinator';
 import refreshToken from '@server/lib/refreshToken';
 import {
   jellyfinFullScanner,
@@ -128,10 +129,10 @@ export const startJobs = (): void => {
           logger.info('Starting scheduled job: Jellyfin Recently Added Scan', {
             label: 'Jobs',
           });
-          jellyfinRecentScanner.run();
+          void jellyfinRecentScanCoordinator.run();
         }
       ),
-      running: () => jellyfinRecentScanner.status().running,
+      running: () => jellyfinRecentScanCoordinator.isRunning(),
       cancelFn: () => jellyfinRecentScanner.cancel(),
     });
 

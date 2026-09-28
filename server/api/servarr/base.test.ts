@@ -333,6 +333,60 @@ describe('ServarrBase queue pagination', () => {
   }
 });
 
+describe('ServarrBase bounded history', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('retrieves one bounded newest-first history page', async () => {
+    const radarr = buildRadarr();
+    const records = [
+      {
+        id: 1,
+        eventType: 'downloadFolderImported',
+        date: '2026-01-01T00:00:00Z',
+        downloadId: 'download-1',
+        movieId: 10,
+      },
+    ];
+    const get = mock.method(getAxios(radarr), 'get', async () => ({
+      data: { page: 1, pageSize: 100, totalRecords: 1, records },
+    }));
+
+    assert.deepEqual(await radarr.getRecentHistory(), records);
+    assert.deepEqual(get.mock.calls[0].arguments, [
+      '/history',
+      {
+        params: {
+          page: 1,
+          pageSize: 100,
+          sortKey: 'date',
+          sortDirection: 'descending',
+        },
+      },
+    ]);
+  });
+
+  it('fails closed for an oversized history response', async () => {
+    const sonarr = buildSonarr();
+    mock.method(getAxios(sonarr), 'get', async () => ({
+      data: {
+        page: 1,
+        pageSize: 101,
+        totalRecords: 101,
+        records: Array.from({ length: 101 }, (_, id) => ({
+          id,
+          eventType: 'grabbed',
+          date: '2026-01-01T00:00:00Z',
+        })),
+      },
+    }));
+
+    await assert.rejects(
+      () => sonarr.getRecentHistory(),
+      /malformed or unbounded/
+    );
+  });
+});
+
 describe('ServarrBase command completion', () => {
   afterEach(() => mock.restoreAll());
 
