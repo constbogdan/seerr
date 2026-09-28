@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
 import { MediaStatus, MediaType } from '@server/constants/media';
-import type { ConfirmedServarrImport } from '@server/lib/downloadtracker';
+import type {
+  ConfirmedServarrImport,
+  FinalizingAcquisitionTarget,
+} from '@server/lib/downloadtracker';
 import {
   JELLYFIN_RECONCILIATION_DEBOUNCE_MS,
   JELLYFIN_RECONCILIATION_RETRY_DELAYS_MS,
@@ -24,11 +27,73 @@ const buildTarget = (mediaId: number): JellyfinAvailabilityTarget => ({
   mediaType: MediaType.MOVIE,
   is4k: false,
   seasonNumbers: [],
+  presentationTargets: [
+    {
+      mediaType: MediaType.MOVIE,
+      externalId: mediaId,
+      downloadId: `download-${mediaId}`,
+      serverId: 1,
+      is4k: false,
+      episodes: [],
+    },
+  ],
 });
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
 describe('JellyfinAvailabilityReconciler', () => {
+  it('publishes stable Finalizing state across retries and clears it when available', async () => {
+    const timers: { callback: () => void; delay: number }[] = [];
+    const started: {
+      target: FinalizingAcquisitionTarget;
+      phaseStartedAt: string;
+    }[] = [];
+    const cleared: FinalizingAcquisitionTarget[] = [];
+    let now = Date.parse('2026-01-01T00:00:00Z');
+    let scans = 0;
+    const reconciler = new JellyfinAvailabilityReconciler({
+      scanner: {
+        run: async () => {
+          scans += 1;
+          return { status: 'completed', durationMs: 10 };
+        },
+      },
+      resolveImports: async () => [buildTarget(1)],
+      isAvailable: async () => scans === 3,
+      setTimer: (callback, delay) => {
+        timers.push({ callback, delay });
+        return {} as NodeJS.Timeout;
+      },
+      now: () => now,
+      presentation: {
+        startFinalizing: (target, phaseStartedAt) =>
+          started.push({ target, phaseStartedAt }),
+        clearFinalizing: (target) => cleared.push(target),
+      },
+    });
+
+    await reconciler.request([buildImport(1)]);
+    const originalPhaseStartedAt = started[0].phaseStartedAt;
+    now += 60_000;
+    await reconciler.request([buildImport(1)]);
+    assert.equal(started[1].phaseStartedAt, originalPhaseStartedAt);
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      timers.shift()?.callback();
+      await flush();
+      await flush();
+      assert.equal(cleared.length, 0);
+      assert.equal(reconciler.getStatus().pendingTargets, 1);
+    }
+
+    timers.shift()?.callback();
+    await flush();
+    await flush();
+    assert.equal(scans, 3);
+    assert.equal(cleared.length, 1);
+    assert.equal(reconciler.getStatus().pendingTargets, 0);
+  });
+
   it('coalesces nearby imports into one recent scan', async () => {
     const timers: { callback: () => void; delay: number }[] = [];
     let scans = 0;
@@ -103,6 +168,7 @@ describe('JellyfinAvailabilityReconciler', () => {
 
   it('uses bounded completion-relative retries and then falls back to cron', async () => {
     const timers: { callback: () => void; delay: number }[] = [];
+    const cleared: FinalizingAcquisitionTarget[] = [];
     let scans = 0;
     const reconciler = new JellyfinAvailabilityReconciler({
       scanner: {
@@ -116,6 +182,10 @@ describe('JellyfinAvailabilityReconciler', () => {
       setTimer: (callback, delay) => {
         timers.push({ callback, delay });
         return {} as NodeJS.Timeout;
+      },
+      presentation: {
+        startFinalizing: () => undefined,
+        clearFinalizing: (target) => cleared.push(target),
       },
     });
 
@@ -136,6 +206,7 @@ describe('JellyfinAvailabilityReconciler', () => {
     ]);
     assert.equal(scans, 5);
     assert.equal(reconciler.getStatus().pendingTargets, 0);
+    assert.equal(cleared.length, 1);
   });
 
   it('treats scanner failure as unknown and retries without losing the target', async () => {
@@ -229,7 +300,7 @@ describe('hasExpectedAvailability', () => {
   it('accepts partial TV season availability for the imported quality', () => {
     assert.equal(
       hasExpectedAvailability(media as never, {
-        mediaId: 1,
+        ...buildTarget(1),
         mediaType: MediaType.TV,
         is4k: false,
         seasonNumbers: [1],
@@ -238,7 +309,7 @@ describe('hasExpectedAvailability', () => {
     );
     assert.equal(
       hasExpectedAvailability(media as never, {
-        mediaId: 1,
+        ...buildTarget(1),
         mediaType: MediaType.TV,
         is4k: false,
         seasonNumbers: [2],

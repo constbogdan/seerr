@@ -9,6 +9,7 @@ import {
   DownloadTracker,
   type DownloadingItem,
   type DownloadTrackerUpdateOutcome,
+  type FinalizingAcquisitionTarget,
 } from '@server/lib/downloadtracker';
 import {
   getSettings,
@@ -110,6 +111,18 @@ const buildTrackedDownloads = (count: number): DownloadingItem[] =>
     title: `Movie ${index + 1}`,
     downloadId: `download-${index + 1}`,
   }));
+
+const buildFinalizingTarget = (
+  overrides: Partial<FinalizingAcquisitionTarget> = {}
+): FinalizingAcquisitionTarget => ({
+  mediaType: MediaType.MOVIE,
+  externalId: 100,
+  downloadId: 'download-1',
+  serverId: 1,
+  is4k: false,
+  episodes: [],
+  ...overrides,
+});
 
 describe('DownloadTracker updateDownloads', () => {
   const settings = getSettings();
@@ -511,6 +524,76 @@ describe('DownloadTracker updateDownloads', () => {
     );
     assert.equal(processing.timeLeft, '');
     assert.equal(processing.estimatedCompletionTime, undefined);
+  });
+
+  it('exposes a stable Finalizing phase after import until reconciliation clears it', () => {
+    const tracker = new DownloadTracker();
+    const target = buildFinalizingTarget();
+    const phaseStartedAt = '2026-01-01T00:05:00.000Z';
+
+    tracker.startFinalizing(target, phaseStartedAt);
+    tracker.startFinalizing(target, phaseStartedAt);
+
+    assert.deepEqual(tracker.getMovieProgress(1, 100), [
+      {
+        mediaType: MediaType.MOVIE,
+        externalId: 100,
+        size: 0,
+        sizeLeft: 0,
+        status: 'completed',
+        trackedDownloadStatus: 'ok',
+        trackedDownloadState: 'imported',
+        trackedStatus: 'ok',
+        acquisitionPhase: AcquisitionPhase.FINALIZING,
+        acquisitionPhaseStartedAt: phaseStartedAt,
+        health: 'ok',
+        timeLeft: '',
+        title: '',
+        downloadId: 'download-1',
+        episode: undefined,
+      },
+    ]);
+
+    tracker.clearFinalizing(target);
+    assert.deepEqual(tracker.getMovieProgress(1, 100), []);
+  });
+
+  it('preserves reconciler-owned Finalizing state across queue resets', async () => {
+    const tracker = new DownloadTracker();
+    const target = buildFinalizingTarget();
+    const phaseStartedAt = '2026-01-01T00:05:00.000Z';
+    tracker.startFinalizing(target, phaseStartedAt);
+
+    await tracker.resetDownloadTracker();
+
+    assert.equal(
+      tracker.getMovieProgress(1, 100)[0].acquisitionPhaseStartedAt,
+      phaseStartedAt
+    );
+    tracker.clearFinalizing(target);
+  });
+
+  it('keeps active Servarr queue state authoritative over Finalizing presentation', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [];
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () =>
+      buildRadarrQueue(1)
+    );
+    const tracker = new DownloadTracker();
+    tracker.startFinalizing(
+      buildFinalizingTarget(),
+      '2026-01-01T00:05:00.000Z'
+    );
+
+    await tracker.updateDownloads();
+
+    assert.equal(
+      tracker.getMovieProgress(1, 100)[0].acquisitionPhase,
+      AcquisitionPhase.DOWNLOADING
+    );
   });
 
   it('resets phase timing for a regrab and for a disappeared generation that reappears', async () => {

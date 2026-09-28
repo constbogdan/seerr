@@ -293,6 +293,58 @@ describe('GET /request acquisition state', () => {
     }
   });
 
+  it('shows Finalizing to the ordinary requester without claiming availability', async () => {
+    const seeded = await seedRequest(MediaRequestStatus.APPROVED);
+    const mediaRepository = getRepository(Media);
+    const media = await mediaRepository.findOneByOrFail({
+      id: seeded.media.id,
+    });
+    media.serviceId = 51;
+    media.externalServiceId = 12345;
+    media.status = MediaStatus.PROCESSING;
+    await mediaRepository.save(media);
+    const phaseStartedAt = '2026-09-28T07:27:01.744Z';
+    const finalizingTarget = {
+      mediaType: MediaType.MOVIE,
+      externalId: 12345,
+      downloadId: 'confirmed-import',
+      serverId: 51,
+      is4k: false,
+      episodes: [],
+    };
+    downloadTracker.startFinalizing(finalizingTarget, phaseStartedAt);
+
+    try {
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
+      const response = await agent.get('/request?take=100');
+      assert.equal(response.status, 200);
+      const result = response.body.results.find(
+        (candidate: { id: number }) => candidate.id === seeded.id
+      );
+      assert.equal(result.media.status, MediaStatus.PROCESSING);
+      assert.equal(
+        result.media.downloadStatus[0].acquisitionPhase,
+        AcquisitionPhase.FINALIZING
+      );
+      assert.equal(
+        result.media.downloadStatus[0].acquisitionPhaseStartedAt,
+        phaseStartedAt
+      );
+
+      media.status = MediaStatus.AVAILABLE;
+      await mediaRepository.save(media);
+      const availableResponse = await agent.get('/request?take=100');
+      const availableResult = availableResponse.body.results.find(
+        (candidate: { id: number }) => candidate.id === seeded.id
+      );
+      assert.equal(availableResult.media.status, MediaStatus.AVAILABLE);
+      assert.deepEqual(availableResult.media.downloadStatus, []);
+    } finally {
+      downloadTracker.clearFinalizing(finalizingTarget);
+      await downloadTracker.resetDownloadTracker();
+    }
+  });
+
   it('does not let canonical acquisition state bypass request visibility', async () => {
     const userRepository = getRepository(User);
     const mediaRepository = getRepository(Media);

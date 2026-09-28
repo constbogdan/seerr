@@ -105,6 +105,7 @@ describe('AcquisitionMonitor', () => {
   it('hands confirmed imports off without waiting for Jellyfin reconciliation', async () => {
     const clock = new FakeClock();
     let finishReconciliation: (() => void) | undefined;
+    let finalizing = false;
     const confirmedImports = [
       {
         mediaType: MediaType.MOVIE,
@@ -124,6 +125,7 @@ describe('AcquisitionMonitor', () => {
       (imports: ConfirmedServarrImport[]) =>
         new Promise<void>((resolve) => {
           void imports;
+          finalizing = true;
           finishReconciliation = resolve;
         })
     );
@@ -138,6 +140,8 @@ describe('AcquisitionMonitor', () => {
     assert.equal(handoff.mock.callCount(), 1);
     assert.deepEqual(handoff.mock.calls[0].arguments[0], confirmedImports);
     assert.equal(monitor.getStatus().refreshing, false);
+    assert.equal(monitor.getStatus().state, AcquisitionMonitorState.IDLE);
+    assert.equal(finalizing, true);
     finishReconciliation?.();
   });
 

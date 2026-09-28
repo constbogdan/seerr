@@ -1,7 +1,10 @@
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
-import type { ConfirmedServarrImport } from '@server/lib/downloadtracker';
+import downloadTracker, {
+  type ConfirmedServarrImport,
+  type FinalizingAcquisitionTarget,
+} from '@server/lib/downloadtracker';
 import jellyfinRecentScanCoordinator from '@server/lib/jellyfinRecentScanCoordinator';
 import type { JellyfinScanOutcome } from '@server/lib/scanners/jellyfin';
 import logger from '@server/logger';
@@ -16,10 +19,20 @@ export interface JellyfinAvailabilityTarget {
   mediaType: MediaType;
   is4k: boolean;
   seasonNumbers: number[];
+  presentationTargets: FinalizingAcquisitionTarget[];
 }
 
 interface PendingTarget extends JellyfinAvailabilityTarget {
   attempts: number;
+  phaseStartedAt: string;
+}
+
+interface FinalizingPresentation {
+  startFinalizing(
+    target: FinalizingAcquisitionTarget,
+    phaseStartedAt: string
+  ): void;
+  clearFinalizing(target: FinalizingAcquisitionTarget): void;
 }
 
 interface ReconcilerOptions {
@@ -29,6 +42,8 @@ interface ReconcilerOptions {
   ) => Promise<JellyfinAvailabilityTarget[]>;
   isAvailable?: (target: JellyfinAvailabilityTarget) => Promise<boolean>;
   setTimer?: (callback: () => void, delay: number) => NodeJS.Timeout;
+  now?: () => number;
+  presentation?: FinalizingPresentation;
 }
 
 const targetKey = (target: JellyfinAvailabilityTarget): string =>
@@ -65,6 +80,16 @@ const resolveImports = async (
         seasonNumbers: [
           ...new Set(imported.episodes.map((episode) => episode.seasonNumber)),
         ],
+        presentationTargets: [
+          {
+            mediaType: imported.mediaType,
+            externalId: imported.externalId,
+            downloadId: imported.downloadId,
+            serverId: alias.id,
+            is4k: alias.is4k,
+            episodes: imported.episodes,
+          },
+        ],
       };
       const key = targetKey(target);
       const existing = targets.get(key);
@@ -75,6 +100,17 @@ const resolveImports = async (
             ...(existing?.seasonNumbers ?? []),
             ...target.seasonNumbers,
           ]),
+        ],
+        presentationTargets: [
+          ...new Map(
+            [
+              ...(existing?.presentationTargets ?? []),
+              ...target.presentationTargets,
+            ].map((presentationTarget) => [
+              `${presentationTarget.serverId}:${presentationTarget.downloadId}`,
+              presentationTarget,
+            ])
+          ).values(),
         ],
       });
     }
@@ -132,12 +168,16 @@ export class JellyfinAvailabilityReconciler {
   >;
   private readonly isAvailable: NonNullable<ReconcilerOptions['isAvailable']>;
   private readonly setTimer: NonNullable<ReconcilerOptions['setTimer']>;
+  private readonly now: NonNullable<ReconcilerOptions['now']>;
+  private readonly presentation: FinalizingPresentation;
 
   constructor(options: ReconcilerOptions = {}) {
     this.scanner = options.scanner ?? jellyfinRecentScanCoordinator;
     this.resolveImports = options.resolveImports ?? resolveImports;
     this.isAvailable = options.isAvailable ?? isTargetAvailable;
     this.setTimer = options.setTimer ?? setTimeout;
+    this.now = options.now ?? Date.now;
+    this.presentation = options.presentation ?? downloadTracker;
   }
 
   public async request(imports: ConfirmedServarrImport[]): Promise<void> {
@@ -145,7 +185,7 @@ export class JellyfinAvailabilityReconciler {
     for (const target of targets) {
       const key = targetKey(target);
       const existing = this.pending.get(key);
-      this.pending.set(key, {
+      const pendingTarget: PendingTarget = {
         ...target,
         seasonNumbers: [
           ...new Set([
@@ -153,8 +193,28 @@ export class JellyfinAvailabilityReconciler {
             ...target.seasonNumbers,
           ]),
         ],
+        presentationTargets: [
+          ...new Map(
+            [
+              ...(existing?.presentationTargets ?? []),
+              ...target.presentationTargets,
+            ].map((presentationTarget) => [
+              `${presentationTarget.serverId}:${presentationTarget.downloadId}`,
+              presentationTarget,
+            ])
+          ).values(),
+        ],
         attempts: existing?.attempts ?? 0,
-      });
+        phaseStartedAt:
+          existing?.phaseStartedAt ?? new Date(this.now()).toISOString(),
+      };
+      this.pending.set(key, pendingTarget);
+      for (const presentationTarget of pendingTarget.presentationTargets) {
+        this.presentation.startFinalizing(
+          presentationTarget,
+          pendingTarget.phaseStartedAt
+        );
+      }
     }
     if (targets.length) {
       logger.info('Jellyfin availability reconciliation requested', {
@@ -183,7 +243,7 @@ export class JellyfinAvailabilityReconciler {
     if (delay === undefined) {
       for (const [key, target] of this.pending) {
         if (target.attempts > JELLYFIN_RECONCILIATION_RETRY_DELAYS_MS.length) {
-          this.pending.delete(key);
+          this.clearTarget(key, target);
         }
       }
       return;
@@ -221,12 +281,12 @@ export class JellyfinAvailabilityReconciler {
       const target = this.pending.get(key);
       if (!target) continue;
       if (await this.isAvailable(target)) {
-        this.pending.delete(key);
+        this.clearTarget(key, target);
         resolved += 1;
       } else {
         target.attempts += 1;
         if (target.attempts > JELLYFIN_RECONCILIATION_RETRY_DELAYS_MS.length) {
-          this.pending.delete(key);
+          this.clearTarget(key, target);
           logger.warn(
             'Jellyfin availability reconciliation exhausted its retry budget',
             {
@@ -249,6 +309,13 @@ export class JellyfinAvailabilityReconciler {
       pendingTargets: this.pending.size,
       retryNumber,
     });
+  }
+
+  private clearTarget(key: string, target: PendingTarget): void {
+    this.pending.delete(key);
+    for (const presentationTarget of target.presentationTargets) {
+      this.presentation.clearFinalizing(presentationTarget);
+    }
   }
 }
 

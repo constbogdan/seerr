@@ -10,9 +10,9 @@ import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import { MediaType } from '@server/constants/media';
 import {
+  AcquisitionPhase,
   deriveAcquisitionState,
   type AcquisitionHealth,
-  type AcquisitionPhase,
   type AcquisitionSafeReason,
 } from '@server/lib/acquisitionPhase';
 import { getSettings } from '@server/lib/settings';
@@ -57,6 +57,15 @@ export interface ConfirmedServarrImport {
   episodes: EpisodeNumberResult[];
 }
 
+export interface FinalizingAcquisitionTarget {
+  mediaType: MediaType;
+  externalId: number;
+  downloadId: string;
+  serverId: number;
+  is4k: boolean;
+  episodes: EpisodeNumberResult[];
+}
+
 export interface DownloadTrackerUpdateOutcome {
   providersAttempted: number;
   providersSucceeded: number;
@@ -88,6 +97,10 @@ interface DownloadTrackerOptions {
 export class DownloadTracker {
   private radarrServers: Record<number, InternalDownloadingItem[]> = {};
   private sonarrServers: Record<number, InternalDownloadingItem[]> = {};
+  private finalizingRadarrServers: Record<number, InternalDownloadingItem[]> =
+    {};
+  private finalizingSonarrServers: Record<number, InternalDownloadingItem[]> =
+    {};
   private updatePromise?: Promise<DownloadTrackerUpdateOutcome>;
   private radarrPhysicalQueues: Record<string, InternalDownloadingItem[]> = {};
   private sonarrPhysicalQueues: Record<string, InternalDownloadingItem[]> = {};
@@ -101,26 +114,71 @@ export class DownloadTracker {
     serverId: number,
     externalServiceId: number
   ): DownloadingItem[] {
-    if (!this.radarrServers[serverId]) {
-      return [];
-    }
-
-    return this.radarrServers[serverId]
-      .filter((item) => item.externalId === externalServiceId)
-      .map(this.toPublicItem);
+    return this.getProgress(
+      this.radarrServers[serverId],
+      this.finalizingRadarrServers[serverId],
+      externalServiceId
+    );
   }
 
   public getSeriesProgress(
     serverId: number,
     externalServiceId: number
   ): DownloadingItem[] {
-    if (!this.sonarrServers[serverId]) {
-      return [];
-    }
+    return this.getProgress(
+      this.sonarrServers[serverId],
+      this.finalizingSonarrServers[serverId],
+      externalServiceId
+    );
+  }
 
-    return this.sonarrServers[serverId]
-      .filter((item) => item.externalId === externalServiceId)
-      .map(this.toPublicItem);
+  public startFinalizing(
+    target: FinalizingAcquisitionTarget,
+    phaseStartedAt: string
+  ): void {
+    const store =
+      target.mediaType === MediaType.MOVIE
+        ? this.finalizingRadarrServers
+        : this.finalizingSonarrServers;
+    const retained = (store[target.serverId] ?? []).filter(
+      (item) =>
+        item.externalId !== target.externalId ||
+        item.downloadId !== target.downloadId
+    );
+    const episodes = target.episodes.length ? target.episodes : [undefined];
+    store[target.serverId] = [
+      ...retained,
+      ...episodes.map((episode, index) => ({
+        mediaType: target.mediaType,
+        externalId: target.externalId,
+        size: 0,
+        sizeLeft: 0,
+        status: 'completed' as const,
+        trackedDownloadStatus: 'ok' as const,
+        trackedDownloadState: 'imported' as const,
+        trackedStatus: 'ok' as const,
+        acquisitionPhase: AcquisitionPhase.FINALIZING,
+        acquisitionPhaseStartedAt: phaseStartedAt,
+        health: 'ok' as const,
+        timeLeft: '',
+        title: '',
+        downloadId: target.downloadId,
+        episode,
+        queueRecordId: -(index + 1),
+      })),
+    ];
+  }
+
+  public clearFinalizing(target: FinalizingAcquisitionTarget): void {
+    const store =
+      target.mediaType === MediaType.MOVIE
+        ? this.finalizingRadarrServers
+        : this.finalizingSonarrServers;
+    store[target.serverId] = (store[target.serverId] ?? []).filter(
+      (item) =>
+        item.externalId !== target.externalId ||
+        item.downloadId !== target.downloadId
+    );
   }
 
   public async resetDownloadTracker() {
@@ -177,6 +235,19 @@ export class DownloadTracker {
     void queueRecordId;
     return item;
   };
+
+  private getProgress(
+    activeItems: InternalDownloadingItem[] | undefined,
+    finalizingItems: InternalDownloadingItem[] | undefined,
+    externalServiceId: number
+  ): DownloadingItem[] {
+    const active = (activeItems ?? []).filter(
+      (item) => item.externalId === externalServiceId
+    );
+    return (active.length ? active : (finalizingItems ?? []))
+      .filter((item) => item.externalId === externalServiceId)
+      .map(this.toPublicItem);
+  }
 
   private physicalServerKey(server: {
     hostname: string;
