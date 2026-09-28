@@ -3,11 +3,13 @@ import { Permission, useUser } from '@app/hooks/useUser';
 import {
   calculateDownloadProgress,
   getAcquisitionPhaseMessage,
+  isDeterminateAcquisitionPhase,
   shouldShowDownloadEta,
 } from '@app/utils/acquisitionPhase';
 import defineMessages from '@app/utils/defineMessages';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
 import { FormattedRelativeTime, useIntl } from 'react-intl';
+import DownloadProgress from './DownloadProgress';
 
 const messages = defineMessages('components.DownloadBlock', {
   estimatedtime: 'Estimated {time}',
@@ -28,6 +30,9 @@ const DownloadBlock = ({
   const intl = useIntl();
   const { hasPermission } = useUser();
   const progress = calculateDownloadProgress(downloadItem);
+  const determinateProgress = isDeterminateAcquisitionPhase(
+    downloadItem.acquisitionPhase
+  );
   const phaseMessage = getAcquisitionPhaseMessage(
     downloadItem.acquisitionPhase
   );
@@ -45,17 +50,10 @@ const DownloadBlock = ({
               })
             : title}
       </div>
-      <div className="relative mb-2 h-6 min-w-0 overflow-hidden rounded-full bg-gray-700">
-        <div
-          className="h-8 bg-indigo-600 transition-all duration-200 ease-in-out"
-          style={{
-            width: `${progress ?? 0}%`,
-          }}
-        />
-        <div className="absolute inset-0 flex h-6 w-full items-center justify-center text-xs">
-          <span>{progress ?? 0}%</span>
-        </div>
-      </div>
+      <DownloadProgress
+        determinate={determinateProgress}
+        progress={determinateProgress ? progress : undefined}
+      />
       <div className="flex items-center justify-between text-xs">
         <span>
           {is4k && (

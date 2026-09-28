@@ -4,6 +4,7 @@ import { describe, it } from 'node:test';
 import {
   calculateDownloadProgress,
   getAcquisitionPhaseMessage,
+  isDeterminateAcquisitionPhase,
   shouldShowDownloadEta,
 } from './acquisitionPhase';
 
@@ -40,6 +41,31 @@ describe('acquisition phase presentation', () => {
     );
   });
 
+  it('classifies byte progress separately from indeterminate activity', () => {
+    assert.equal(
+      isDeterminateAcquisitionPhase(AcquisitionPhase.DOWNLOADING),
+      true
+    );
+    for (const acquisitionPhase of [
+      AcquisitionPhase.PROCESSING,
+      AcquisitionPhase.IMPORT_PENDING,
+      AcquisitionPhase.IMPORTING,
+      AcquisitionPhase.FINALIZING,
+    ]) {
+      assert.equal(isDeterminateAcquisitionPhase(acquisitionPhase), false);
+    }
+
+    for (const acquisitionPhase of [
+      AcquisitionPhase.IMPORT_BLOCKED,
+      AcquisitionPhase.PAUSED,
+      AcquisitionPhase.DELAYED,
+      AcquisitionPhase.WARNING,
+      AcquisitionPhase.FAILED,
+    ]) {
+      assert.equal(isDeterminateAcquisitionPhase(acquisitionPhase), true);
+    }
+  });
+
   it('does not reuse a byte-transfer ETA for processing or import phases', () => {
     const estimatedCompletionTime = new Date('2026-01-01T00:00:00Z');
     assert.equal(
@@ -53,6 +79,7 @@ describe('acquisition phase presentation', () => {
       AcquisitionPhase.PROCESSING,
       AcquisitionPhase.IMPORT_PENDING,
       AcquisitionPhase.IMPORTING,
+      AcquisitionPhase.FINALIZING,
     ]) {
       assert.equal(
         shouldShowDownloadEta({

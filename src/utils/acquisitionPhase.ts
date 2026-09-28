@@ -65,6 +65,14 @@ export const calculateDownloadProgress = (
   );
 };
 
+export const isDeterminateAcquisitionPhase = (phase: unknown): boolean =>
+  ![
+    AcquisitionPhase.PROCESSING,
+    AcquisitionPhase.IMPORT_PENDING,
+    AcquisitionPhase.IMPORTING,
+    AcquisitionPhase.FINALIZING,
+  ].includes(phase as AcquisitionPhase);
+
 export const shouldShowDownloadEta = (
   item: Pick<DownloadingItem, 'acquisitionPhase' | 'estimatedCompletionTime'>
 ): boolean =>

@@ -1,30 +1,37 @@
-import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import downloadTracker, {
   type ConfirmedServarrImport,
+  type EpisodeNumberResult,
   type FinalizingAcquisitionTarget,
 } from '@server/lib/downloadtracker';
-import jellyfinRecentScanCoordinator from '@server/lib/jellyfinRecentScanCoordinator';
-import type { JellyfinScanOutcome } from '@server/lib/scanners/jellyfin';
+import jellyfinTargetedAvailability, {
+  type JellyfinTargetedMediaTarget,
+  type TargetedReadiness,
+} from '@server/lib/jellyfinTargetedAvailability';
 import logger from '@server/logger';
 
 export const JELLYFIN_RECONCILIATION_DEBOUNCE_MS = 5_000;
-export const JELLYFIN_RECONCILIATION_RETRY_DELAYS_MS = [
-  15_000, 30_000, 60_000, 120_000,
-] as const;
+export const JELLYFIN_RECONCILIATION_RETRY_INTERVAL_MS = 15_000;
+export const JELLYFIN_RECONCILIATION_ACTIVE_WINDOW_MS = 4 * 60_000;
+export const JELLYFIN_RECONCILIATION_CONCURRENCY = 3;
+const COMPLETED_GENERATION_CACHE_LIMIT = 1_000;
 
-export interface JellyfinAvailabilityTarget {
-  mediaId: number;
-  mediaType: MediaType;
-  is4k: boolean;
-  seasonNumbers: number[];
+export interface JellyfinAvailabilityTarget extends JellyfinTargetedMediaTarget {
   presentationTargets: FinalizingAcquisitionTarget[];
 }
 
 interface PendingTarget extends JellyfinAvailabilityTarget {
   attempts: number;
   phaseStartedAt: string;
+  nextAttemptAt: number;
+  expiresAt: number;
+  revision: number;
+}
+
+interface PendingSnapshot extends JellyfinAvailabilityTarget {
+  key: string;
+  revision: number;
 }
 
 interface FinalizingPresentation {
@@ -36,18 +43,57 @@ interface FinalizingPresentation {
 }
 
 interface ReconcilerOptions {
-  scanner?: { run(): Promise<JellyfinScanOutcome> };
   resolveImports?: (
     imports: ConfirmedServarrImport[]
   ) => Promise<JellyfinAvailabilityTarget[]>;
-  isAvailable?: (target: JellyfinAvailabilityTarget) => Promise<boolean>;
+  reconcileTarget?: (
+    target: JellyfinTargetedMediaTarget
+  ) => Promise<TargetedReadiness>;
   setTimer?: (callback: () => void, delay: number) => NodeJS.Timeout;
+  clearTimer?: (timer: NodeJS.Timeout) => void;
   now?: () => number;
   presentation?: FinalizingPresentation;
+  concurrency?: number;
 }
 
-const targetKey = (target: JellyfinAvailabilityTarget): string =>
-  `${target.mediaId}:${target.is4k ? '4k' : 'standard'}`;
+const presentationKey = (target: FinalizingAcquisitionTarget): string =>
+  `${target.serverId}:${target.downloadId}`;
+
+const episodeKey = (episode: EpisodeNumberResult): string =>
+  `${episode.seasonNumber}:${episode.episodeNumber}:${episode.id}`;
+
+const targetKey = (target: JellyfinAvailabilityTarget): string => {
+  const downloadIds = [
+    ...new Set(target.presentationTargets.map((item) => item.downloadId)),
+  ].sort();
+  return `${target.mediaId}:${target.is4k ? '4k' : 'standard'}:${downloadIds.join(',')}`;
+};
+
+const completedGenerationKey = (target: JellyfinAvailabilityTarget): string =>
+  `${targetKey(target)}:${target.episodes.map(episodeKey).sort().join(',')}`;
+
+const mergeTargets = (
+  current: JellyfinAvailabilityTarget | undefined,
+  incoming: JellyfinAvailabilityTarget
+): JellyfinAvailabilityTarget => ({
+  ...incoming,
+  episodes: [
+    ...new Map(
+      [...(current?.episodes ?? []), ...incoming.episodes].map((episode) => [
+        episodeKey(episode),
+        episode,
+      ])
+    ).values(),
+  ],
+  presentationTargets: [
+    ...new Map(
+      [
+        ...(current?.presentationTargets ?? []),
+        ...incoming.presentationTargets,
+      ].map((target) => [presentationKey(target), target])
+    ).values(),
+  ],
+});
 
 const resolveImports = async (
   imports: ConfirmedServarrImport[]
@@ -77,9 +123,13 @@ const resolveImports = async (
         mediaId: media.id,
         mediaType: imported.mediaType,
         is4k: alias.is4k,
-        seasonNumbers: [
-          ...new Set(imported.episodes.map((episode) => episode.seasonNumber)),
-        ],
+        tmdbId: media.tmdbId,
+        tvdbId: media.tvdbId,
+        imdbId: media.imdbId,
+        jellyfinMediaId: alias.is4k
+          ? (media.jellyfinMediaId4k ?? undefined)
+          : (media.jellyfinMediaId ?? undefined),
+        episodes: imported.episodes,
         presentationTargets: [
           {
             mediaType: imported.mediaType,
@@ -92,121 +142,71 @@ const resolveImports = async (
         ],
       };
       const key = targetKey(target);
-      const existing = targets.get(key);
-      targets.set(key, {
-        ...target,
-        seasonNumbers: [
-          ...new Set([
-            ...(existing?.seasonNumbers ?? []),
-            ...target.seasonNumbers,
-          ]),
-        ],
-        presentationTargets: [
-          ...new Map(
-            [
-              ...(existing?.presentationTargets ?? []),
-              ...target.presentationTargets,
-            ].map((presentationTarget) => [
-              `${presentationTarget.serverId}:${presentationTarget.downloadId}`,
-              presentationTarget,
-            ])
-          ).values(),
-        ],
-      });
+      targets.set(key, mergeTargets(targets.get(key), target));
     }
   }
 
   return [...targets.values()];
 };
 
-export const hasExpectedAvailability = (
-  media: Pick<Media, 'status' | 'status4k' | 'seasons'>,
-  target: JellyfinAvailabilityTarget
-): boolean => {
-  const status = target.is4k ? media.status4k : media.status;
-  if (target.mediaType === MediaType.MOVIE) {
-    return status === MediaStatus.AVAILABLE;
-  }
-  if (!target.seasonNumbers.length) {
-    return (
-      status === MediaStatus.AVAILABLE ||
-      status === MediaStatus.PARTIALLY_AVAILABLE
-    );
-  }
-
-  return target.seasonNumbers.every((seasonNumber) => {
-    const season = media.seasons.find(
-      (candidate) => candidate.seasonNumber === seasonNumber
-    );
-    const seasonStatus = target.is4k ? season?.status4k : season?.status;
-    return (
-      seasonStatus === MediaStatus.AVAILABLE ||
-      seasonStatus === MediaStatus.PARTIALLY_AVAILABLE
-    );
-  });
-};
-
-const isTargetAvailable = async (
-  target: JellyfinAvailabilityTarget
-): Promise<boolean> => {
-  const media = await getRepository(Media).findOne({
-    where: { id: target.mediaId },
-    relations: { seasons: true },
-  });
-  if (!media) return false;
-
-  return hasExpectedAvailability(media, target);
-};
-
 export class JellyfinAvailabilityReconciler {
   private readonly pending = new Map<string, PendingTarget>();
+  private readonly completedGenerations = new Set<string>();
   private timer?: NodeJS.Timeout;
+  private timerDueAt?: number;
   private activeRun?: Promise<void>;
-  private readonly scanner: { run(): Promise<JellyfinScanOutcome> };
   private readonly resolveImports: NonNullable<
     ReconcilerOptions['resolveImports']
   >;
-  private readonly isAvailable: NonNullable<ReconcilerOptions['isAvailable']>;
+  private readonly reconcileTarget: NonNullable<
+    ReconcilerOptions['reconcileTarget']
+  >;
   private readonly setTimer: NonNullable<ReconcilerOptions['setTimer']>;
+  private readonly clearTimer: NonNullable<ReconcilerOptions['clearTimer']>;
   private readonly now: NonNullable<ReconcilerOptions['now']>;
   private readonly presentation: FinalizingPresentation;
+  private readonly concurrency: number;
 
   constructor(options: ReconcilerOptions = {}) {
-    this.scanner = options.scanner ?? jellyfinRecentScanCoordinator;
     this.resolveImports = options.resolveImports ?? resolveImports;
-    this.isAvailable = options.isAvailable ?? isTargetAvailable;
+    this.reconcileTarget =
+      options.reconcileTarget ??
+      ((target) => jellyfinTargetedAvailability.reconcile(target));
     this.setTimer = options.setTimer ?? setTimeout;
+    this.clearTimer = options.clearTimer ?? clearTimeout;
     this.now = options.now ?? Date.now;
     this.presentation = options.presentation ?? downloadTracker;
+    this.concurrency = Math.max(
+      1,
+      options.concurrency ?? JELLYFIN_RECONCILIATION_CONCURRENCY
+    );
   }
 
   public async request(imports: ConfirmedServarrImport[]): Promise<void> {
     const targets = await this.resolveImports(imports);
+    const requestedAt = this.now();
+    let targetsAdded = 0;
+
     for (const target of targets) {
       const key = targetKey(target);
+      if (this.completedGenerations.has(completedGenerationKey(target))) {
+        continue;
+      }
+      targetsAdded += 1;
       const existing = this.pending.get(key);
+      const merged = mergeTargets(existing, target);
       const pendingTarget: PendingTarget = {
-        ...target,
-        seasonNumbers: [
-          ...new Set([
-            ...(existing?.seasonNumbers ?? []),
-            ...target.seasonNumbers,
-          ]),
-        ],
-        presentationTargets: [
-          ...new Map(
-            [
-              ...(existing?.presentationTargets ?? []),
-              ...target.presentationTargets,
-            ].map((presentationTarget) => [
-              `${presentationTarget.serverId}:${presentationTarget.downloadId}`,
-              presentationTarget,
-            ])
-          ).values(),
-        ],
+        ...merged,
         attempts: existing?.attempts ?? 0,
         phaseStartedAt:
-          existing?.phaseStartedAt ?? new Date(this.now()).toISOString(),
+          existing?.phaseStartedAt ?? new Date(requestedAt).toISOString(),
+        nextAttemptAt:
+          existing?.nextAttemptAt ??
+          requestedAt + JELLYFIN_RECONCILIATION_DEBOUNCE_MS,
+        expiresAt:
+          existing?.expiresAt ??
+          requestedAt + JELLYFIN_RECONCILIATION_ACTIVE_WINDOW_MS,
+        revision: (existing?.revision ?? 0) + 1,
       };
       this.pending.set(key, pendingTarget);
       for (const presentationTarget of pendingTarget.presentationTargets) {
@@ -216,11 +216,12 @@ export class JellyfinAvailabilityReconciler {
         );
       }
     }
-    if (targets.length) {
-      logger.info('Jellyfin availability reconciliation requested', {
+
+    if (targetsAdded) {
+      logger.info('Targeted Jellyfin availability reconciliation requested', {
         label: 'Jellyfin Availability Reconciler',
         importedAcquisitions: imports.length,
-        targetsAdded: targets.length,
+        targetsAdded,
         pendingTargets: this.pending.size,
       });
       this.scheduleNext();
@@ -232,32 +233,53 @@ export class JellyfinAvailabilityReconciler {
   }
 
   private scheduleNext(): void {
-    if (this.activeRun || this.timer || !this.pending.size) return;
-    const attempts = Math.min(
-      ...[...this.pending.values()].map((target) => target.attempts)
+    if (this.activeRun || !this.pending.size) return;
+    this.expireTargets();
+    if (!this.pending.size) return;
+
+    const dueAt = Math.min(
+      ...[...this.pending.values()].flatMap((target) => [
+        target.nextAttemptAt,
+        target.expiresAt,
+      ])
     );
-    const delay =
-      attempts === 0
-        ? JELLYFIN_RECONCILIATION_DEBOUNCE_MS
-        : JELLYFIN_RECONCILIATION_RETRY_DELAYS_MS[attempts - 1];
-    if (delay === undefined) {
-      for (const [key, target] of this.pending) {
-        if (target.attempts > JELLYFIN_RECONCILIATION_RETRY_DELAYS_MS.length) {
-          this.clearTarget(key, target);
-        }
-      }
+    if (
+      this.timer &&
+      this.timerDueAt !== undefined &&
+      this.timerDueAt <= dueAt
+    ) {
       return;
     }
-    this.timer = this.setTimer(() => {
-      this.timer = undefined;
-      void this.run();
-    }, delay);
+    if (this.timer) this.clearTimer(this.timer);
+
+    this.timerDueAt = dueAt;
+    this.timer = this.setTimer(
+      () => {
+        this.timer = undefined;
+        this.timerDueAt = undefined;
+        void this.run();
+      },
+      Math.max(0, dueAt - this.now())
+    );
   }
 
   private run(): Promise<void> {
     if (this.activeRun) return this.activeRun;
-    const attemptedKeys = [...this.pending.keys()];
-    const run = this.reconcile(attemptedKeys).finally(() => {
+    this.expireTargets();
+    const now = this.now();
+    const due = [...this.pending.entries()]
+      .filter(([, target]) => target.nextAttemptAt <= now)
+      .map(([key, target]) => ({
+        ...target,
+        key,
+        revision: target.revision,
+      }));
+    if (!due.length) {
+      this.scheduleNext();
+      return Promise.resolve();
+    }
+
+    const run = this.reconcile(due).finally(() => {
       if (this.activeRun === run) this.activeRun = undefined;
       this.scheduleNext();
     });
@@ -265,50 +287,106 @@ export class JellyfinAvailabilityReconciler {
     return run;
   }
 
-  private async reconcile(attemptedKeys: string[]): Promise<void> {
-    const retryNumber = Math.max(
-      0,
-      ...attemptedKeys.map((key) => this.pending.get(key)?.attempts ?? 0)
-    );
-    logger.info('Starting coalesced Jellyfin recent scan for imports', {
+  private async reconcile(targets: PendingSnapshot[]): Promise<void> {
+    logger.debug('Starting targeted Jellyfin availability reconciliation', {
       label: 'Jellyfin Availability Reconciler',
-      targets: attemptedKeys.length,
-      retryNumber,
+      targets: targets.length,
+      concurrency: this.concurrency,
     });
-    const outcome = await this.scanner.run();
-    let resolved = 0;
-    for (const key of attemptedKeys) {
-      const target = this.pending.get(key);
-      if (!target) continue;
-      if (await this.isAvailable(target)) {
-        this.clearTarget(key, target);
-        resolved += 1;
-      } else {
-        target.attempts += 1;
-        if (target.attempts > JELLYFIN_RECONCILIATION_RETRY_DELAYS_MS.length) {
-          this.clearTarget(key, target);
-          logger.warn(
-            'Jellyfin availability reconciliation exhausted its retry budget',
-            {
-              label: 'Jellyfin Availability Reconciler',
-              mediaId: target.mediaId,
-              mediaType: target.mediaType,
-              is4k: target.is4k,
-            }
-          );
-        }
-      }
-    }
 
-    logger.info('Jellyfin availability reconciliation completed', {
+    let cursor = 0;
+    let resolved = 0;
+    const worker = async (): Promise<void> => {
+      while (cursor < targets.length) {
+        const target = targets[cursor++];
+        const startedAt = this.now();
+        const result = await this.reconcileTarget(target);
+        const completedAt = this.now();
+        const current = this.pending.get(target.key);
+
+        // A repeated import notification can update the target while a lookup is
+        // in flight. Only the generation that was actually inspected may clear
+        // or advance that target.
+        if (!current || current.revision !== target.revision) continue;
+
+        if (result.state === 'ready') {
+          this.rememberCompletedGeneration(completedGenerationKey(current));
+          this.clearTarget(target.key, current);
+          resolved += 1;
+        } else {
+          current.attempts += 1;
+          current.nextAttemptAt =
+            completedAt + JELLYFIN_RECONCILIATION_RETRY_INTERVAL_MS;
+        }
+
+        logger.debug('Targeted Jellyfin availability attempt completed', {
+          label: 'Jellyfin Availability Reconciler',
+          mediaId: target.mediaId,
+          mediaType: target.mediaType,
+          is4k: target.is4k,
+          state: result.state,
+          ...(result.state !== 'ready' && { reason: result.reason }),
+          ...(result.state === 'unknown' && {
+            errorType: result.errorType,
+          }),
+          lookupMethod: result.lookupMethod,
+          jellyfinRequestCount: result.jellyfinRequestCount,
+          lookupDurationMs: result.lookupDurationMs,
+          ...(result.state === 'ready' && {
+            processingDurationMs: result.processingDurationMs,
+          }),
+          targetSatisfied: result.state === 'ready',
+          ...(result.state !== 'ready' && {
+            nextRetryAt: new Date(current.nextAttemptAt).toISOString(),
+          }),
+          attemptDurationMs: completedAt - startedAt,
+          attempt: current.attempts,
+        });
+      }
+    };
+
+    await Promise.all(
+      Array.from({ length: Math.min(this.concurrency, targets.length) }, () =>
+        worker()
+      )
+    );
+    this.expireTargets();
+
+    const completionDetails = {
       label: 'Jellyfin Availability Reconciler',
-      scanStatus: outcome.status,
-      scanDurationMs: outcome.durationMs,
-      targetsAttempted: attemptedKeys.length,
+      targetsAttempted: targets.length,
       targetsResolved: resolved,
       pendingTargets: this.pending.size,
-      retryNumber,
-    });
+    };
+    if (resolved > 0) {
+      logger.info(
+        'Targeted Jellyfin availability reconciliation established availability',
+        completionDetails
+      );
+    } else {
+      logger.debug(
+        'Targeted Jellyfin availability reconciliation completed',
+        completionDetails
+      );
+    }
+  }
+
+  private expireTargets(): void {
+    const now = this.now();
+    for (const [key, target] of this.pending) {
+      if (target.expiresAt > now) continue;
+      this.clearTarget(key, target);
+      logger.warn(
+        'Targeted Jellyfin availability reconciliation exhausted its active window',
+        {
+          label: 'Jellyfin Availability Reconciler',
+          mediaId: target.mediaId,
+          mediaType: target.mediaType,
+          is4k: target.is4k,
+          attempts: target.attempts,
+        }
+      );
+    }
   }
 
   private clearTarget(key: string, target: PendingTarget): void {
@@ -316,6 +394,15 @@ export class JellyfinAvailabilityReconciler {
     for (const presentationTarget of target.presentationTargets) {
       this.presentation.clearFinalizing(presentationTarget);
     }
+  }
+
+  private rememberCompletedGeneration(key: string): void {
+    this.completedGenerations.add(key);
+    if (this.completedGenerations.size <= COMPLETED_GENERATION_CACHE_LIMIT) {
+      return;
+    }
+    const oldest = this.completedGenerations.values().next().value;
+    if (oldest) this.completedGenerations.delete(oldest);
   }
 }
 

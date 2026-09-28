@@ -15,6 +15,8 @@ import type {
 import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import { User } from '@server/entity/User';
+import { prepareJellyfinAnimeMappings } from '@server/lib/jellyfinAnimeMappingCoordinator';
+import jellyfinCanonicalProcessingCoordinator from '@server/lib/jellyfinCanonicalProcessingCoordinator';
 import type {
   ProcessableSeason,
   RunnableScanner,
@@ -37,7 +39,43 @@ export interface JellyfinScanOutcome {
   errorType?: string;
 }
 
-class JellyfinScanner
+export interface JellyfinScannerContext {
+  client: JellyfinAPI;
+  libraries: Library[];
+}
+
+export const createJellyfinScannerContext = async (): Promise<
+  JellyfinScannerContext | undefined
+> => {
+  const settings = getSettings();
+  if (
+    settings.main.mediaServerType !== MediaServerType.JELLYFIN &&
+    settings.main.mediaServerType !== MediaServerType.EMBY
+  ) {
+    return undefined;
+  }
+
+  const admin = await getRepository(User).findOne({
+    where: { id: 1 },
+    select: ['id', 'jellyfinUserId', 'jellyfinDeviceId'],
+    order: { id: 'ASC' },
+  });
+  if (!admin) return undefined;
+
+  const client = new JellyfinAPI(
+    getHostname(),
+    settings.jellyfin.apiKey,
+    admin.jellyfinDeviceId
+  );
+  client.setUserId(admin.jellyfinUserId ?? '');
+
+  return {
+    client,
+    libraries: settings.jellyfin.libraries.filter((library) => library.enabled),
+  };
+};
+
+export class JellyfinScanner
   extends BaseScanner<JellyfinLibraryItem>
   implements RunnableScanner<JellyfinSyncStatus>
 {
@@ -126,10 +164,12 @@ class JellyfinScanner
     return { tmdbId, imdbId, metadata };
   }
 
-  private async processJellyfinMovie(jellyfinitem: JellyfinLibraryItem) {
+  private async processJellyfinMovie(
+    jellyfinitem: JellyfinLibraryItem
+  ): Promise<boolean> {
     try {
       const extracted = await this.extractMovieIds(jellyfinitem);
-      if (!extracted) return;
+      if (!extracted) return false;
 
       const { tmdbId, imdbId, metadata } = extracted;
 
@@ -172,6 +212,7 @@ class JellyfinScanner
           title: metadata.Name,
         });
       }
+      return true;
     } catch (e) {
       this.log(
         `Failed to process Jellyfin item, id: ${jellyfinitem.Id}`,
@@ -181,6 +222,7 @@ class JellyfinScanner
           jellyfinitem,
         }
       );
+      return false;
     }
   }
 
@@ -220,7 +262,9 @@ class JellyfinScanner
     return tvShow;
   }
 
-  private async processJellyfinShow(jellyfinitem: JellyfinLibraryItem) {
+  private async processJellyfinShow(
+    jellyfinitem: JellyfinLibraryItem
+  ): Promise<boolean> {
     let tvShow: TmdbTvScanDetails | TmdbTvDetails | null = null;
 
     try {
@@ -232,7 +276,7 @@ class JellyfinScanner
         this.log('No Id metadata for this title. Skipping', 'debug', {
           jellyfinItemId: jellyfinitem.Id,
         });
-        return;
+        return false;
       }
 
       if (metadata.ProviderIds.Tmdb || metadata.ProviderIds.TheMovieDb) {
@@ -279,8 +323,7 @@ class JellyfinScanner
         }
         // With AniDB we can have mixed libraries with movies in a "show" library
         else if (result?.imdbId || result?.tmdbId) {
-          await this.processJellyfinMovie(jellyfinitem);
-          return;
+          return this.processJellyfinMovie(jellyfinitem);
         }
       }
 
@@ -429,6 +472,7 @@ class JellyfinScanner
             title: tvShow.name,
           }
         );
+        return true;
       } else {
         this.log(
           `No information found for the show: ${metadata.Name}`,
@@ -437,6 +481,7 @@ class JellyfinScanner
             jellyfinitem,
           }
         );
+        return false;
       }
     } catch (e) {
       this.log(
@@ -446,56 +491,47 @@ class JellyfinScanner
         'error',
         { errorMessage: e.message, jellyfinitem }
       );
+      return false;
     }
   }
 
-  private async processItem(item: JellyfinLibraryItem): Promise<void> {
+  private async processItem(item: JellyfinLibraryItem): Promise<boolean> {
     if (item.Type === 'Movie') {
-      await this.processJellyfinMovie(item);
+      return this.processJellyfinMovie(item);
     } else if (item.Type === 'Series') {
-      await this.processJellyfinShow(item);
+      return this.processJellyfinShow(item);
     }
+    return false;
   }
 
   public async run(): Promise<JellyfinScanOutcome> {
+    return jellyfinCanonicalProcessingCoordinator.runExclusive(() =>
+      this.runUncoordinated()
+    );
+  }
+
+  private async runUncoordinated(): Promise<JellyfinScanOutcome> {
     const startedAt = Date.now();
     const settings = getSettings();
-
     if (
-      settings.main.mediaServerType != MediaServerType.JELLYFIN &&
-      settings.main.mediaServerType != MediaServerType.EMBY
+      settings.main.mediaServerType !== MediaServerType.JELLYFIN &&
+      settings.main.mediaServerType !== MediaServerType.EMBY
     ) {
+      return { status: 'skipped', durationMs: Date.now() - startedAt };
+    }
+    const context = await createJellyfinScannerContext();
+    if (!context) {
+      this.log('No admin configured. Jellyfin sync skipped.', 'warn');
       return { status: 'skipped', durationMs: Date.now() - startedAt };
     }
 
     const sessionId = this.startRun();
 
     try {
-      const userRepository = getRepository(User);
-      const admin = await userRepository.findOne({
-        where: { id: 1 },
-        select: ['id', 'jellyfinUserId', 'jellyfinDeviceId'],
-        order: { id: 'ASC' },
-      });
+      this.jfClient = context.client;
+      this.libraries = context.libraries;
 
-      if (!admin) {
-        this.log('No admin configured. Jellyfin sync skipped.', 'warn');
-        return { status: 'skipped', durationMs: Date.now() - startedAt };
-      }
-
-      this.jfClient = new JellyfinAPI(
-        getHostname(),
-        settings.jellyfin.apiKey,
-        admin.jellyfinDeviceId
-      );
-
-      this.jfClient.setUserId(admin.jellyfinUserId ?? '');
-
-      this.libraries = settings.jellyfin.libraries.filter(
-        (library) => library.enabled
-      );
-
-      await animeList.sync();
+      await prepareJellyfinAnimeMappings();
 
       if (this.isRecentOnly) {
         for (const library of this.libraries) {
@@ -521,7 +557,12 @@ class JellyfinScanner
             return mediaA.Id === mediaB.Id;
           });
 
-          await this.loop(this.processItem.bind(this), { sessionId });
+          await this.loop(
+            async (item) => {
+              await this.processItem(item);
+            },
+            { sessionId }
+          );
         }
       } else {
         for (const library of this.libraries) {
@@ -530,7 +571,12 @@ class JellyfinScanner
           this.processedAnidbSeason = new Map();
           this.log(`Beginning to process library: ${library.name}`, 'info');
           this.items = await this.jfClient.getLibraryContents(library.id);
-          await this.loop(this.processItem.bind(this), { sessionId });
+          await this.loop(
+            async (item) => {
+              await this.processItem(item);
+            },
+            { sessionId }
+          );
         }
       }
 
@@ -554,6 +600,50 @@ class JellyfinScanner
     } finally {
       this.endRun(sessionId);
     }
+  }
+
+  public async processKnownJellyfinItems(
+    items: JellyfinLibraryItem[]
+  ): Promise<JellyfinScanOutcome> {
+    const startedAt = Date.now();
+    const context = await createJellyfinScannerContext();
+    if (!context || items.length === 0) {
+      return { status: 'skipped', durationMs: Date.now() - startedAt };
+    }
+
+    return jellyfinCanonicalProcessingCoordinator.runExclusive(async () => {
+      await prepareJellyfinAnimeMappings();
+      const sessionId = this.startRun();
+      try {
+        this.jfClient = context.client;
+        this.libraries = context.libraries;
+        this.processedAnidbSeason = new Map();
+        const uniqueItems = [
+          ...new Map(items.map((item) => [item.Id, item])).values(),
+        ];
+        let failures = 0;
+        for (const item of uniqueItems) {
+          if (!(await this.processItem(item))) failures += 1;
+        }
+
+        return {
+          status: failures === 0 ? 'completed' : 'failed',
+          durationMs: Date.now() - startedAt,
+          ...(failures > 0 && { errorType: 'ItemProcessingFailed' }),
+        };
+      } catch (e) {
+        this.log('Targeted Jellyfin processing failed', 'error', {
+          errorType: e instanceof Error ? e.name : 'UnknownError',
+        });
+        return {
+          status: 'failed',
+          durationMs: Date.now() - startedAt,
+          errorType: e instanceof Error ? e.name : 'UnknownError',
+        };
+      } finally {
+        this.endRun(sessionId);
+      }
+    });
   }
 
   public status(): JellyfinSyncStatus {
