@@ -140,6 +140,15 @@ export interface JellyfinItemsReponse {
   StartIndex: number;
 }
 
+export interface JellyfinItemsOptions {
+  ids?: string[];
+  searchTerm?: string;
+  parentId?: string;
+  recursive?: boolean;
+  includeItemTypes?: ('Movie' | 'Series')[];
+  limit?: number;
+}
+
 class JellyfinAPI extends ExternalAPI {
   private userId?: string;
   private mediaServerType: MediaServerType;
@@ -501,19 +510,37 @@ class JellyfinAPI extends ExternalAPI {
   public async getItemData(
     id: string
   ): Promise<JellyfinLibraryItemExtended | undefined> {
+    const items = await this.getItems({ ids: [id], limit: 1 });
+    return items[0];
+  }
+
+  public async getItems(
+    options: JellyfinItemsOptions
+  ): Promise<JellyfinLibraryItemExtended[]> {
     try {
       const itemResponse = await this.get<JellyfinItemsReponse>(`/Items`, {
         params: {
-          ids: id,
+          ...(options.ids?.length && { ids: options.ids.join(',') }),
+          ...(options.searchTerm && { searchTerm: options.searchTerm }),
+          ...(options.parentId && { parentId: options.parentId }),
+          ...(options.recursive !== undefined && {
+            recursive: options.recursive,
+          }),
+          ...(options.includeItemTypes?.length && {
+            includeItemTypes: options.includeItemTypes.join(','),
+          }),
+          ...(options.limit !== undefined && { limit: options.limit }),
           fields: 'ProviderIds,MediaSources,Width,Height,IsHD,DateCreated',
         },
       });
 
-      return itemResponse.Items?.[0];
+      return (itemResponse.Items ?? []).filter(
+        (item) => item.LocationType !== 'Virtual'
+      );
     } catch (e) {
       if (availabilitySync.running) {
         if (e.response?.status === 500) {
-          return undefined;
+          return [];
         }
       }
 
@@ -527,6 +554,26 @@ class JellyfinAPI extends ExternalAPI {
 
       throw new ApiError(e.response.status, ApiErrorCode.InvalidAuthToken);
     }
+  }
+
+  public async searchItems({
+    parentId,
+    searchTerm,
+    includeItemTypes,
+    limit = 25,
+  }: {
+    parentId: string;
+    searchTerm: string;
+    includeItemTypes: ('Movie' | 'Series')[];
+    limit?: number;
+  }): Promise<JellyfinLibraryItemExtended[]> {
+    return this.getItems({
+      parentId,
+      searchTerm,
+      includeItemTypes,
+      recursive: true,
+      limit,
+    });
   }
 
   public async getSeasons(seriesID: string): Promise<JellyfinLibraryItem[]> {
