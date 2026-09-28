@@ -7,7 +7,7 @@ import SonarrAPI from '@server/api/servarr/sonarr';
 import { MediaType } from '@server/constants/media';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
-import { uniqWith } from 'lodash';
+import { isEqual, uniqWith } from 'lodash';
 
 interface EpisodeNumberResult {
   seasonNumber: number;
@@ -28,10 +28,27 @@ export interface DownloadingItem {
   episode?: EpisodeNumberResult;
 }
 
+export interface DownloadTrackerUpdateOutcome {
+  providersAttempted: number;
+  providersSucceeded: number;
+  providersFailed: number;
+  // Counts authoritative queue items once per successfully refreshed physical
+  // server, before Seerr alias-specific display caps are applied.
+  queueCount: number;
+  changed: boolean;
+  authoritative: boolean;
+}
+
+interface ProviderRefreshOutcome {
+  succeeded: boolean;
+  queueCount: number;
+  changed: boolean;
+}
+
 export class DownloadTracker {
   private radarrServers: Record<number, DownloadingItem[]> = {};
   private sonarrServers: Record<number, DownloadingItem[]> = {};
-  private updatePromise?: Promise<void>;
+  private updatePromise?: Promise<DownloadTrackerUpdateOutcome>;
 
   public getMovieProgress(
     serverId: number,
@@ -64,7 +81,7 @@ export class DownloadTracker {
     this.sonarrServers = {};
   }
 
-  public updateDownloads(): Promise<void> {
+  public updateDownloads(): Promise<DownloadTrackerUpdateOutcome> {
     if (!this.updatePromise) {
       this.updatePromise = this.performUpdateDownloads().finally(() => {
         this.updatePromise = undefined;
@@ -74,14 +91,32 @@ export class DownloadTracker {
     return this.updatePromise;
   }
 
-  private async performUpdateDownloads(): Promise<void> {
-    await Promise.all([
-      this.updateRadarrDownloads(),
-      this.updateSonarrDownloads(),
-    ]);
+  private async performUpdateDownloads(): Promise<DownloadTrackerUpdateOutcome> {
+    const outcomes = (
+      await Promise.all([
+        this.updateRadarrDownloads(),
+        this.updateSonarrDownloads(),
+      ])
+    ).flat();
+    const providersSucceeded = outcomes.filter(
+      (outcome) => outcome.succeeded
+    ).length;
+    const providersFailed = outcomes.length - providersSucceeded;
+
+    return {
+      providersAttempted: outcomes.length,
+      providersSucceeded,
+      providersFailed,
+      queueCount: outcomes.reduce(
+        (count, outcome) => count + outcome.queueCount,
+        0
+      ),
+      changed: outcomes.some((outcome) => outcome.changed),
+      authoritative: providersFailed === 0,
+    };
   }
 
-  private async updateRadarrDownloads() {
+  private async updateRadarrDownloads(): Promise<ProviderRefreshOutcome[]> {
     const settings = getSettings();
 
     // Remove duplicate servers
@@ -97,7 +132,7 @@ export class DownloadTracker {
     );
 
     // Load downloads from Radarr servers
-    await Promise.all(
+    return Promise.all(
       filteredServers.map(async (server) => {
         if (server.syncEnabled) {
           const matchingServers = settings.radarr.filter(
@@ -135,20 +170,29 @@ export class DownloadTracker {
               downloadId: item.downloadId,
             }));
 
-            this.radarrServers[server.id] = serverDownloads.slice(
+            const downloads = serverDownloads.slice(
               0,
               validateDownloadQueueSize(
                 server.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
               )
             );
+            let changed = !isEqual(
+              this.radarrServers[server.id] ?? [],
+              downloads
+            );
+            this.radarrServers[server.id] = downloads;
 
             matchingServers.forEach((ms) => {
-              this.radarrServers[ms.id] = serverDownloads.slice(
+              const matchingDownloads = serverDownloads.slice(
                 0,
                 validateDownloadQueueSize(
                   ms.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
                 )
               );
+              changed =
+                !isEqual(this.radarrServers[ms.id] ?? [], matchingDownloads) ||
+                changed;
+              this.radarrServers[ms.id] = matchingDownloads;
             });
 
             if (queueItems.length > 0) {
@@ -157,6 +201,18 @@ export class DownloadTracker {
                 { label: 'Download Tracker' }
               );
             }
+            if (matchingServers.length > 0) {
+              logger.debug(
+                `Matching download data to ${matchingServers.length} other Radarr server(s)`,
+                { label: 'Download Tracker' }
+              );
+            }
+
+            return {
+              succeeded: true,
+              queueCount: queueItems.length,
+              changed,
+            };
           } catch {
             logger.error(
               `Unable to get queue from Radarr server: ${server.name}`,
@@ -164,20 +220,31 @@ export class DownloadTracker {
                 label: 'Download Tracker',
               }
             );
-          }
+            if (matchingServers.length > 0) {
+              logger.debug(
+                `Matching download data to ${matchingServers.length} other Radarr server(s)`,
+                { label: 'Download Tracker' }
+              );
+            }
 
-          if (matchingServers.length > 0) {
-            logger.debug(
-              `Matching download data to ${matchingServers.length} other Radarr server(s)`,
-              { label: 'Download Tracker' }
-            );
+            return {
+              succeeded: false,
+              queueCount: 0,
+              changed: false,
+            };
           }
         }
+
+        return {
+          succeeded: false,
+          queueCount: 0,
+          changed: false,
+        };
       })
     );
   }
 
-  private async updateSonarrDownloads() {
+  private async updateSonarrDownloads(): Promise<ProviderRefreshOutcome[]> {
     const settings = getSettings();
 
     // Remove duplicate servers
@@ -193,7 +260,7 @@ export class DownloadTracker {
     );
 
     // Load downloads from Sonarr servers
-    await Promise.all(
+    return Promise.all(
       filteredServers.map(async (server) => {
         if (server.syncEnabled) {
           const matchingServers = settings.sonarr.filter(
@@ -232,20 +299,29 @@ export class DownloadTracker {
               downloadId: item.downloadId,
             }));
 
-            this.sonarrServers[server.id] = serverDownloads.slice(
+            const downloads = serverDownloads.slice(
               0,
               validateDownloadQueueSize(
                 server.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
               )
             );
+            let changed = !isEqual(
+              this.sonarrServers[server.id] ?? [],
+              downloads
+            );
+            this.sonarrServers[server.id] = downloads;
 
             matchingServers.forEach((ms) => {
-              this.sonarrServers[ms.id] = serverDownloads.slice(
+              const matchingDownloads = serverDownloads.slice(
                 0,
                 validateDownloadQueueSize(
                   ms.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
                 )
               );
+              changed =
+                !isEqual(this.sonarrServers[ms.id] ?? [], matchingDownloads) ||
+                changed;
+              this.sonarrServers[ms.id] = matchingDownloads;
             });
 
             if (queueItems.length > 0) {
@@ -254,6 +330,18 @@ export class DownloadTracker {
                 { label: 'Download Tracker' }
               );
             }
+            if (matchingServers.length > 0) {
+              logger.debug(
+                `Matching download data to ${matchingServers.length} other Sonarr server(s)`,
+                { label: 'Download Tracker' }
+              );
+            }
+
+            return {
+              succeeded: true,
+              queueCount: queueItems.length,
+              changed,
+            };
           } catch {
             logger.error(
               `Unable to get queue from Sonarr server: ${server.name}`,
@@ -261,15 +349,26 @@ export class DownloadTracker {
                 label: 'Download Tracker',
               }
             );
-          }
+            if (matchingServers.length > 0) {
+              logger.debug(
+                `Matching download data to ${matchingServers.length} other Sonarr server(s)`,
+                { label: 'Download Tracker' }
+              );
+            }
 
-          if (matchingServers.length > 0) {
-            logger.debug(
-              `Matching download data to ${matchingServers.length} other Sonarr server(s)`,
-              { label: 'Download Tracker' }
-            );
+            return {
+              succeeded: false,
+              queueCount: 0,
+              changed: false,
+            };
           }
         }
+
+        return {
+          succeeded: false,
+          queueCount: 0,
+          changed: false,
+        };
       })
     );
   }

@@ -17,6 +17,7 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import acquisitionMonitor from '@server/lib/acquisitionMonitor';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
@@ -39,6 +40,10 @@ const sanitizeDisplayName = (displayName: string): string => {
     .replace(/[^a-z0-9-]/gi, '')
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '');
+};
+
+export const wakeAcquisitionMonitorForDispatch = (): void => {
+  acquisitionMonitor.wake('seerr-request');
 };
 
 @EventSubscriber()
@@ -376,6 +381,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           tags,
           searchNow: !radarrSettings.preventSearch,
         };
+
+        wakeAcquisitionMonitorForDispatch();
 
         // Run entity asynchronously so we don't wait for it on the UI side
         radarr
@@ -724,6 +731,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           monitorNewItems: sonarrSettings.monitorNewItems,
           searchNow: !sonarrSettings.preventSearch,
         };
+
+        wakeAcquisitionMonitorForDispatch();
 
         // Run entity asynchronously so we don't wait for it on the UI side
         sonarr

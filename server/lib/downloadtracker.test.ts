@@ -7,6 +7,7 @@ import { MediaType } from '@server/constants/media';
 import {
   DownloadTracker,
   type DownloadingItem,
+  type DownloadTrackerUpdateOutcome,
 } from '@server/lib/downloadtracker';
 import {
   getSettings,
@@ -54,6 +55,42 @@ const buildRadarrQueue = (
     indexer: 'indexer',
   }));
 
+const buildSonarrQueue = (
+  count: number
+): Awaited<ReturnType<SonarrAPI['getQueue']>> =>
+  Array.from({ length: count }, (_, index) => ({
+    id: index + 1,
+    seriesId: 200,
+    episodeId: index + 1,
+    size: 100,
+    title: `Episode ${index + 1}`,
+    sizeleft: 50,
+    timeleft: '00:10:00',
+    estimatedCompletionTime: '2026-01-01T00:00:00Z',
+    status: 'downloading',
+    trackedDownloadStatus: 'ok',
+    trackedDownloadState: 'downloading',
+    downloadId: `episode-${index + 1}`,
+    protocol: 'torrent',
+    downloadClient: 'client',
+    indexer: 'indexer',
+    episode: {
+      seriesId: 200,
+      episodeFileId: index + 1,
+      seasonNumber: 1,
+      episodeNumber: index + 1,
+      title: `Episode ${index + 1}`,
+      airDate: '2026-01-01',
+      airDateUtc: '2026-01-01T00:00:00Z',
+      overview: '',
+      hasFile: false,
+      monitored: true,
+      absoluteEpisodeNumber: index + 1,
+      unverifiedSceneNumbering: false,
+      id: index + 1,
+    },
+  }));
+
 const buildTrackedDownloads = (count: number): DownloadingItem[] =>
   Array.from({ length: count }, (_, index) => ({
     externalId: 100,
@@ -80,16 +117,18 @@ describe('DownloadTracker updateDownloads', () => {
 
   it('shares one active refresh between concurrent callers', async () => {
     const tracker = new DownloadTracker();
-    let resolveRefresh: (() => void) | undefined;
+    let resolveRefresh:
+      | ((outcome: DownloadTrackerUpdateOutcome) => void)
+      | undefined;
     const refresh = mock.fn(
       () =>
-        new Promise<void>((resolve) => {
+        new Promise<DownloadTrackerUpdateOutcome>((resolve) => {
           resolveRefresh = resolve;
         })
     );
     (
       tracker as unknown as {
-        performUpdateDownloads: () => Promise<void>;
+        performUpdateDownloads: () => Promise<DownloadTrackerUpdateOutcome>;
       }
     ).performUpdateDownloads = refresh;
 
@@ -99,13 +138,27 @@ describe('DownloadTracker updateDownloads', () => {
     assert.strictEqual(first, second);
     assert.strictEqual(refresh.mock.callCount(), 1);
 
-    resolveRefresh?.();
+    resolveRefresh?.({
+      providersAttempted: 0,
+      providersSucceeded: 0,
+      providersFailed: 0,
+      queueCount: 0,
+      changed: false,
+      authoritative: true,
+    });
     await first;
 
     const third = tracker.updateDownloads();
     assert.notStrictEqual(third, first);
     assert.strictEqual(refresh.mock.callCount(), 2);
-    resolveRefresh?.();
+    resolveRefresh?.({
+      providersAttempted: 0,
+      providersSucceeded: 0,
+      providersFailed: 0,
+      queueCount: 0,
+      changed: false,
+      authoritative: true,
+    });
     await third;
   });
 
@@ -146,10 +199,18 @@ describe('DownloadTracker updateDownloads', () => {
       async () => []
     );
 
-    await new DownloadTracker().updateDownloads();
+    const outcome = await new DownloadTracker().updateDownloads();
 
     assert.strictEqual(radarrQueue.mock.calls[0].arguments[0], 25);
     assert.strictEqual(sonarrQueue.mock.calls[0].arguments[0], 10);
+    assert.deepStrictEqual(outcome, {
+      providersAttempted: 2,
+      providersSucceeded: 2,
+      providersFailed: 0,
+      queueCount: 0,
+      changed: false,
+      authoritative: true,
+    });
   });
 
   it('starts Radarr and Sonarr updates in parallel', async () => {
@@ -200,12 +261,22 @@ describe('DownloadTracker updateDownloads', () => {
     );
     const tracker = new DownloadTracker();
 
-    await tracker.updateDownloads();
+    const firstOutcome = await tracker.updateDownloads();
+    const secondOutcome = await tracker.updateDownloads();
 
-    assert.strictEqual(getQueue.mock.callCount(), 1);
+    assert.strictEqual(getQueue.mock.callCount(), 2);
     assert.strictEqual(getQueue.mock.calls[0].arguments[0], 25);
     assert.strictEqual(tracker.getMovieProgress(1, 100).length, 10);
     assert.strictEqual(tracker.getMovieProgress(2, 100).length, 25);
+    assert.deepStrictEqual(firstOutcome, {
+      providersAttempted: 1,
+      providersSucceeded: 1,
+      providersFailed: 0,
+      queueCount: 25,
+      changed: true,
+      authoritative: true,
+    });
+    assert.strictEqual(secondOutcome.changed, false);
   });
 
   it('retains each duplicate alias snapshot independently after failure', async () => {
@@ -227,10 +298,140 @@ describe('DownloadTracker updateDownloads', () => {
       2: buildTrackedDownloads(25),
     };
 
-    await tracker.updateDownloads();
+    const outcome = await tracker.updateDownloads();
 
     assert.strictEqual(tracker.getMovieProgress(1, 100).length, 10);
     assert.strictEqual(tracker.getMovieProgress(2, 100).length, 25);
+    assert.deepStrictEqual(outcome, {
+      providersAttempted: 1,
+      providersSucceeded: 0,
+      providersFailed: 1,
+      queueCount: 0,
+      changed: false,
+      authoritative: false,
+    });
+  });
+
+  it('reports partial provider failure without treating retained data as observed', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [
+      {
+        id: 2,
+        name: 'Sonarr',
+        hostname: 'sonarr',
+        port: 8989,
+        syncEnabled: true,
+      } as SonarrSettings,
+    ];
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () =>
+      buildRadarrQueue(2)
+    );
+    mock.method(SonarrAPI.prototype, 'refreshMonitoredDownloads', async () => {
+      throw new Error('refresh failed');
+    });
+    const tracker = new DownloadTracker();
+    (
+      tracker as unknown as {
+        sonarrServers: Record<number, DownloadingItem[]>;
+      }
+    ).sonarrServers = {
+      2: [
+        {
+          ...buildTrackedDownloads(1)[0],
+          mediaType: MediaType.TV,
+          externalId: 200,
+        },
+      ],
+    };
+
+    const outcome = await tracker.updateDownloads();
+
+    assert.deepStrictEqual(outcome, {
+      providersAttempted: 2,
+      providersSucceeded: 1,
+      providersFailed: 1,
+      queueCount: 2,
+      changed: true,
+      authoritative: false,
+    });
+    assert.strictEqual(tracker.getSeriesProgress(2, 200).length, 1);
+  });
+
+  it('isolates Radarr failure while Sonarr succeeds with episode metadata', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [
+      {
+        id: 2,
+        name: 'Sonarr',
+        hostname: 'sonarr',
+        port: 8989,
+        syncEnabled: true,
+      } as SonarrSettings,
+    ];
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () => {
+      throw new Error('refresh failed');
+    });
+    mock.method(SonarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(SonarrAPI.prototype, 'getQueue', async () =>
+      buildSonarrQueue(2)
+    );
+    const tracker = new DownloadTracker();
+    (
+      tracker as unknown as {
+        radarrServers: Record<number, DownloadingItem[]>;
+      }
+    ).radarrServers = { 1: buildTrackedDownloads(1) };
+
+    const outcome = await tracker.updateDownloads();
+
+    assert.deepStrictEqual(outcome, {
+      providersAttempted: 2,
+      providersSucceeded: 1,
+      providersFailed: 1,
+      queueCount: 2,
+      changed: true,
+      authoritative: false,
+    });
+    assert.strictEqual(tracker.getMovieProgress(1, 100).length, 1);
+    assert.deepStrictEqual(
+      tracker.getSeriesProgress(2, 200)[1].episode,
+      buildSonarrQueue(2)[1].episode
+    );
+  });
+
+  it('reports total failure across Radarr and Sonarr as non-authoritative', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [
+      {
+        id: 2,
+        name: 'Sonarr',
+        hostname: 'sonarr',
+        port: 8989,
+        syncEnabled: true,
+      } as SonarrSettings,
+    ];
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () => {
+      throw new Error('radarr failed');
+    });
+    mock.method(SonarrAPI.prototype, 'refreshMonitoredDownloads', async () => {
+      throw new Error('sonarr failed');
+    });
+
+    const outcome = await new DownloadTracker().updateDownloads();
+
+    assert.deepStrictEqual(outcome, {
+      providersAttempted: 2,
+      providersSucceeded: 0,
+      providersFailed: 2,
+      queueCount: 0,
+      changed: false,
+      authoritative: false,
+    });
   });
 
   it('uses an enabled alias when the first duplicate is disabled', async () => {

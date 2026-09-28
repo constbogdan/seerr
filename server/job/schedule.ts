@@ -1,7 +1,7 @@
 import { MediaServerType } from '@server/constants/server';
 import blocklistedTagsProcessor from '@server/job/blocklistedTagsProcessor';
+import acquisitionMonitor from '@server/lib/acquisitionMonitor';
 import availabilitySync from '@server/lib/availabilitySync';
-import downloadTracker from '@server/lib/downloadtracker';
 import freshService from '@server/lib/fresh/service';
 import ImageProxy from '@server/lib/imageproxy';
 import refreshToken from '@server/lib/refreshToken';
@@ -31,6 +31,10 @@ interface ScheduledJob {
 }
 
 export const scheduledJobs: ScheduledJob[] = [];
+
+export const runDownloadSync = () => acquisitionMonitor.refresh('background');
+
+export const resetDownloadSync = () => acquisitionMonitor.resetAndReconcile();
 
 export const startJobs = (): void => {
   const jobs = getSettings().jobs;
@@ -207,12 +211,13 @@ export const startJobs = (): void => {
       logger.debug('Starting scheduled job: Download Sync', {
         label: 'Jobs',
       });
-      downloadTracker.updateDownloads().catch((e) => {
+      runDownloadSync().catch((e) => {
         logger.error(`Failed to update download tracker: ${e.message}`, {
           label: 'Jobs',
         });
       });
     }),
+    running: () => acquisitionMonitor.getStatus().refreshing,
   });
 
   // Reset download sync everyday at 01:00 am
@@ -226,8 +231,13 @@ export const startJobs = (): void => {
       logger.info('Starting scheduled job: Download Sync Reset', {
         label: 'Jobs',
       });
-      downloadTracker.resetDownloadTracker();
+      resetDownloadSync().catch((e) => {
+        logger.error(`Failed to reset download tracker: ${e.message}`, {
+          label: 'Jobs',
+        });
+      });
     }),
+    running: () => acquisitionMonitor.getStatus().refreshing,
   });
 
   // Run image cache cleanup every 24 hours
