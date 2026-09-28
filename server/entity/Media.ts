@@ -10,6 +10,7 @@ import { getRepository } from '@server/datasource';
 import { Blocklist } from '@server/entity/Blocklist';
 import type { User } from '@server/entity/User';
 import { Watchlist } from '@server/entity/Watchlist';
+import { AcquisitionPhase } from '@server/lib/acquisitionPhase';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
 import downloadTracker from '@server/lib/downloadtracker';
 import { getSettings } from '@server/lib/settings';
@@ -380,9 +381,12 @@ class Media {
         this.serviceId !== undefined &&
         this.serviceId !== null
       ) {
-        this.downloadStatus = downloadTracker.getMovieProgress(
-          this.serviceId,
-          this.externalServiceId
+        this.downloadStatus = this.preferAvailableOverFinalizing(
+          downloadTracker.getMovieProgress(
+            this.serviceId,
+            this.externalServiceId
+          ),
+          this.status
         );
       }
 
@@ -392,9 +396,12 @@ class Media {
         this.serviceId4k !== undefined &&
         this.serviceId4k !== null
       ) {
-        this.downloadStatus4k = downloadTracker.getMovieProgress(
-          this.serviceId4k,
-          this.externalServiceId4k
+        this.downloadStatus4k = this.preferAvailableOverFinalizing(
+          downloadTracker.getMovieProgress(
+            this.serviceId4k,
+            this.externalServiceId4k
+          ),
+          this.status4k
         );
       }
     }
@@ -406,9 +413,12 @@ class Media {
         this.serviceId !== undefined &&
         this.serviceId !== null
       ) {
-        this.downloadStatus = downloadTracker.getSeriesProgress(
-          this.serviceId,
-          this.externalServiceId
+        this.downloadStatus = this.preferAvailableOverFinalizing(
+          downloadTracker.getSeriesProgress(
+            this.serviceId,
+            this.externalServiceId
+          ),
+          this.status
         );
       }
 
@@ -418,12 +428,26 @@ class Media {
         this.serviceId4k !== undefined &&
         this.serviceId4k !== null
       ) {
-        this.downloadStatus4k = downloadTracker.getSeriesProgress(
-          this.serviceId4k,
-          this.externalServiceId4k
+        this.downloadStatus4k = this.preferAvailableOverFinalizing(
+          downloadTracker.getSeriesProgress(
+            this.serviceId4k,
+            this.externalServiceId4k
+          ),
+          this.status4k
         );
       }
     }
+  }
+
+  private preferAvailableOverFinalizing(
+    items: DownloadingItem[],
+    status: MediaStatus
+  ): DownloadingItem[] {
+    return status === MediaStatus.AVAILABLE
+      ? items.filter(
+          (item) => item.acquisitionPhase !== AcquisitionPhase.FINALIZING
+        )
+      : items;
   }
 }
 

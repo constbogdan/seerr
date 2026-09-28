@@ -4,10 +4,12 @@ import { afterEach, describe, it, mock } from 'node:test';
 import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
 import { MediaType } from '@server/constants/media';
+import { AcquisitionPhase } from '@server/lib/acquisitionPhase';
 import {
   DownloadTracker,
   type DownloadingItem,
   type DownloadTrackerUpdateOutcome,
+  type FinalizingAcquisitionTarget,
 } from '@server/lib/downloadtracker';
 import {
   getSettings,
@@ -99,10 +101,28 @@ const buildTrackedDownloads = (count: number): DownloadingItem[] =>
     size: 100,
     sizeLeft: 50,
     status: 'downloading',
+    trackedDownloadStatus: 'ok',
+    trackedDownloadState: 'downloading',
+    trackedStatus: 'ok',
+    acquisitionPhase: AcquisitionPhase.DOWNLOADING,
+    acquisitionPhaseStartedAt: '2026-01-01T00:00:00.000Z',
+    health: 'ok',
     timeLeft: '00:10:00',
     title: `Movie ${index + 1}`,
     downloadId: `download-${index + 1}`,
   }));
+
+const buildFinalizingTarget = (
+  overrides: Partial<FinalizingAcquisitionTarget> = {}
+): FinalizingAcquisitionTarget => ({
+  mediaType: MediaType.MOVIE,
+  externalId: 100,
+  downloadId: 'download-1',
+  serverId: 1,
+  is4k: false,
+  episodes: [],
+  ...overrides,
+});
 
 describe('DownloadTracker updateDownloads', () => {
   const settings = getSettings();
@@ -458,6 +478,310 @@ describe('DownloadTracker updateDownloads', () => {
     assert.strictEqual(getQueue.mock.calls[0].arguments[0], 15);
     assert.strictEqual(tracker.getMovieProgress(1, 100).length, 0);
     assert.strictEqual(tracker.getMovieProgress(2, 100).length, 15);
+  });
+
+  it('preserves phase timing across progress updates and resets it on a phase change', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [];
+    let now = 1_000;
+    let queue = buildRadarrQueue(1);
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () => queue);
+    const tracker = new DownloadTracker({ now: () => now });
+
+    await tracker.updateDownloads();
+    const initial = tracker.getMovieProgress(1, 100)[0];
+    assert.equal(initial.trackedDownloadStatus, 'ok');
+    assert.equal(initial.trackedDownloadState, 'downloading');
+    assert.equal(initial.trackedStatus, 'ok');
+    now = 2_000;
+    queue = [
+      {
+        ...queue[0],
+        sizeleft: 25,
+        estimatedCompletionTime: '2026-01-01T00:05:00Z',
+      },
+    ];
+    await tracker.updateDownloads();
+    const progressed = tracker.getMovieProgress(1, 100)[0];
+
+    assert.equal(progressed.acquisitionPhase, AcquisitionPhase.DOWNLOADING);
+    assert.equal(
+      progressed.acquisitionPhaseStartedAt,
+      initial.acquisitionPhaseStartedAt
+    );
+
+    now = 3_000;
+    queue = [{ ...queue[0], id: 999, sizeleft: 0 }];
+    await tracker.updateDownloads();
+    const processing = tracker.getMovieProgress(1, 100)[0];
+    assert.equal(processing.acquisitionPhase, AcquisitionPhase.PROCESSING);
+    assert.equal(
+      processing.acquisitionPhaseStartedAt,
+      new Date(now).toISOString()
+    );
+    assert.equal(processing.timeLeft, '');
+    assert.equal(processing.estimatedCompletionTime, undefined);
+  });
+
+  it('exposes a stable Finalizing phase after import until reconciliation clears it', () => {
+    const tracker = new DownloadTracker();
+    const target = buildFinalizingTarget();
+    const phaseStartedAt = '2026-01-01T00:05:00.000Z';
+
+    tracker.startFinalizing(target, phaseStartedAt);
+    tracker.startFinalizing(target, phaseStartedAt);
+
+    assert.deepEqual(tracker.getMovieProgress(1, 100), [
+      {
+        mediaType: MediaType.MOVIE,
+        externalId: 100,
+        size: 0,
+        sizeLeft: 0,
+        status: 'completed',
+        trackedDownloadStatus: 'ok',
+        trackedDownloadState: 'imported',
+        trackedStatus: 'ok',
+        acquisitionPhase: AcquisitionPhase.FINALIZING,
+        acquisitionPhaseStartedAt: phaseStartedAt,
+        health: 'ok',
+        timeLeft: '',
+        title: '',
+        downloadId: 'download-1',
+        episode: undefined,
+      },
+    ]);
+
+    tracker.clearFinalizing(target);
+    assert.deepEqual(tracker.getMovieProgress(1, 100), []);
+  });
+
+  it('preserves reconciler-owned Finalizing state across queue resets', async () => {
+    const tracker = new DownloadTracker();
+    const target = buildFinalizingTarget();
+    const phaseStartedAt = '2026-01-01T00:05:00.000Z';
+    tracker.startFinalizing(target, phaseStartedAt);
+
+    await tracker.resetDownloadTracker();
+
+    assert.equal(
+      tracker.getMovieProgress(1, 100)[0].acquisitionPhaseStartedAt,
+      phaseStartedAt
+    );
+    tracker.clearFinalizing(target);
+  });
+
+  it('keeps active Servarr queue state authoritative over Finalizing presentation', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [];
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () =>
+      buildRadarrQueue(1)
+    );
+    const tracker = new DownloadTracker();
+    tracker.startFinalizing(
+      buildFinalizingTarget(),
+      '2026-01-01T00:05:00.000Z'
+    );
+
+    await tracker.updateDownloads();
+
+    assert.equal(
+      tracker.getMovieProgress(1, 100)[0].acquisitionPhase,
+      AcquisitionPhase.DOWNLOADING
+    );
+  });
+
+  it('resets phase timing for a regrab and for a disappeared generation that reappears', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [];
+    let now = 1_000;
+    let queue = buildRadarrQueue(1);
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () => queue);
+    mock.method(RadarrAPI.prototype, 'getRecentHistory', async () => []);
+    const tracker = new DownloadTracker({ now: () => now });
+
+    await tracker.updateDownloads();
+    const initial = tracker.getMovieProgress(1, 100)[0];
+    now = 2_000;
+    queue = [{ ...queue[0], downloadId: 'replacement-download' }];
+    await tracker.updateDownloads();
+    assert.notEqual(
+      tracker.getMovieProgress(1, 100)[0].acquisitionPhaseStartedAt,
+      initial.acquisitionPhaseStartedAt
+    );
+
+    queue = [];
+    await tracker.updateDownloads();
+    now = 3_000;
+    queue = buildRadarrQueue(1);
+    await tracker.updateDownloads();
+    assert.equal(
+      tracker.getMovieProgress(1, 100)[0].acquisitionPhaseStartedAt,
+      new Date(now).toISOString()
+    );
+  });
+
+  it('confirms disappeared imports from one bounded exact-download history lookup', async () => {
+    settings.radarr = [
+      buildRadarrSettings({ id: 1 }),
+      buildRadarrSettings({ id: 2 }),
+    ];
+    settings.sonarr = [];
+    let queue = buildRadarrQueue(2);
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () => queue);
+    const history = mock.method(
+      RadarrAPI.prototype,
+      'getRecentHistory',
+      async () => [
+        {
+          id: 1,
+          eventType: 'downloadFolderImported',
+          date: '2026-01-01T00:00:00Z',
+          downloadId: 'download-1',
+          movieId: 100,
+        },
+        {
+          id: 2,
+          eventType: 'downloadFolderImported',
+          date: '2026-01-01T00:00:00Z',
+          downloadId: 'different-generation',
+          movieId: 100,
+        },
+      ]
+    );
+    const tracker = new DownloadTracker();
+    await tracker.updateDownloads();
+    queue = [];
+
+    const outcome = await tracker.updateDownloads();
+
+    assert.equal(history.mock.callCount(), 1);
+    assert.deepEqual(outcome.confirmedImports, [
+      {
+        mediaType: MediaType.MOVIE,
+        externalId: 100,
+        downloadId: 'download-1',
+        serverAliases: [
+          { id: 1, is4k: false },
+          { id: 2, is4k: false },
+        ],
+        episodes: [],
+      },
+    ]);
+  });
+
+  it('does not fabricate import success when bounded history fails', async () => {
+    settings.radarr = [buildRadarrSettings({ id: 1 })];
+    settings.sonarr = [];
+    let queue = buildRadarrQueue(1);
+    mock.method(RadarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(RadarrAPI.prototype, 'getQueue', async () => queue);
+    let historyAvailable = false;
+    mock.method(RadarrAPI.prototype, 'getRecentHistory', async () => {
+      if (!historyAvailable) throw new Error('provider unavailable');
+      return [
+        {
+          id: 1,
+          eventType: 'downloadFolderImported',
+          date: '2026-01-01T00:00:00Z',
+          downloadId: 'download-1',
+          movieId: 100,
+        },
+      ];
+    });
+    const tracker = new DownloadTracker();
+    await tracker.updateDownloads();
+    queue = [];
+
+    const outcome = await tracker.updateDownloads();
+    assert.equal(outcome.confirmedImports, undefined);
+    assert.equal(outcome.authoritative, true);
+
+    historyAvailable = true;
+    const retry = await tracker.updateDownloads();
+    assert.equal(retry.confirmedImports?.[0].downloadId, 'download-1');
+  });
+
+  it('groups a Sonarr season download into one confirmed target with all episodes', async () => {
+    settings.radarr = [];
+    settings.sonarr = [
+      {
+        id: 3,
+        name: 'Sonarr',
+        hostname: 'sonarr',
+        port: 8989,
+        syncEnabled: true,
+      } as SonarrSettings,
+    ];
+    let queue = buildSonarrQueue(2).map((item) => ({
+      ...item,
+      downloadId: 'season-pack',
+    }));
+    mock.method(SonarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(SonarrAPI.prototype, 'getQueue', async () => queue);
+    mock.method(SonarrAPI.prototype, 'getRecentHistory', async () => [
+      {
+        id: 9,
+        eventType: 'downloadFolderImported',
+        date: '2026-01-01T00:00:00Z',
+        downloadId: 'season-pack',
+        seriesId: 200,
+      },
+    ]);
+    const tracker = new DownloadTracker();
+    await tracker.updateDownloads();
+    queue = [];
+
+    const outcome = await tracker.updateDownloads();
+    assert.equal(outcome.confirmedImports?.length, 1);
+    assert.deepEqual(
+      outcome.confirmedImports?.[0].episodes.map((episode) => episode.id),
+      [1, 2]
+    );
+  });
+
+  it('does not treat an existing Sonarr file as proof that this upgrade imported', async () => {
+    settings.radarr = [];
+    settings.sonarr = [
+      {
+        id: 3,
+        name: 'Sonarr',
+        hostname: 'sonarr',
+        port: 8989,
+        syncEnabled: true,
+      } as SonarrSettings,
+    ];
+    let queue = buildSonarrQueue(1).map((item) => ({
+      ...item,
+      episodeHasFile: true,
+      episode: { ...item.episode, hasFile: true },
+    }));
+    mock.method(SonarrAPI.prototype, 'refreshMonitoredDownloads', async () =>
+      Promise.resolve()
+    );
+    mock.method(SonarrAPI.prototype, 'getQueue', async () => queue);
+    mock.method(SonarrAPI.prototype, 'getRecentHistory', async () => []);
+    const tracker = new DownloadTracker();
+    await tracker.updateDownloads();
+    queue = [];
+
+    const outcome = await tracker.updateDownloads();
+    assert.equal(outcome.confirmedImports, undefined);
   });
 
   for (const invalidLimit of ['10', true, false]) {

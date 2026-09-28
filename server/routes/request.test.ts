@@ -18,6 +18,10 @@ import OverrideRule from '@server/entity/OverrideRule';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
+import { AcquisitionPhase } from '@server/lib/acquisitionPhase';
+import downloadTracker, {
+  type DownloadingItem,
+} from '@server/lib/downloadtracker';
 import { Permission } from '@server/lib/permissions';
 import type { RadarrSettings, SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
@@ -223,6 +227,154 @@ async function seedRequest(status = MediaRequestStatus.PENDING) {
     relations: { requestedBy: true, modifiedBy: true },
   });
 }
+
+describe('GET /request acquisition state', () => {
+  it('returns safe canonical progress to an ordinary user for their own request', async () => {
+    const seeded = await seedRequest(MediaRequestStatus.APPROVED);
+    const mediaRepository = getRepository(Media);
+    const media = await mediaRepository.findOneByOrFail({
+      id: seeded.media.id,
+    });
+    media.serviceId = 41;
+    media.externalServiceId = 12345;
+    await mediaRepository.save(media);
+    const item: DownloadingItem = {
+      mediaType: MediaType.MOVIE,
+      externalId: 12345,
+      size: 100,
+      sizeLeft: 0,
+      status: 'downloading',
+      trackedDownloadStatus: 'ok',
+      trackedDownloadState: 'downloading',
+      trackedStatus: 'ok',
+      acquisitionPhase: AcquisitionPhase.PROCESSING,
+      acquisitionPhaseStartedAt: '2026-09-28T04:20:00.000Z',
+      health: 'ok',
+      timeLeft: '',
+      title: 'Synthetic.Movie.2026.1080p',
+      downloadId: 'synthetic-download',
+    };
+    (
+      downloadTracker as unknown as {
+        radarrServers: Record<number, DownloadingItem[]>;
+      }
+    ).radarrServers = { 41: [item] };
+
+    try {
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
+      const response = await agent.get('/request?take=100');
+      assert.equal(response.status, 200);
+      const result = response.body.results.find(
+        (candidate: { id: number }) => candidate.id === seeded.id
+      );
+      assert.equal(
+        result.media.downloadStatus[0].acquisitionPhase,
+        AcquisitionPhase.PROCESSING
+      );
+      assert.equal(
+        result.media.downloadStatus[0].acquisitionPhaseStartedAt,
+        item.acquisitionPhaseStartedAt
+      );
+      assert.equal(result.media.downloadStatus[0].safeReason, undefined);
+      assert.equal(result.media.downloadStatus[0].statusMessages, undefined);
+      assert.equal(result.media.downloadStatus[0].errorMessage, undefined);
+
+      const admin = await loginAs('admin@seerr.dev', 'test1234');
+      const adminResponse = await admin.get('/request?take=100');
+      const adminResult = adminResponse.body.results.find(
+        (candidate: { id: number }) => candidate.id === seeded.id
+      );
+      assert.equal(
+        adminResult.media.downloadStatus[0].acquisitionPhase,
+        AcquisitionPhase.PROCESSING
+      );
+    } finally {
+      await downloadTracker.resetDownloadTracker();
+    }
+  });
+
+  it('shows Finalizing to the ordinary requester without claiming availability', async () => {
+    const seeded = await seedRequest(MediaRequestStatus.APPROVED);
+    const mediaRepository = getRepository(Media);
+    const media = await mediaRepository.findOneByOrFail({
+      id: seeded.media.id,
+    });
+    media.serviceId = 51;
+    media.externalServiceId = 12345;
+    media.status = MediaStatus.PROCESSING;
+    await mediaRepository.save(media);
+    const phaseStartedAt = '2026-09-28T07:27:01.744Z';
+    const finalizingTarget = {
+      mediaType: MediaType.MOVIE,
+      externalId: 12345,
+      downloadId: 'confirmed-import',
+      serverId: 51,
+      is4k: false,
+      episodes: [],
+    };
+    downloadTracker.startFinalizing(finalizingTarget, phaseStartedAt);
+
+    try {
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
+      const response = await agent.get('/request?take=100');
+      assert.equal(response.status, 200);
+      const result = response.body.results.find(
+        (candidate: { id: number }) => candidate.id === seeded.id
+      );
+      assert.equal(result.media.status, MediaStatus.PROCESSING);
+      assert.equal(
+        result.media.downloadStatus[0].acquisitionPhase,
+        AcquisitionPhase.FINALIZING
+      );
+      assert.equal(
+        result.media.downloadStatus[0].acquisitionPhaseStartedAt,
+        phaseStartedAt
+      );
+
+      media.status = MediaStatus.AVAILABLE;
+      await mediaRepository.save(media);
+      const availableResponse = await agent.get('/request?take=100');
+      const availableResult = availableResponse.body.results.find(
+        (candidate: { id: number }) => candidate.id === seeded.id
+      );
+      assert.equal(availableResult.media.status, MediaStatus.AVAILABLE);
+      assert.deepEqual(availableResult.media.downloadStatus, []);
+    } finally {
+      downloadTracker.clearFinalizing(finalizingTarget);
+      await downloadTracker.resetDownloadTracker();
+    }
+  });
+
+  it('does not let canonical acquisition state bypass request visibility', async () => {
+    const userRepository = getRepository(User);
+    const mediaRepository = getRepository(Media);
+    const requestRepository = getRepository(MediaRequest);
+    const owner = await userRepository.findOneOrFail({
+      where: { email: 'admin@seerr.dev' },
+    });
+    const media = await mediaRepository.save(
+      new Media({
+        mediaType: MediaType.MOVIE,
+        tmdbId: 543210,
+        status: MediaStatus.PROCESSING,
+        serviceId: 41,
+        externalServiceId: 543210,
+      })
+    );
+    await requestRepository.save(
+      new MediaRequest({
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.APPROVED,
+        media,
+        requestedBy: owner,
+        is4k: false,
+      })
+    );
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const response = await agent.get('/request?requestedBy=1');
+    assert.equal(response.status, 403);
+  });
+});
 
 describe('DELETE /request/:requestId', () => {
   it('allows the owner to delete their own pending request', async () => {

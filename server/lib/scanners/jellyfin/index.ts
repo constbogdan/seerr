@@ -31,6 +31,12 @@ interface JellyfinSyncStatus extends StatusBase {
   libraries: Library[];
 }
 
+export interface JellyfinScanOutcome {
+  status: 'completed' | 'skipped' | 'aborted' | 'failed';
+  durationMs: number;
+  errorType?: string;
+}
+
 class JellyfinScanner
   extends BaseScanner<JellyfinLibraryItem>
   implements RunnableScanner<JellyfinSyncStatus>
@@ -451,14 +457,15 @@ class JellyfinScanner
     }
   }
 
-  public async run(): Promise<void> {
+  public async run(): Promise<JellyfinScanOutcome> {
+    const startedAt = Date.now();
     const settings = getSettings();
 
     if (
       settings.main.mediaServerType != MediaServerType.JELLYFIN &&
       settings.main.mediaServerType != MediaServerType.EMBY
     ) {
-      return;
+      return { status: 'skipped', durationMs: Date.now() - startedAt };
     }
 
     const sessionId = this.startRun();
@@ -472,7 +479,8 @@ class JellyfinScanner
       });
 
       if (!admin) {
-        return this.log('No admin configured. Jellyfin sync skipped.', 'warn');
+        this.log('No admin configured. Jellyfin sync skipped.', 'warn');
+        return { status: 'skipped', durationMs: Date.now() - startedAt };
       }
 
       this.jfClient = new JellyfinAPI(
@@ -532,8 +540,17 @@ class JellyfinScanner
           : 'Full Scan Complete',
         'info'
       );
+      return { status: 'completed', durationMs: Date.now() - startedAt };
     } catch (e) {
       this.log('Sync interrupted', 'error', { errorMessage: e.message });
+      return {
+        status:
+          e instanceof Error && /aborted/i.test(e.message)
+            ? 'aborted'
+            : 'failed',
+        durationMs: Date.now() - startedAt,
+        errorType: e instanceof Error ? e.name : 'UnknownError',
+      };
     } finally {
       this.endRun(sessionId);
     }

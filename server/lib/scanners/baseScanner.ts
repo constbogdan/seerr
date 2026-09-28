@@ -24,7 +24,7 @@ export type StatusBase = {
 };
 
 export interface RunnableScanner<T> {
-  run: () => Promise<void>;
+  run: () => Promise<unknown>;
   status: () => T & StatusBase;
 }
 

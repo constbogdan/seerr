@@ -1724,6 +1724,113 @@ components:
       required:
         - id
         - status
+    DownloadingItem:
+      type: object
+      description: Safe live acquisition state derived from an authoritative Radarr or Sonarr queue item.
+      properties:
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        externalId: { type: number }
+        size: { type: number }
+        sizeLeft: { type: number }
+        status:
+          type: string
+          enum:
+            [
+              unknown,
+              queued,
+              paused,
+              downloading,
+              completed,
+              failed,
+              warning,
+              delay,
+              downloadClientUnavailable,
+              fallback,
+            ]
+        trackedDownloadStatus:
+          type: string
+          enum: [ok, warning, error]
+        trackedDownloadState:
+          type: string
+          enum:
+            [
+              downloading,
+              importBlocked,
+              importPending,
+              importing,
+              imported,
+              failedPending,
+              failed,
+              ignored,
+            ]
+        trackedStatus:
+          type: string
+          enum: [ok, warning, error]
+          deprecated: true
+          description: Compatibility alias for trackedDownloadStatus.
+        acquisitionPhase:
+          type: string
+          enum:
+            [
+              waiting,
+              downloading,
+              processing,
+              importPending,
+              importing,
+              importBlocked,
+              finalizing,
+              paused,
+              delayed,
+              warning,
+              failed,
+            ]
+        acquisitionPhaseStartedAt:
+          type: string
+          format: date-time
+        health:
+          type: string
+          enum: [ok, warning, error]
+        safeReason:
+          type: string
+          enum:
+            [
+              insufficient_space,
+              download_client_unavailable,
+              import_blocked,
+              import_failed,
+              delayed,
+              paused,
+              unknown_error,
+            ]
+        timeLeft: { type: string }
+        estimatedCompletionTime:
+          type: string
+          format: date-time
+        title:
+          type: string
+          description: Provider title; ordinary UI redacts this for non-administrators.
+        downloadId: { type: string }
+        episode:
+          type: object
+          properties:
+            seasonNumber: { type: number }
+            episodeNumber: { type: number }
+            absoluteEpisodeNumber: { type: number }
+            id: { type: number }
+          required: [seasonNumber, episodeNumber, absoluteEpisodeNumber, id]
+      required:
+        [
+          mediaType,
+          externalId,
+          size,
+          sizeLeft,
+          status,
+          timeLeft,
+          title,
+          downloadId,
+        ]
     MediaInfo:
       type: object
       properties:
@@ -1746,6 +1853,16 @@ components:
           readOnly: true
           items:
             $ref: '#/components/schemas/MediaRequest'
+        downloadStatus:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/DownloadingItem'
+        downloadStatus4k:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/DownloadingItem'
         createdAt:
           type: string
           example: '2020-09-12T10:00:27.000Z'
