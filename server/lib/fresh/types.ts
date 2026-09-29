@@ -104,9 +104,12 @@ export type FreshCandidateDiagnosticStatus =
   | 'excluded_content_filter'
   | 'visibility_expired'
   | 'active_fresh'
-  | 'needs_attention';
+  | 'needs_attention'
+  | 'reviewable'
+  | 'historical';
 
 export type FreshCandidateDiagnosticSort =
+  | 'priority'
   | 'title.asc'
   | 'title.desc'
   | 'status'
@@ -117,21 +120,47 @@ export type FreshCandidateDiagnosticSort =
   | 'last_seen.desc'
   | 'last_seen.asc';
 
+export type FreshCandidateReasonFamily =
+  | 'all'
+  | 'resolution'
+  | 'admission'
+  | 'content'
+  | 'history'
+  | 'source';
+
+export type FreshCandidateSeasonEvidence = 'all' | 'known' | 'unknown';
+export type FreshCandidatePresenceFilter = 'all' | 'present' | 'absent';
+
 export interface FreshCandidateDiagnosticQuery {
   page: number;
   search?: string;
   mediaType: 'all' | 'movie' | 'tv';
   status: FreshCandidateDiagnosticStatus;
   sort: FreshCandidateDiagnosticSort;
+  reasonFamily: FreshCandidateReasonFamily;
+  seasonEvidence: FreshCandidateSeasonEvidence;
+  manualResolution: FreshCandidatePresenceFilter;
+  admissionOverride: FreshCandidatePresenceFilter;
 }
 
 export interface FreshCandidateDiagnosticRow {
   candidateId: number;
+  revision: number;
   displayTitle: string;
+  parsedTitle: string;
+  parsedMediaType: 'movie' | 'tv';
   mediaType: 'movie' | 'tv';
   matchYear?: number;
+  seasonNumber?: number;
+  episodeNumber?: number;
   resolutionStatus: number;
   displayStatus: FreshCandidateDiagnosticStatus;
+  automaticResolution?: {
+    status: number;
+    mediaType: 'movie' | 'tv';
+    tmdbId?: number;
+    failureReason?: string;
+  };
   tmdbId?: number;
   firstObservedAt: string;
   lastObservedAt: string;
@@ -141,6 +170,34 @@ export interface FreshCandidateDiagnosticRow {
   resolvedAt?: string;
   failureReason?: string;
   membershipReason?: string;
+  automaticReasons: string[];
+  sourceTitleSamples: string[];
+  observationCount: number;
+  manualResolution?: {
+    mediaType: 'movie' | 'tv';
+    tmdbId: number;
+    actorUserId?: number;
+    updatedAt: string;
+    revision: number;
+    canonicalTitle: string;
+  };
+  admissionOverride?: {
+    actorUserId?: number;
+    updatedAt: string;
+    revision: number;
+  };
+  discoveryHistory?: {
+    identityKind: 'movie' | 'season' | 'special' | 'legacy_tv';
+    seasonNumber?: number;
+    episodeNumber?: number;
+    admitted: boolean;
+    legacyProjection: boolean;
+    admissionReason: string;
+    activityDate?: string;
+    activitySource: string;
+    firstFreshAt?: string;
+    visibleUntil?: string;
+  };
   firstSeenAt?: string;
   lastSeenAt?: string;
   mediaDate?: string;
@@ -157,6 +214,12 @@ export interface FreshCandidateDiagnosticRow {
   visibleUntil?: string;
   active: boolean;
   actionable: boolean;
+  actions: {
+    resolve: boolean;
+    resetResolution: boolean;
+    admit: boolean;
+    removeOverride: boolean;
+  };
 }
 
 export interface FreshCandidateDiagnosticSummary {
@@ -170,6 +233,8 @@ export interface FreshCandidateDiagnosticSummary {
   excludedContentFilter: number;
   visibilityExpired: number;
   needsAttention: number;
+  reviewable: number;
+  historical: number;
 }
 
 export interface FreshCandidateDiagnosticResponse {

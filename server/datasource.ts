@@ -1,6 +1,9 @@
 import { Blocklist } from '@server/entity/Blocklist';
 import DiscoverSlider from '@server/entity/DiscoverSlider';
+import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
+import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
@@ -31,7 +34,10 @@ const DB_SSL_PREFIX = 'DB_SSL_';
 const entities = [
   Blocklist,
   DiscoverSlider,
+  FreshAdmissionOverride,
   FreshCandidate,
+  FreshDiscoveryHistory,
+  FreshManualResolution,
   FreshMedia,
   FreshObservation,
   FreshSyncState,

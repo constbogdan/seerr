@@ -10,7 +10,9 @@ import MediaTypeFilter from '../../Common/MediaTypeFilter';
 import {
   CONFIGURED_TOKEN_MASK,
   composeAutobrrBaseUrl,
+  defaultFreshSectionState,
   loadFreshFilters,
+  parseFreshSectionState,
   selectedFreshFilter,
   splitAutobrrBaseUrl,
   toFreshFilterSelectOptions,
@@ -143,7 +145,7 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /setFieldValue\('filterId', option\?\.value \?\? 0\)/);
     assert.match(
       source,
-      /setFieldValue\('cachedFilterName', option\?\.label \?\? ''\)/
+      /setFieldValue\(\s*'cachedFilterName',\s*option\?\.label \?\? ''\s*\)/
     );
   });
 
@@ -193,7 +195,17 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /value: 'tv'/);
     assert.match(source, /status/);
     assert.match(source, /sort/);
+    assert.match(source, /reasonFamily/);
+    assert.match(source, /seasonEvidence/);
+    assert.match(source, /manualResolution/);
+    assert.match(source, /admissionOverride/);
     assert.match(source, /Needs Attention/);
+    assert.match(source, /Reviewable/);
+    assert.match(source, /Historical/);
+    assert.match(
+      source,
+      /useState<FreshCandidateDiagnosticSort>\('priority'\)/
+    );
     assert.match(
       source,
       /setStatus\(cardStatus as FreshCandidateDiagnosticStatus\)/
@@ -215,9 +227,46 @@ describe('Fresh settings client boundary', () => {
     assert.ok(
       source.indexOf("['First observed'") < source.indexOf('const CandidateRow')
     );
-    assert.match(source, /candidate\.actionable/);
+    assert.match(source, /candidate\.actions\.resolve/);
+    assert.match(source, /candidate\.actions\.resetResolution/);
+    assert.match(source, /candidate\.actions\.admit/);
+    assert.match(source, /candidate\.actions\.removeOverride/);
+    assert.match(source, /expectedRevision: candidate\.revision/);
+    assert.match(source, /error\.response\?\.status === 409/);
+    assert.match(source, /mediaType,/);
     assert.match(source, /\/resolve`/);
     assert.doesNotMatch(source, /latestAttempt/);
+  });
+
+  it('uses versioned, independent first-visit disclosure state safely', () => {
+    assert.deepEqual(defaultFreshSectionState, {
+      candidates: true,
+      pipeline: false,
+      configuration: false,
+    });
+    assert.deepEqual(parseFreshSectionState(null), defaultFreshSectionState);
+    assert.deepEqual(
+      parseFreshSectionState('{not json'),
+      defaultFreshSectionState
+    );
+    assert.deepEqual(
+      parseFreshSectionState(
+        JSON.stringify({
+          candidates: true,
+          pipeline: true,
+          configuration: true,
+        })
+      ),
+      { candidates: true, pipeline: true, configuration: true }
+    );
+    const source = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
+    assert.match(source, /FRESH_SECTION_STATE_KEY/);
+    assert.match(source, /aria-expanded={open}/);
+    assert.match(source, /aria-controls={contentId}/);
+    assert.match(source, /focus:ring-2 focus:ring-indigo-500/);
+    assert.match(source, /id="candidates"[\s\S]*?order=\{1\}/);
+    assert.match(source, /id="pipeline"[\s\S]*?order=\{2\}/);
+    assert.match(source, /id="configuration"[\s\S]*?order=\{3\}/);
   });
 
   it('renders the native media icon segment adjacent to the media-type select', () => {
@@ -245,8 +294,9 @@ describe('Fresh settings client boundary', () => {
   it('uses native destructive confirmation for a completed Fresh rebuild', () => {
     const source = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
     assert.match(source, /rebuildTitle: 'Rebuild Fresh Data\?'/);
-    assert.match(source, /persisted Fresh discovery history/);
-    assert.match(source, /Watchlist, requests, media-library state/);
+    assert.match(source, /Irreversible Fresh history/);
+    assert.match(source, /typed manual resolutions/);
+    assert.match(source, /admission overrides are preserved/);
     assert.match(source, /okButtonType="danger"/);
     assert.match(source, /\/api\/v1\/settings\/fresh\/rebuild/);
     assert.match(source, /await axios\.post/);

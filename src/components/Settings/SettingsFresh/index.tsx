@@ -5,23 +5,35 @@ import SensitiveInput from '@app/components/Common/SensitiveInput';
 import CandidateDiagnostics from '@app/components/Settings/SettingsFresh/CandidateDiagnostics';
 import FreshContentFilters from '@app/components/Settings/SettingsFresh/FreshContentFilters';
 import {
+  FRESH_SECTION_STATE_KEY,
+  defaultFreshSectionState,
   loadFreshFilters,
+  parseFreshSectionState,
   selectedFreshFilter,
   toFreshConnectionUpdate,
   toFreshFilterSelectOptions,
   toFreshSettingsFormValues,
   toFreshSettingsUpdate,
   type FreshFilterOption,
+  type FreshSectionId,
+  type FreshSectionState,
   type FreshSettingsResponse,
 } from '@app/components/Settings/SettingsFresh/settingsFresh';
 import useToasts from '@app/hooks/useToasts';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
-import { ArrowPathIcon, BeakerIcon } from '@heroicons/react/24/solid';
-import type { FreshDiagnosticsSnapshot } from '@server/lib/fresh';
+import {
+  ArrowPathIcon,
+  BeakerIcon,
+  ChevronDownIcon,
+} from '@heroicons/react/24/solid';
+import type {
+  FreshCandidateDiagnosticResponse,
+  FreshDiagnosticsSnapshot,
+} from '@server/lib/fresh';
 import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
-import { Fragment, useEffect, useState } from 'react';
+import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 import Select from 'react-select';
 import useSWR, { mutate } from 'swr';
@@ -57,7 +69,7 @@ const messages = defineMessages('components.Settings.SettingsFresh', {
   unavailableFilter: 'Configured filter unavailable (ID: {id})',
   mediaEligibilityDays: 'Media eligibility window (days)',
   mediaEligibilityHelp:
-    'At the first qualifying observation, how old the canonical movie release or series first-air date may be.',
+    'Normal Movie eligibility window and TV recent-season activity sanity window. Movies also receive a fixed 14-day first-observation grace.',
   freshVisibilityDays: 'Keep items in Fresh for (days)',
   freshVisibilityHelp:
     'How long admitted media remains visible after its first qualifying observation.',
@@ -77,11 +89,11 @@ const messages = defineMessages('components.Settings.SettingsFresh', {
   refreshDisabled: 'Enable and save Fresh settings before refreshing.',
   maintenance: 'Maintenance',
   maintenanceHelp:
-    'Rebuild persistent Fresh discovery data only when a clean source reconstruction is required.',
+    'Rebuild source-derived observations and automatic candidates only when a clean source reconstruction is required.',
   rebuild: 'Rebuild Fresh Data',
   rebuildTitle: 'Rebuild Fresh Data?',
   rebuildConfirm:
-    'This deletes all persisted Fresh discovery history and rebuilds it from releases currently retained by autobrr. Fresh observations no longer present in autobrr Release History cannot be recovered. Watchlist, requests, media-library state, Radarr, Sonarr, and autobrr are unaffected.',
+    'This clears source-derived observations, automatic candidates, and synchronization state, then rebuilds from releases currently retained by autobrr. Irreversible Fresh history, canonical media metadata, typed manual resolutions, and admission overrides are preserved. Releases no longer retained by autobrr cannot be recovered.',
   rebuildSuccess: 'Fresh data was rebuilt successfully.',
   rebuildFailed:
     'Fresh data could not be rebuilt. Check the pipeline status for the failed stage.',
@@ -171,6 +183,52 @@ const diagnosticLabel = (value: string) =>
   value
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase());
+
+const FreshSettingsSection = ({
+  id,
+  title,
+  summary,
+  open,
+  order,
+  onToggle,
+  children,
+}: {
+  id: FreshSectionId;
+  title: string;
+  summary: string;
+  open: boolean;
+  order: 1 | 2 | 3;
+  onToggle: () => void;
+  children: ReactNode;
+}) => {
+  const contentId = `fresh-settings-${id}`;
+  const orderClass = { 1: 'order-1', 2: 'order-2', 3: 'order-3' }[order];
+  return (
+    <section className={`${orderClass} border-t border-gray-700 py-6`}>
+      <button
+        type="button"
+        className="flex w-full items-start justify-between gap-4 rounded text-left focus:outline-none focus:ring-2 focus:ring-indigo-500"
+        aria-expanded={open}
+        aria-controls={contentId}
+        onClick={onToggle}
+      >
+        <span>
+          <span className="heading block">{title}</span>
+          <span className="mt-1 block text-sm text-gray-400">{summary}</span>
+        </span>
+        <ChevronDownIcon
+          className={`mt-1 h-5 w-5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open && (
+        <div id={contentId} className="pt-5">
+          {children}
+        </div>
+      )}
+    </section>
+  );
+};
+
 const SettingsFresh = () => {
   const intl = useIntl();
   const { addToast } = useToasts();
@@ -181,6 +239,9 @@ const SettingsFresh = () => {
   const [refreshing, setRefreshing] = useState(false);
   const [rebuilding, setRebuilding] = useState(false);
   const [showRebuildConfirmation, setShowRebuildConfirmation] = useState(false);
+  const [sections, setSections] = useState<FreshSectionState>(
+    defaultFreshSectionState
+  );
   const {
     data,
     error,
@@ -188,6 +249,9 @@ const SettingsFresh = () => {
   } = useSWR<FreshSettingsResponse>('/api/v1/settings/fresh');
   const { data: diagnostics, mutate: revalidateDiagnostics } =
     useSWR<DiagnosticsResponse>('/api/v1/settings/fresh/diagnostics');
+  const { data: candidateSummary } = useSWR<FreshCandidateDiagnosticResponse>(
+    '/api/v1/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority'
+  );
   const apiTokenConfigured = data?.apiTokenConfigured;
   const baseUrl = data?.baseUrl;
   useEffect(() => {
@@ -213,6 +277,23 @@ const SettingsFresh = () => {
       active = false;
     };
   }, [apiTokenConfigured, baseUrl]);
+  useEffect(() => {
+    setSections(
+      parseFreshSectionState(
+        window.localStorage.getItem(FRESH_SECTION_STATE_KEY)
+      )
+    );
+  }, []);
+  const toggleSection = (id: FreshSectionId) => {
+    setSections((current) => {
+      const next = { ...current, [id]: !current[id] };
+      window.localStorage.setItem(
+        FRESH_SECTION_STATE_KEY,
+        JSON.stringify(next)
+      );
+      return next;
+    });
+  };
   if (!data && !error) return <LoadingSpinner />;
   if (!data) return null;
   const schema = Yup.object({
@@ -303,6 +384,25 @@ const SettingsFresh = () => {
         [messages.currentMedia, counts.currentFreshMedia],
       ] as const)
     : [];
+  const candidateSectionSummary = candidateSummary
+    ? `Needs Attention ${candidateSummary.summary.needsAttention} · Reviewable ${candidateSummary.summary.reviewable} · Active ${candidateSummary.summary.activeFresh}`
+    : 'Loading durable candidate state…';
+  const pipelineFailure =
+    diagnostics?.latestAttempt?.outcome === 'failed'
+      ? `Failed at ${diagnosticLabel(
+          diagnostics.latestAttempt.failingStage ?? 'reconciliation'
+        )}: ${diagnosticLabel(
+          diagnostics.latestAttempt.failureReason ?? 'unexpected_failure'
+        )}`
+      : undefined;
+  const pipelineSectionSummary = pipelineFailure
+    ? `${pipelineFailure} · ${continuity} · Last success ${formatTimestamp(
+        projection?.lastRefresh
+      )}`
+    : projection
+      ? `${projection.status} · Last sync ${formatTimestamp(projection.lastRefresh)} · ${continuity} · ${projection.itemCount} Fresh`
+      : 'Pipeline state unavailable';
+  const configurationSectionSummary = `${data.enabled ? 'Enabled' : 'Disabled'} · ${data.cachedFilterName || `Filter ${data.filterId || 'not selected'}`} · ${data.mediaEligibilityDays}-day Movie/TV-activity window · ${data.freshVisibilityDays}-day visibility`;
   const rebuildFresh = async () => {
     setShowRebuildConfirmation(false);
     setRebuilding(true);
@@ -351,483 +451,537 @@ const SettingsFresh = () => {
           {intl.formatMessage(messages.description)}
         </p>
       </div>
-      <Formik
-        enableReinitialize
-        validationSchema={schema}
-        initialValues={toFreshSettingsFormValues(data)}
-        onSubmit={async (values) => {
-          try {
-            await axios.put(
-              '/api/v1/settings/fresh',
-              toFreshSettingsUpdate(values)
-            );
-            await Promise.all([
-              revalidate(),
-              mutate('/api/v1/settings/public'),
-            ]);
-            addToast(intl.formatMessage(messages.saved), {
-              appearance: 'success',
-              autoDismiss: true,
-            });
-          } catch {
-            addToast(intl.formatMessage(messages.saveFailed), {
-              appearance: 'error',
-              autoDismiss: true,
-            });
-          }
-        }}
-      >
-        {({
-          values,
-          setFieldValue,
-          isSubmitting,
-          isValid,
-          errors,
-          touched,
-        }) => {
-          const loadFilters = async () => {
-            setTesting(true);
-            const result = await loadFreshFilters(async () => {
-              const response = await axios.post<FreshFilterOption[]>(
-                '/api/v1/settings/fresh/filters',
-                toFreshConnectionUpdate(values)
-              );
-              return response.data;
-            });
-            if (result.ok) {
-              setFilters(result.filters);
-              setFiltersLoaded(true);
-              addToast(intl.formatMessage(messages.testSuccess), {
-                appearance: 'success',
-                autoDismiss: true,
-              });
-            } else {
-              addToast(intl.formatMessage(messages.testFailed), {
-                appearance: 'error',
-                autoDismiss: true,
-              });
-            }
-            setTesting(false);
-          };
-          const filterOptions = toFreshFilterSelectOptions(filters);
-          return (
-            <Form className="section">
-              <div className="form-row">
-                <label className="checkbox-label" htmlFor="enabled">
-                  {intl.formatMessage(messages.enabled)}
-                </label>
-                <div className="form-input-area">
-                  <Field type="checkbox" id="enabled" name="enabled" />
-                </div>
-              </div>
-              <div className="form-row">
-                <label htmlFor="hostname" className="text-label">
-                  {intl.formatMessage(messages.hostname)}
-                  <span className="label-required">*</span>
-                </label>
-                <div className="form-input-area">
-                  <div className="form-input-field">
-                    <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-gray-100 sm:text-sm">
-                      {values.protocol}://
-                    </span>
-                    <Field
-                      id="hostname"
-                      name="hostname"
-                      type="text"
-                      inputMode="url"
-                      className="rounded-r-only"
-                    />
-                  </div>
-                  {errors.hostname && touched.hostname && (
-                    <div className="error">{errors.hostname}</div>
-                  )}
-                </div>
-              </div>
-              <div className="form-row">
-                <label htmlFor="port" className="text-label">
-                  {intl.formatMessage(messages.port)}
-                  <span className="label-required">*</span>
-                </label>
-                <div className="form-input-area">
-                  <Field
-                    id="port"
-                    name="port"
-                    type="text"
-                    inputMode="numeric"
-                    className="short"
-                  />
-                  {errors.port && touched.port && (
-                    <div className="error">{errors.port}</div>
-                  )}
-                </div>
-              </div>
-              <div className="form-row">
-                <label htmlFor="ssl" className="checkbox-label">
-                  {intl.formatMessage(messages.ssl)}
-                </label>
-                <div className="form-input-area">
-                  <Field
-                    type="checkbox"
-                    id="ssl"
-                    name="ssl"
-                    checked={values.protocol === 'https'}
-                    onChange={() =>
-                      setFieldValue(
-                        'protocol',
-                        values.protocol === 'https' ? 'http' : 'https'
-                      )
-                    }
-                  />
-                </div>
-              </div>
-              <div className="form-row">
-                <label htmlFor="apiToken" className="text-label">
-                  {intl.formatMessage(messages.apiToken)}
-                  <span className="label-required">*</span>
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.apiTokenHelp)}
-                  </span>
-                </label>
-                <div className="form-input-area">
-                  <div className="form-input-field">
-                    <SensitiveInput
-                      as="field"
-                      id="apiToken"
-                      name="apiToken"
-                      onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
-                        setFieldValue('apiToken', e.target.value)
-                      }
-                    />
-                  </div>
-                  {errors.apiToken &&
-                    touched.apiToken &&
-                    typeof errors.apiToken === 'string' && (
-                      <div className="error">{errors.apiToken}</div>
-                    )}
-                </div>
-              </div>
-              <div className="form-row">
-                <div />
-                <div className="form-input-area">
-                  <Button
-                    type="button"
-                    onClick={loadFilters}
-                    disabled={testing || loadingFilters || isSubmitting}
-                  >
-                    {testing ? (
-                      <ArrowPathIcon className="animate-spin" />
-                    ) : (
-                      <BeakerIcon />
-                    )}
-                    <span>{intl.formatMessage(messages.test)}</span>
-                  </Button>
-                </div>
-              </div>
-              <div className="form-row">
-                <label htmlFor="filterId" className="text-label">
-                  {intl.formatMessage(messages.filter)}
-                  <span className="label-required">*</span>
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.filterHelp)}
-                  </span>
-                </label>
-                <div className="form-input-area">
-                  <Select
-                    inputId="filterId"
-                    className="react-select-container"
-                    classNamePrefix="react-select"
-                    options={filterOptions}
-                    value={selectedFreshFilter(
-                      filterOptions,
-                      Number(values.filterId),
-                      filtersLoaded
-                        ? values.cachedFilterName
-                          ? `${values.cachedFilterName} (unverified)`
-                          : intl.formatMessage(messages.unavailableFilter, {
-                              id: values.filterId,
-                            })
-                        : intl.formatMessage(messages.loadingFilter)
-                    )}
-                    isLoading={testing || loadingFilters}
-                    isDisabled={testing || loadingFilters || isSubmitting}
-                    onChange={(option) => {
-                      setFieldValue('filterId', option?.value ?? 0);
-                      setFieldValue('cachedFilterName', option?.label ?? '');
-                    }}
-                  />
-                  {errors.filterId && touched.filterId && (
-                    <div className="error">{errors.filterId}</div>
-                  )}
-                </div>
-              </div>
-              <div className="form-row">
-                <label htmlFor="mediaEligibilityDays" className="text-label">
-                  {intl.formatMessage(messages.mediaEligibilityDays)}
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.mediaEligibilityHelp)}
-                  </span>
-                </label>
-                <div className="form-input-area">
-                  <div className="form-input-field">
-                    <Field
-                      type="text"
-                      inputMode="numeric"
-                      id="mediaEligibilityDays"
-                      name="mediaEligibilityDays"
-                      className="short"
-                    />
-                  </div>
-                  {errors.mediaEligibilityDays &&
-                    touched.mediaEligibilityDays && (
-                      <div className="error">{errors.mediaEligibilityDays}</div>
-                    )}
-                </div>
-              </div>
-              <div className="form-row">
-                <label htmlFor="freshVisibilityDays" className="text-label">
-                  {intl.formatMessage(messages.freshVisibilityDays)}
-                  <span className="label-tip">
-                    {intl.formatMessage(messages.freshVisibilityHelp)}
-                  </span>
-                </label>
-                <div className="form-input-area">
-                  <div className="form-input-field">
-                    <Field
-                      type="text"
-                      inputMode="numeric"
-                      id="freshVisibilityDays"
-                      name="freshVisibilityDays"
-                      className="short"
-                    />
-                  </div>
-                  {errors.freshVisibilityDays &&
-                    touched.freshVisibilityDays && (
-                      <div className="error">{errors.freshVisibilityDays}</div>
-                    )}
-                </div>
-              </div>
-              <FreshContentFilters />
-              <div className="actions">
-                <div className="flex justify-end">
-                  <Button
-                    buttonType="primary"
-                    type="submit"
-                    disabled={isSubmitting || !isValid}
-                  >
-                    {isSubmitting && <ArrowPathIcon className="animate-spin" />}
-                    {intl.formatMessage(messages.save)}
-                  </Button>
-                </div>
-              </div>
-            </Form>
-          );
-        }}
-      </Formik>
-      <div className="mt-12 border-t border-gray-700 pt-8">
-        <h3 className="heading">{intl.formatMessage(messages.maintenance)}</h3>
-        <p className="description">
-          {intl.formatMessage(messages.maintenanceHelp)}
-        </p>
-        <Button
-          buttonType="danger"
-          disabled={rebuilding || refreshing || !data.enabled}
-          onClick={() => setShowRebuildConfirmation(true)}
+      <div className="flex flex-col">
+        <FreshSettingsSection
+          id="candidates"
+          title="Candidate Diagnostics"
+          summary={candidateSectionSummary}
+          open={sections.candidates}
+          order={1}
+          onToggle={() => toggleSection('candidates')}
         >
-          {rebuilding && <ArrowPathIcon className="animate-spin" />}
-          <span>{intl.formatMessage(messages.rebuild)}</span>
-        </Button>
-      </div>
-      <div className="mt-12">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h3 className="heading">
-              {intl.formatMessage(messages.diagnostics)}
-            </h3>
-            <p className="description">
-              {intl.formatMessage(messages.latestAttempt)}:{' '}
-              {diagnostics?.latestAttempt?.outcome ?? '—'} ·{' '}
-              {intl.formatMessage(messages.currentProjection)}:{' '}
-              {diagnostics?.currentProjection.status ?? '—'} (
-              {diagnostics?.currentProjection.itemCount ?? 0})
-            </p>
-            {diagnostics?.latestAttempt?.failingStage &&
-              diagnostics.latestAttempt.failureReason && (
-                <p className="mt-1 text-sm text-red-400">
-                  {intl.formatMessage(messages.failedAt, {
-                    stage: diagnosticLabel(
-                      diagnostics.latestAttempt.failingStage
-                    ),
-                    reason: diagnosticLabel(
-                      diagnostics.latestAttempt.failureReason
-                    ),
-                  })}
-                </p>
-              )}
-            {['failed', 'cancelled'].includes(
-              diagnostics?.latestAttempt?.outcome ?? ''
-            ) && (
-              <p className="mt-1 text-sm text-gray-300">
-                {diagnostics?.latestAttempt?.lastGood
-                  ? intl.formatMessage(messages.retainedProjection, {
-                      timestamp: diagnostics.latestAttempt.lastGood.timestamp,
-                      count: diagnostics.latestAttempt.lastGood.itemCount,
-                    })
-                  : intl.formatMessage(messages.noProjection)}
-              </p>
-            )}
-          </div>
-          <Button
-            disabled={refreshing || rebuilding || !data.enabled}
-            onClick={async () => {
-              setRefreshing(true);
+          <CandidateDiagnostics
+            showHeader={false}
+            key={diagnostics?.currentProjection.lastRefresh ?? 'uninitialized'}
+          />
+        </FreshSettingsSection>
+        <FreshSettingsSection
+          id="configuration"
+          title="Configuration"
+          summary={configurationSectionSummary}
+          open={sections.configuration}
+          order={3}
+          onToggle={() => toggleSection('configuration')}
+        >
+          <Formik
+            enableReinitialize
+            validationSchema={schema}
+            initialValues={toFreshSettingsFormValues(data)}
+            onSubmit={async (values) => {
               try {
-                const response = await axios.post<{ status: string }>(
-                  '/api/v1/settings/fresh/refresh'
+                await axios.put(
+                  '/api/v1/settings/fresh',
+                  toFreshSettingsUpdate(values)
                 );
                 await Promise.all([
-                  revalidateDiagnostics(),
-                  mutate('/api/v1/fresh'),
+                  revalidate(),
+                  mutate('/api/v1/settings/public'),
                 ]);
-                if (['stale', 'unavailable'].includes(response.data.status)) {
-                  addToast(
-                    intl.formatMessage(
-                      response.data.status === 'unavailable'
-                        ? messages.refreshFailedNoProjection
-                        : messages.refreshFailed
-                    ),
-                    {
-                      appearance: 'error',
-                      autoDismiss: true,
-                    }
-                  );
-                } else {
-                  addToast(intl.formatMessage(messages.refreshSuccess), {
-                    appearance: 'success',
-                    autoDismiss: true,
-                  });
-                }
+                addToast(intl.formatMessage(messages.saved), {
+                  appearance: 'success',
+                  autoDismiss: true,
+                });
               } catch {
-                addToast(
-                  intl.formatMessage(
-                    diagnostics?.currentProjection.lastRefresh
-                      ? messages.refreshFailed
-                      : messages.refreshFailedNoProjection
-                  ),
-                  {
-                    appearance: 'error',
-                    autoDismiss: true,
-                  }
-                );
-                await revalidateDiagnostics();
-              } finally {
-                setRefreshing(false);
+                addToast(intl.formatMessage(messages.saveFailed), {
+                  appearance: 'error',
+                  autoDismiss: true,
+                });
               }
             }}
           >
-            <ArrowPathIcon className={refreshing ? 'animate-spin' : ''} />
-            <span>{intl.formatMessage(messages.refresh)}</span>
-          </Button>
-        </div>
-        {!data.enabled && (
-          <p className="mb-4 text-sm text-gray-400">
-            {intl.formatMessage(messages.refreshDisabled)}
-          </p>
-        )}
-        <div className="mb-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-          {projectionRows.map(([label, value]) => (
-            <div className="rounded-md bg-gray-800 p-3" key={label.id}>
-              <div className="text-sm text-gray-400">
-                {intl.formatMessage(label)}
+            {({
+              values,
+              setFieldValue,
+              isSubmitting,
+              isValid,
+              errors,
+              touched,
+            }) => {
+              const loadFilters = async () => {
+                setTesting(true);
+                const result = await loadFreshFilters(async () => {
+                  const response = await axios.post<FreshFilterOption[]>(
+                    '/api/v1/settings/fresh/filters',
+                    toFreshConnectionUpdate(values)
+                  );
+                  return response.data;
+                });
+                if (result.ok) {
+                  setFilters(result.filters);
+                  setFiltersLoaded(true);
+                  addToast(intl.formatMessage(messages.testSuccess), {
+                    appearance: 'success',
+                    autoDismiss: true,
+                  });
+                } else {
+                  addToast(intl.formatMessage(messages.testFailed), {
+                    appearance: 'error',
+                    autoDismiss: true,
+                  });
+                }
+                setTesting(false);
+              };
+              const filterOptions = toFreshFilterSelectOptions(filters);
+              return (
+                <Form className="section">
+                  <div className="form-row">
+                    <label className="checkbox-label" htmlFor="enabled">
+                      {intl.formatMessage(messages.enabled)}
+                    </label>
+                    <div className="form-input-area">
+                      <Field type="checkbox" id="enabled" name="enabled" />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="hostname" className="text-label">
+                      {intl.formatMessage(messages.hostname)}
+                      <span className="label-required">*</span>
+                    </label>
+                    <div className="form-input-area">
+                      <div className="form-input-field">
+                        <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-gray-100 sm:text-sm">
+                          {values.protocol}://
+                        </span>
+                        <Field
+                          id="hostname"
+                          name="hostname"
+                          type="text"
+                          inputMode="url"
+                          className="rounded-r-only"
+                        />
+                      </div>
+                      {errors.hostname && touched.hostname && (
+                        <div className="error">{errors.hostname}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="port" className="text-label">
+                      {intl.formatMessage(messages.port)}
+                      <span className="label-required">*</span>
+                    </label>
+                    <div className="form-input-area">
+                      <Field
+                        id="port"
+                        name="port"
+                        type="text"
+                        inputMode="numeric"
+                        className="short"
+                      />
+                      {errors.port && touched.port && (
+                        <div className="error">{errors.port}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="ssl" className="checkbox-label">
+                      {intl.formatMessage(messages.ssl)}
+                    </label>
+                    <div className="form-input-area">
+                      <Field
+                        type="checkbox"
+                        id="ssl"
+                        name="ssl"
+                        checked={values.protocol === 'https'}
+                        onChange={() =>
+                          setFieldValue(
+                            'protocol',
+                            values.protocol === 'https' ? 'http' : 'https'
+                          )
+                        }
+                      />
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="apiToken" className="text-label">
+                      {intl.formatMessage(messages.apiToken)}
+                      <span className="label-required">*</span>
+                      <span className="label-tip">
+                        {intl.formatMessage(messages.apiTokenHelp)}
+                      </span>
+                    </label>
+                    <div className="form-input-area">
+                      <div className="form-input-field">
+                        <SensitiveInput
+                          as="field"
+                          id="apiToken"
+                          name="apiToken"
+                          onChange={(e: React.ChangeEvent<HTMLInputElement>) =>
+                            setFieldValue('apiToken', e.target.value)
+                          }
+                        />
+                      </div>
+                      {errors.apiToken &&
+                        touched.apiToken &&
+                        typeof errors.apiToken === 'string' && (
+                          <div className="error">{errors.apiToken}</div>
+                        )}
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <div />
+                    <div className="form-input-area">
+                      <Button
+                        type="button"
+                        onClick={loadFilters}
+                        disabled={testing || loadingFilters || isSubmitting}
+                      >
+                        {testing ? (
+                          <ArrowPathIcon className="animate-spin" />
+                        ) : (
+                          <BeakerIcon />
+                        )}
+                        <span>{intl.formatMessage(messages.test)}</span>
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="filterId" className="text-label">
+                      {intl.formatMessage(messages.filter)}
+                      <span className="label-required">*</span>
+                      <span className="label-tip">
+                        {intl.formatMessage(messages.filterHelp)}
+                      </span>
+                    </label>
+                    <div className="form-input-area">
+                      <Select
+                        inputId="filterId"
+                        className="react-select-container"
+                        classNamePrefix="react-select"
+                        options={filterOptions}
+                        value={selectedFreshFilter(
+                          filterOptions,
+                          Number(values.filterId),
+                          filtersLoaded
+                            ? values.cachedFilterName
+                              ? `${values.cachedFilterName} (unverified)`
+                              : intl.formatMessage(messages.unavailableFilter, {
+                                  id: values.filterId,
+                                })
+                            : intl.formatMessage(messages.loadingFilter)
+                        )}
+                        isLoading={testing || loadingFilters}
+                        isDisabled={testing || loadingFilters || isSubmitting}
+                        onChange={(option) => {
+                          setFieldValue('filterId', option?.value ?? 0);
+                          setFieldValue(
+                            'cachedFilterName',
+                            option?.label ?? ''
+                          );
+                        }}
+                      />
+                      {errors.filterId && touched.filterId && (
+                        <div className="error">{errors.filterId}</div>
+                      )}
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <label
+                      htmlFor="mediaEligibilityDays"
+                      className="text-label"
+                    >
+                      {intl.formatMessage(messages.mediaEligibilityDays)}
+                      <span className="label-tip">
+                        {intl.formatMessage(messages.mediaEligibilityHelp)}
+                      </span>
+                    </label>
+                    <div className="form-input-area">
+                      <div className="form-input-field">
+                        <Field
+                          type="text"
+                          inputMode="numeric"
+                          id="mediaEligibilityDays"
+                          name="mediaEligibilityDays"
+                          className="short"
+                        />
+                      </div>
+                      {errors.mediaEligibilityDays &&
+                        touched.mediaEligibilityDays && (
+                          <div className="error">
+                            {errors.mediaEligibilityDays}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                  <div className="form-row">
+                    <label htmlFor="freshVisibilityDays" className="text-label">
+                      {intl.formatMessage(messages.freshVisibilityDays)}
+                      <span className="label-tip">
+                        {intl.formatMessage(messages.freshVisibilityHelp)}
+                      </span>
+                    </label>
+                    <div className="form-input-area">
+                      <div className="form-input-field">
+                        <Field
+                          type="text"
+                          inputMode="numeric"
+                          id="freshVisibilityDays"
+                          name="freshVisibilityDays"
+                          className="short"
+                        />
+                      </div>
+                      {errors.freshVisibilityDays &&
+                        touched.freshVisibilityDays && (
+                          <div className="error">
+                            {errors.freshVisibilityDays}
+                          </div>
+                        )}
+                    </div>
+                  </div>
+                  <FreshContentFilters />
+                  <div className="actions">
+                    <div className="flex justify-end">
+                      <Button
+                        buttonType="primary"
+                        type="submit"
+                        disabled={isSubmitting || !isValid}
+                      >
+                        {isSubmitting && (
+                          <ArrowPathIcon className="animate-spin" />
+                        )}
+                        {intl.formatMessage(messages.save)}
+                      </Button>
+                    </div>
+                  </div>
+                </Form>
+              );
+            }}
+          </Formik>
+          <div className="mt-12 border-t border-gray-700 pt-8">
+            <h3 className="heading">
+              {intl.formatMessage(messages.maintenance)}
+            </h3>
+            <p className="description">
+              {intl.formatMessage(messages.maintenanceHelp)}
+            </p>
+            <Button
+              buttonType="danger"
+              disabled={rebuilding || refreshing || !data.enabled}
+              onClick={() => setShowRebuildConfirmation(true)}
+            >
+              {rebuilding && <ArrowPathIcon className="animate-spin" />}
+              <span>{intl.formatMessage(messages.rebuild)}</span>
+            </Button>
+          </div>
+        </FreshSettingsSection>
+        <FreshSettingsSection
+          id="pipeline"
+          title={intl.formatMessage(messages.diagnostics)}
+          summary={pipelineSectionSummary}
+          open={sections.pipeline}
+          order={2}
+          onToggle={() => toggleSection('pipeline')}
+        >
+          <div className="mt-12">
+            <div className="mb-4 flex items-center justify-between">
+              <div>
+                <p className="description">
+                  {intl.formatMessage(messages.latestAttempt)}:{' '}
+                  {diagnostics?.latestAttempt?.outcome ?? '—'} ·{' '}
+                  {intl.formatMessage(messages.currentProjection)}:{' '}
+                  {diagnostics?.currentProjection.status ?? '—'} (
+                  {diagnostics?.currentProjection.itemCount ?? 0})
+                </p>
+                {diagnostics?.latestAttempt?.failingStage &&
+                  diagnostics.latestAttempt.failureReason && (
+                    <p className="mt-1 text-sm text-red-400">
+                      {intl.formatMessage(messages.failedAt, {
+                        stage: diagnosticLabel(
+                          diagnostics.latestAttempt.failingStage
+                        ),
+                        reason: diagnosticLabel(
+                          diagnostics.latestAttempt.failureReason
+                        ),
+                      })}
+                    </p>
+                  )}
+                {['failed', 'cancelled'].includes(
+                  diagnostics?.latestAttempt?.outcome ?? ''
+                ) && (
+                  <p className="mt-1 text-sm text-gray-300">
+                    {diagnostics?.latestAttempt?.lastGood
+                      ? intl.formatMessage(messages.retainedProjection, {
+                          timestamp:
+                            diagnostics.latestAttempt.lastGood.timestamp,
+                          count: diagnostics.latestAttempt.lastGood.itemCount,
+                        })
+                      : intl.formatMessage(messages.noProjection)}
+                  </p>
+                )}
               </div>
-              <div className="break-words text-lg font-semibold">{value}</div>
+              <Button
+                disabled={refreshing || rebuilding || !data.enabled}
+                onClick={async () => {
+                  setRefreshing(true);
+                  try {
+                    const response = await axios.post<{ status: string }>(
+                      '/api/v1/settings/fresh/refresh'
+                    );
+                    await Promise.all([
+                      revalidateDiagnostics(),
+                      mutate('/api/v1/fresh'),
+                    ]);
+                    if (
+                      ['stale', 'unavailable'].includes(response.data.status)
+                    ) {
+                      addToast(
+                        intl.formatMessage(
+                          response.data.status === 'unavailable'
+                            ? messages.refreshFailedNoProjection
+                            : messages.refreshFailed
+                        ),
+                        {
+                          appearance: 'error',
+                          autoDismiss: true,
+                        }
+                      );
+                    } else {
+                      addToast(intl.formatMessage(messages.refreshSuccess), {
+                        appearance: 'success',
+                        autoDismiss: true,
+                      });
+                    }
+                  } catch {
+                    addToast(
+                      intl.formatMessage(
+                        diagnostics?.currentProjection.lastRefresh
+                          ? messages.refreshFailed
+                          : messages.refreshFailedNoProjection
+                      ),
+                      {
+                        appearance: 'error',
+                        autoDismiss: true,
+                      }
+                    );
+                    await revalidateDiagnostics();
+                  } finally {
+                    setRefreshing(false);
+                  }
+                }}
+              >
+                <ArrowPathIcon className={refreshing ? 'animate-spin' : ''} />
+                <span>{intl.formatMessage(messages.refresh)}</span>
+              </Button>
             </div>
-          ))}
-        </div>
-        {!diagnostics?.latestAttempt ? (
-          <p className="text-gray-400">
-            {intl.formatMessage(messages.noDiagnostics)}
-          </p>
-        ) : (
-          <>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              {countRows.map(([label, value]) => (
+            {!data.enabled && (
+              <p className="mb-4 text-sm text-gray-400">
+                {intl.formatMessage(messages.refreshDisabled)}
+              </p>
+            )}
+            <div className="mb-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+              {projectionRows.map(([label, value]) => (
                 <div className="rounded-md bg-gray-800 p-3" key={label.id}>
                   <div className="text-sm text-gray-400">
                     {intl.formatMessage(label)}
                   </div>
-                  <div className="text-2xl font-semibold">
-                    {value === null ? '—' : value.toLocaleString()}
+                  <div className="break-words text-lg font-semibold">
+                    {value}
                   </div>
                 </div>
               ))}
             </div>
-            <h4 className="mb-3 mt-8 text-xl font-semibold">
-              {intl.formatMessage(messages.stages)}
-            </h4>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {Object.entries(diagnostics.latestAttempt.stages).map(
-                ([stage, status]) => (
-                  <div className="rounded-md bg-gray-800 p-3" key={stage}>
-                    <div className="text-sm text-gray-400">
-                      {diagnosticLabel(stage)}
-                    </div>
-                    <div className="font-semibold">
-                      {diagnosticLabel(status)}
-                    </div>
+            {!diagnostics?.latestAttempt ? (
+              <p className="text-gray-400">
+                {intl.formatMessage(messages.noDiagnostics)}
+              </p>
+            ) : (
+              <details className="rounded-md border border-gray-700 p-4">
+                <summary className="cursor-pointer font-semibold focus:outline-none focus:ring-2 focus:ring-indigo-500">
+                  Detailed diagnostics
+                </summary>
+                <div className="mt-4">
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+                    {countRows.map(([label, value]) => (
+                      <div
+                        className="rounded-md bg-gray-800 p-3"
+                        key={label.id}
+                      >
+                        <div className="text-sm text-gray-400">
+                          {intl.formatMessage(label)}
+                        </div>
+                        <div className="text-2xl font-semibold">
+                          {value === null ? '—' : value.toLocaleString()}
+                        </div>
+                      </div>
+                    ))}
                   </div>
-                )
-              )}
-            </div>
-            {diagnostics.latestAttempt.decisions.length > 0 && (
-              <>
-                <h4 className="mb-3 mt-8 text-xl font-semibold">
-                  {intl.formatMessage(messages.decisions)}
-                </h4>
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left text-sm">
-                    <thead className="text-gray-400">
-                      <tr>
-                        <th>{intl.formatMessage(messages.mediaTitle)}</th>
-                        <th>{intl.formatMessage(messages.type)}</th>
-                        <th>{intl.formatMessage(messages.year)}</th>
-                        <th>{intl.formatMessage(messages.gate)}</th>
-                        <th>{intl.formatMessage(messages.outcome)}</th>
-                        <th>{intl.formatMessage(messages.reason)}</th>
-                        <th>{intl.formatMessage(messages.matched)}</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {diagnostics.latestAttempt.decisions.map(
-                        (decision, index) => (
-                          <tr
-                            className="border-t border-gray-700"
-                            key={`${decision.reason}-${index}`}
-                          >
-                            <td>{decision.title}</td>
-                            <td>{decision.mediaType}</td>
-                            <td>{decision.year ?? '—'}</td>
-                            <td>{diagnosticLabel(decision.stage)}</td>
-                            <td>{diagnosticLabel(decision.outcome)}</td>
-                            <td>{diagnosticLabel(decision.reason)}</td>
-                            <td>
-                              {decision.tmdbId
-                                ? `${decision.mediaType}:${decision.tmdbId}`
-                                : '—'}
-                            </td>
-                          </tr>
-                        )
-                      )}
-                    </tbody>
-                  </table>
+                  <h4 className="mb-3 mt-8 text-xl font-semibold">
+                    {intl.formatMessage(messages.stages)}
+                  </h4>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {Object.entries(diagnostics.latestAttempt.stages).map(
+                      ([stage, status]) => (
+                        <div className="rounded-md bg-gray-800 p-3" key={stage}>
+                          <div className="text-sm text-gray-400">
+                            {diagnosticLabel(stage)}
+                          </div>
+                          <div className="font-semibold">
+                            {diagnosticLabel(status)}
+                          </div>
+                        </div>
+                      )
+                    )}
+                  </div>
+                  {diagnostics.latestAttempt.decisions.length > 0 && (
+                    <>
+                      <h4 className="mb-3 mt-8 text-xl font-semibold">
+                        {intl.formatMessage(messages.decisions)}
+                      </h4>
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left text-sm">
+                          <thead className="text-gray-400">
+                            <tr>
+                              <th>{intl.formatMessage(messages.mediaTitle)}</th>
+                              <th>{intl.formatMessage(messages.type)}</th>
+                              <th>{intl.formatMessage(messages.year)}</th>
+                              <th>{intl.formatMessage(messages.gate)}</th>
+                              <th>{intl.formatMessage(messages.outcome)}</th>
+                              <th>{intl.formatMessage(messages.reason)}</th>
+                              <th>{intl.formatMessage(messages.matched)}</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {diagnostics.latestAttempt.decisions.map(
+                              (decision, index) => (
+                                <tr
+                                  className="border-t border-gray-700"
+                                  key={`${decision.reason}-${index}`}
+                                >
+                                  <td>{decision.title}</td>
+                                  <td>{decision.mediaType}</td>
+                                  <td>{decision.year ?? '—'}</td>
+                                  <td>{diagnosticLabel(decision.stage)}</td>
+                                  <td>{diagnosticLabel(decision.outcome)}</td>
+                                  <td>{diagnosticLabel(decision.reason)}</td>
+                                  <td>
+                                    {decision.tmdbId
+                                      ? `${decision.mediaType}:${decision.tmdbId}`
+                                      : '—'}
+                                  </td>
+                                </tr>
+                              )
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
+                  )}
                 </div>
-              </>
+              </details>
             )}
-          </>
-        )}
+          </div>
+        </FreshSettingsSection>
       </div>
-      <CandidateDiagnostics
-        key={diagnostics?.currentProjection.lastRefresh ?? 'uninitialized'}
-      />
     </>
   );
 };

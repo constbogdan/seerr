@@ -10,7 +10,10 @@ import {
   MIN_MEDIA_ELIGIBILITY_DAYS,
 } from '@server/constants/fresh';
 import dataSource from '@server/datasource';
+import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
+import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
@@ -27,14 +30,25 @@ import { In, type DataSource, type SelectQueryBuilder } from 'typeorm';
 
 const contentFilterReasons = [
   'excluded_genre',
+  'missing_required_genre',
   'excluded_original_language',
+  'missing_required_original_language',
   'excluded_content_rating',
+  'missing_required_content_rating',
   'below_tmdb_score',
   'below_tmdb_vote_count',
 ];
 
+const technicalIdentityReasons = [
+  'source_evidence_collision',
+  'parsed_type_suspect',
+  'special_identity_ambiguous',
+];
+
 const diagnosticStatus = (
-  candidate: FreshCandidate
+  candidate: FreshCandidate,
+  history?: FreshDiscoveryHistory,
+  now = new Date()
 ): FreshCandidateDiagnosticStatus => {
   if (candidate.status === FreshCandidateStatus.NO_MATCH) return 'no_match';
   if (candidate.status === FreshCandidateStatus.AMBIGUOUS) return 'ambiguous';
@@ -42,7 +56,24 @@ const diagnosticStatus = (
     return 'temporary_failure';
   if (candidate.status === FreshCandidateStatus.UNRESOLVED) return 'pending';
   if (candidate.status === FreshCandidateStatus.RESOLVING) return 'resolving';
+  if (
+    candidate.lastFailureReason &&
+    technicalIdentityReasons.includes(candidate.lastFailureReason)
+  )
+    return 'needs_attention';
   const media = candidate.freshMedia;
+  if (
+    (candidate.effectiveMediaType ?? candidate.mediaType) === 'tv' &&
+    !history
+  )
+    return 'needs_attention';
+  if (
+    history?.firstFreshAt &&
+    history.visibleUntil &&
+    history.visibleUntil.getTime() < now.getTime()
+  )
+    return 'historical';
+  if (history && !history.admitted) return 'reviewable';
   if (media?.membershipReason === 'eligibility_unknown')
     return 'eligibility_unknown';
   if (
@@ -50,8 +81,7 @@ const diagnosticStatus = (
     (media && !media.admitted)
   )
     return 'outside_eligibility_window';
-  if (media?.membershipReason === 'visibility_expired')
-    return 'visibility_expired';
+  if (media?.membershipReason === 'visibility_expired') return 'historical';
   if (
     media?.membershipReason &&
     contentFilterReasons.includes(media.membershipReason)
@@ -111,12 +141,66 @@ const applyDiagnosticStatus = (
         membershipReason: 'eligibility_unknown',
       });
   else if (status === 'needs_attention')
-    query.andWhere('candidate.status IN (:...attentionStatuses)', {
-      attentionStatuses: [
-        FreshCandidateStatus.NO_MATCH,
-        FreshCandidateStatus.AMBIGUOUS,
-      ],
-    });
+    query.andWhere(
+      `(candidate.status IN (:...attentionStatuses) OR
+        candidate.lastFailureReason IN (:...technicalIdentityReasons) OR
+        (candidate.status = :attentionResolved
+          AND COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'tv'
+          AND history.id IS NULL))`,
+      {
+        attentionStatuses: [
+          FreshCandidateStatus.NO_MATCH,
+          FreshCandidateStatus.AMBIGUOUS,
+          FreshCandidateStatus.TRANSIENT_FAILURE,
+          FreshCandidateStatus.UNRESOLVED,
+          FreshCandidateStatus.RESOLVING,
+        ],
+        technicalIdentityReasons,
+        attentionResolved: FreshCandidateStatus.RESOLVED,
+      }
+    );
+  else if (status === 'reviewable')
+    query
+      .andWhere('candidate.status = :resolvedStatus', {
+        resolvedStatus: FreshCandidateStatus.RESOLVED,
+      })
+      .andWhere('media.active = :reviewableActive', { reviewableActive: false })
+      .andWhere(
+        '(history."visibleUntil" IS NULL OR history."visibleUntil" >= :diagnosticNow)'
+      )
+      .andWhere(
+        '(media.membershipReason IS NULL OR media.membershipReason NOT IN (:...historicalReasons))',
+        {
+          historicalReasons: [
+            'visibility_expired',
+            'source_generation_inactive',
+          ],
+        }
+      )
+      .andWhere(
+        '(history.id IS NOT NULL OR media.membershipReason IN (:...reviewableReasons))',
+        {
+          reviewableReasons: [
+            'outside_eligibility_window',
+            'eligibility_unknown',
+            ...contentFilterReasons,
+          ],
+        }
+      );
+  else if (status === 'historical')
+    query
+      .andWhere('candidate.status = :resolvedStatus', {
+        resolvedStatus: FreshCandidateStatus.RESOLVED,
+      })
+      .andWhere(
+        `(history."visibleUntil" < :diagnosticNow OR media.membershipReason IN (:...historicalReasons))`,
+        {
+          historicalReasons: [
+            'visibility_expired',
+            'source_generation_inactive',
+          ],
+        }
+      );
   else if (status === 'excluded_content_filter')
     query
       .andWhere('candidate.status = :resolvedStatus', {
@@ -141,13 +225,89 @@ const applyDiagnosticStatus = (
       .andWhere('media.active = :active', { active: true });
 };
 
+const applyDiagnosticFacets = (
+  query: SelectQueryBuilder<FreshCandidate>,
+  input: FreshCandidateDiagnosticQuery
+) => {
+  if (input.reasonFamily === 'resolution') {
+    query.andWhere(
+      '(candidate.status != :facetResolved OR candidate.lastFailureReason IN (:...facetTechnicalReasons))',
+      {
+        facetResolved: FreshCandidateStatus.RESOLVED,
+        facetTechnicalReasons: technicalIdentityReasons,
+      }
+    );
+  } else if (input.reasonFamily === 'admission') {
+    query
+      .andWhere('candidate.status = :facetResolved', {
+        facetResolved: FreshCandidateStatus.RESOLVED,
+      })
+      .andWhere('history.id IS NOT NULL')
+      .andWhere('history.admitted = :facetNotAdmitted', {
+        facetNotAdmitted: false,
+      });
+  } else if (input.reasonFamily === 'content') {
+    query.andWhere('media.membershipReason IN (:...facetContentReasons)', {
+      facetContentReasons: contentFilterReasons,
+    });
+  } else if (input.reasonFamily === 'history') {
+    query.andWhere('history.id IS NOT NULL');
+  } else if (input.reasonFamily === 'source') {
+    query.andWhere('media.membershipReason = :facetSourceReason', {
+      facetSourceReason: 'source_generation_inactive',
+    });
+  }
+
+  const knownSeason = `(candidate."seasonKey" > 0 OR
+    (candidate."explicitSpecial" = :facetTrue
+      AND candidate."seasonKey" = 0
+      AND candidate."specialEpisodeKey" > 0))`;
+  if (input.seasonEvidence === 'known') {
+    query
+      .andWhere(
+        `COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'tv'`
+      )
+      .andWhere(knownSeason, { facetTrue: true });
+  } else if (input.seasonEvidence === 'unknown') {
+    query
+      .andWhere(
+        `COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'tv'`
+      )
+      .andWhere(`NOT ${knownSeason}`, { facetTrue: true });
+  }
+
+  if (input.manualResolution !== 'all') {
+    query.andWhere(
+      input.manualResolution === 'present'
+        ? 'manual.id IS NOT NULL'
+        : 'manual.id IS NULL'
+    );
+  }
+  if (input.admissionOverride !== 'all') {
+    query.andWhere(
+      input.admissionOverride === 'present'
+        ? 'admissionOverride.id IS NOT NULL'
+        : 'admissionOverride.id IS NULL'
+    );
+  }
+};
+
 export interface PublicFreshSettings extends Omit<FreshSettings, 'apiToken'> {
   apiTokenConfigured: boolean;
 }
 
 export interface FreshServiceDependencies {
   engine: Pick<typeof freshEngine, 'run' | 'cancel'> &
-    Partial<Pick<typeof freshEngine, 'reevaluate' | 'resolveManually'>>;
+    Partial<
+      Pick<
+        typeof freshEngine,
+        | 'reevaluate'
+        | 'resolveManually'
+        | 'resetManualResolution'
+        | 'setAdmissionOverride'
+        | 'removeAdmissionOverride'
+      >
+    >;
   database: DataSource;
   createAutobrr: (
     baseUrl: string,
@@ -295,8 +455,14 @@ export class FreshService {
     | 'sync'
     | 'reconciliation'
     | 'reevaluation'
-    | 'rebuild';
+    | 'rebuild'
+    | 'manual_resolution'
+    | 'resolution_reset'
+    | 'admission_override'
+    | 'override_removal';
   private latestAttempt?: FreshDiagnosticsSnapshot;
+  private coordinator: Promise<unknown> = Promise.resolve();
+  private coordinatorBusy = false;
 
   constructor(
     private readonly dependencies: FreshServiceDependencies = {
@@ -316,21 +482,58 @@ export class FreshService {
     return this.settings;
   }
 
+  private coordinate<T>(
+    operation: NonNullable<FreshService['activeOperation']>,
+    action: () => Promise<T>,
+    joinSameOperation = false
+  ): Promise<T> {
+    if (
+      joinSameOperation &&
+      this.inFlight &&
+      this.activeOperation === operation
+    )
+      return this.inFlight as unknown as Promise<T>;
+    const execute = async () => {
+      this.activeOperation = operation;
+      const actionPromise = action();
+      this.inFlight = actionPromise.then(() => undefined);
+      void this.inFlight.catch(() => undefined);
+      try {
+        return await actionPromise;
+      } finally {
+        this.inFlight = undefined;
+        this.activeOperation = undefined;
+      }
+    };
+    const result = this.coordinatorBusy
+      ? this.coordinator.catch(() => undefined).then(execute)
+      : execute();
+    this.coordinatorBusy = true;
+    const tail = result.catch(() => undefined);
+    this.coordinator = tail;
+    void tail
+      .finally(() => {
+        if (this.coordinator === tail) this.coordinatorBusy = false;
+      })
+      .catch(() => undefined);
+    return result;
+  }
+
   async sync(reconcile = false): Promise<void> {
     const settings = this.configured();
     if (!settings.enabled) return;
-    if (this.inFlight) return this.inFlight;
-    this.activeOperation = reconcile ? 'reconciliation' : 'sync';
-    this.inFlight = this.dependencies.engine
-      .run(settings, reconcile)
-      .then(({ diagnostics }) => {
-        this.latestAttempt = diagnostics;
-      })
-      .finally(() => {
-        this.inFlight = undefined;
-        this.activeOperation = undefined;
-      });
-    return this.inFlight;
+    if (this.inFlight && this.activeOperation === 'rebuild')
+      return this.inFlight;
+    return this.coordinate(
+      reconcile ? 'reconciliation' : 'sync',
+      () =>
+        this.dependencies.engine
+          .run(settings, reconcile)
+          .then(({ diagnostics }) => {
+            this.latestAttempt = diagnostics;
+          }),
+      true
+    );
   }
 
   async refresh(): Promise<void> {
@@ -343,73 +546,111 @@ export class FreshService {
 
   async reevaluate(): Promise<void> {
     const settings = this.configured();
-    if (this.inFlight) await this.inFlight;
-    if (this.inFlight) return this.inFlight;
     if (!this.dependencies.engine.reevaluate) {
       throw new Error('Fresh reevaluation is unavailable');
     }
-    this.activeOperation = 'reevaluation';
-    this.inFlight = this.dependencies.engine
-      .reevaluate(settings)
-      .then(() => undefined)
-      .finally(() => {
-        this.inFlight = undefined;
-        this.activeOperation = undefined;
-      });
-    return this.inFlight;
+    return this.coordinate('reevaluation', () =>
+      this.dependencies.engine.reevaluate!(settings).then(() => undefined)
+    );
   }
 
   async rebuild(): Promise<void> {
     const settings = this.configured();
     if (!settings.enabled) throw new Error('fresh_disabled');
-    if (this.inFlight && this.activeOperation === 'rebuild') {
-      return this.inFlight;
-    }
-    if (this.inFlight) await this.inFlight;
-    if (this.inFlight) return this.inFlight;
-
-    this.activeOperation = 'rebuild';
-    this.inFlight = (async () => {
-      await this.dependencies.database.transaction(async (manager) => {
-        for (const entity of [
-          FreshObservation,
-          FreshCandidate,
-          FreshMedia,
-          FreshSyncState,
-        ]) {
-          await manager
-            .getRepository(entity)
-            .createQueryBuilder()
-            .delete()
-            .execute();
+    return this.coordinate(
+      'rebuild',
+      async () => {
+        await this.dependencies.database.transaction(async (manager) => {
+          for (const entity of [
+            FreshObservation,
+            FreshCandidate,
+            FreshSyncState,
+          ]) {
+            await manager
+              .getRepository(entity)
+              .createQueryBuilder()
+              .delete()
+              .execute();
+          }
+        });
+        this.latestAttempt = undefined;
+        const { diagnostics } = await this.dependencies.engine.run(
+          settings,
+          false
+        );
+        this.latestAttempt = diagnostics;
+        if (diagnostics.outcome !== 'succeeded') {
+          throw new Error('fresh_rebuild_failed');
         }
-      });
-      this.latestAttempt = undefined;
-      const { diagnostics } = await this.dependencies.engine.run(
-        settings,
-        false
-      );
-      this.latestAttempt = diagnostics;
-      if (diagnostics.outcome !== 'succeeded') {
-        throw new Error('fresh_rebuild_failed');
-      }
-    })().finally(() => {
-      this.inFlight = undefined;
-      this.activeOperation = undefined;
-    });
-    return this.inFlight;
+      },
+      true
+    );
   }
 
-  async resolveCandidate(candidateId: number, tmdbId: number) {
+  async resolveCandidate(
+    candidateId: number,
+    mediaType: 'movie' | 'tv',
+    tmdbId: number,
+    expectedRevision: number,
+    actorUserId?: number
+  ) {
     const settings = this.configured();
-    if (this.inFlight) await this.inFlight;
     if (!this.dependencies.engine.resolveManually) {
       throw new Error('Fresh manual resolution is unavailable');
     }
-    return this.dependencies.engine.resolveManually(
-      candidateId,
-      tmdbId,
-      settings
+    return this.coordinate('manual_resolution', () =>
+      this.dependencies.engine.resolveManually!(
+        candidateId,
+        mediaType,
+        tmdbId,
+        expectedRevision,
+        actorUserId,
+        settings
+      )
+    );
+  }
+
+  async resetCandidateResolution(
+    candidateId: number,
+    expectedRevision: number
+  ) {
+    if (!this.dependencies.engine.resetManualResolution)
+      throw new Error('Fresh manual resolution reset is unavailable');
+    return this.coordinate('resolution_reset', () =>
+      this.dependencies.engine.resetManualResolution!(
+        candidateId,
+        expectedRevision,
+        this.configured()
+      )
+    );
+  }
+
+  async admitCandidate(
+    candidateId: number,
+    expectedRevision: number,
+    actorUserId?: number
+  ) {
+    if (!this.dependencies.engine.setAdmissionOverride)
+      throw new Error('Fresh admission override is unavailable');
+    return this.coordinate('admission_override', () =>
+      this.dependencies.engine.setAdmissionOverride!(
+        candidateId,
+        expectedRevision,
+        this.configured(),
+        actorUserId
+      )
+    );
+  }
+
+  async removeCandidateOverride(candidateId: number, expectedRevision: number) {
+    if (!this.dependencies.engine.removeAdmissionOverride)
+      throw new Error('Fresh admission override removal is unavailable');
+    return this.coordinate('override_removal', () =>
+      this.dependencies.engine.removeAdmissionOverride!(
+        candidateId,
+        expectedRevision,
+        this.configured()
+      )
     );
   }
 
@@ -515,6 +756,8 @@ export class FreshService {
           excludedContentFilter: 0,
           visibilityExpired: 0,
           needsAttention: 0,
+          reviewable: 0,
+          historical: 0,
         },
       };
     }
@@ -523,22 +766,111 @@ export class FreshService {
       repository
         .createQueryBuilder('candidate')
         .leftJoinAndSelect('candidate.freshMedia', 'media')
+        .leftJoin(
+          FreshDiscoveryHistory,
+          'history',
+          `history."mediaType" = COALESCE(candidate."effectiveMediaType", candidate."mediaType")
+            AND history."tmdbId" = candidate."tmdbId"
+            AND history."seasonKey" = CASE
+              WHEN COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'movie' THEN -1
+              ELSE candidate."seasonKey" END
+            AND history."specialEpisodeKey" = CASE
+              WHEN COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'movie' THEN -1
+              ELSE candidate."specialEpisodeKey" END`
+        )
+        .leftJoin(
+          FreshManualResolution,
+          'manual',
+          `manual."sourceEvidenceVersion" = 1
+            AND manual."sourceEvidenceKey" = candidate."sourceEvidenceKey"
+            AND manual.active = true`
+        )
+        .leftJoin(
+          FreshAdmissionOverride,
+          'admissionOverride',
+          `admissionOverride."mediaType" = COALESCE(candidate."effectiveMediaType", candidate."mediaType")
+            AND admissionOverride."tmdbId" = candidate."tmdbId"
+            AND admissionOverride."seasonKey" = CASE
+              WHEN COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'movie' THEN -1
+              ELSE candidate."seasonKey" END
+            AND admissionOverride."specialEpisodeKey" = CASE
+              WHEN COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'movie' THEN -1
+              ELSE candidate."specialEpisodeKey" END
+            AND admissionOverride.active = true`
+        )
         .where('candidate.sourceGeneration = :generation', {
           generation: state.generation,
-        });
+        })
+        .setParameter('diagnosticNow', this.dependencies.now());
     const query = base();
     if (input.search?.trim()) {
-      query.andWhere('LOWER(candidate.displayTitle) LIKE :search', {
-        search: `%${input.search.trim().toLowerCase()}%`,
-      });
+      const search = input.search.trim().toLowerCase();
+      const numeric = /^\d+$/.test(search) ? Number(search) : undefined;
+      const typed = search.match(/^(movie|tv)\s*[:/]\s*(\d+)$/);
+      query.andWhere(
+        `(LOWER(candidate.displayTitle) LIKE :search OR
+          LOWER(media.displayTitle) LIKE :search OR
+          EXISTS (SELECT 1 FROM fresh_observation observation
+            WHERE observation."candidateId" = candidate.id
+              AND LOWER(observation."sourceTitle") LIKE :search)
+          ${numeric ? 'OR candidate.tmdbId = :numericTmdbId' : ''}
+          ${typed ? `OR (COALESCE(candidate.effectiveMediaType, candidate.mediaType) = :typedMediaType AND candidate.tmdbId = :typedTmdbId)` : ''})`,
+        {
+          search: `%${search}%`,
+          ...(numeric ? { numericTmdbId: numeric } : {}),
+          ...(typed
+            ? {
+                typedMediaType: typed[1],
+                typedTmdbId: Number(typed[2]),
+              }
+            : {}),
+        }
+      );
     }
     if (input.mediaType !== 'all') {
-      query.andWhere('candidate.mediaType = :mediaType', {
-        mediaType: input.mediaType,
-      });
+      query.andWhere(
+        'COALESCE(candidate.effectiveMediaType, candidate.mediaType) = :mediaType',
+        {
+          mediaType: input.mediaType,
+        }
+      );
     }
     applyDiagnosticStatus(query, input.status);
-    if (input.sort === 'title.asc')
+    applyDiagnosticFacets(query, input);
+    if (input.sort === 'priority')
+      query
+        .addSelect(
+          `CASE
+            WHEN candidate.status = ${FreshCandidateStatus.NO_MATCH} THEN 0
+            WHEN candidate.status = ${FreshCandidateStatus.AMBIGUOUS} THEN 1
+            WHEN candidate.status IN (${FreshCandidateStatus.TRANSIENT_FAILURE}, ${FreshCandidateStatus.UNRESOLVED}, ${FreshCandidateStatus.RESOLVING}) THEN 2
+            WHEN candidate.lastFailureReason IN (:...technicalIdentityReasons) THEN 2
+            WHEN candidate.status = ${FreshCandidateStatus.RESOLVED}
+              AND COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'tv'
+              AND history.id IS NULL THEN 2
+            WHEN candidate.status = ${FreshCandidateStatus.RESOLVED} AND media.active = false
+              AND (history."visibleUntil" IS NULL OR history."visibleUntil" >= :diagnosticNow)
+              AND (media.membershipReason IS NULL OR media.membershipReason NOT IN ('visibility_expired', 'source_generation_inactive')) THEN 3
+            WHEN media.active = true THEN 4
+            ELSE 5
+          END`,
+          'diagnostic_priority'
+        )
+        .setParameter('technicalIdentityReasons', technicalIdentityReasons)
+        .addSelect(
+          'LOWER(COALESCE(media.displayTitle, candidate.displayTitle))',
+          'diagnostic_title'
+        )
+        .addSelect(
+          'COALESCE(candidate.effectiveMediaType, candidate.mediaType)',
+          'diagnostic_media_type'
+        )
+        .orderBy('diagnostic_priority', 'ASC')
+        .addOrderBy('diagnostic_title', 'ASC')
+        .addOrderBy('diagnostic_media_type', 'ASC')
+        .addOrderBy('candidate.tmdbId', 'ASC')
+        .addOrderBy('candidate.id', 'ASC');
+    else if (input.sort === 'title.asc')
       query.orderBy('candidate.displayTitle', 'ASC');
     else if (input.sort === 'title.desc')
       query.orderBy('candidate.displayTitle', 'DESC');
@@ -557,7 +889,7 @@ export class FreshService {
     else if (input.sort === 'last_seen.asc')
       query.orderBy('candidate.lastObservedAt', 'ASC');
     else query.orderBy('candidate.lastObservedAt', 'DESC');
-    query.addOrderBy('candidate.id', 'ASC');
+    if (input.sort !== 'priority') query.addOrderBy('candidate.id', 'ASC');
     const [candidates, total] = await query
       .skip((input.page - 1) * FRESH_CANDIDATE_PAGE_SIZE)
       .take(FRESH_CANDIDATE_PAGE_SIZE)
@@ -576,6 +908,55 @@ export class FreshService {
       values.push(observation);
       observationsByCandidate.set(observation.candidateId, values);
     });
+    const sourceKeys = [
+      ...new Set(
+        candidates
+          .map((candidate) => candidate.sourceEvidenceKey)
+          .filter(Boolean)
+      ),
+    ];
+    const manualResolutions = sourceKeys.length
+      ? await this.dependencies.database
+          .getRepository(FreshManualResolution)
+          .findBy({ sourceEvidenceKey: In(sourceKeys), active: true })
+      : [];
+    const manualByKey = new Map(
+      manualResolutions.map((resolution) => [
+        resolution.sourceEvidenceKey,
+        resolution,
+      ])
+    );
+    const mediaIdentities = candidates
+      .filter((candidate) => candidate.tmdbId)
+      .map((candidate) => ({
+        mediaType: candidate.effectiveMediaType ?? candidate.mediaType,
+        tmdbId: candidate.tmdbId as number,
+      }));
+    const histories = mediaIdentities.length
+      ? await this.dependencies.database
+          .getRepository(FreshDiscoveryHistory)
+          .createQueryBuilder('history')
+          .where(
+            mediaIdentities
+              .map(
+                (_, index) =>
+                  `(history.mediaType = :historyType${index} AND history.tmdbId = :historyId${index})`
+              )
+              .join(' OR '),
+            Object.fromEntries(
+              mediaIdentities.flatMap((identity, index) => [
+                [`historyType${index}`, identity.mediaType],
+                [`historyId${index}`, identity.tmdbId],
+              ])
+            )
+          )
+          .getMany()
+      : [];
+    const overrides = mediaIdentities.length
+      ? await this.dependencies.database
+          .getRepository(FreshAdmissionOverride)
+          .findBy({ active: true })
+      : [];
     const settings = this.configured();
 
     const count = async (status: FreshCandidateDiagnosticStatus) => {
@@ -593,6 +974,9 @@ export class FreshService {
       eligibilityUnknown,
       excludedContentFilter,
       visibilityExpired,
+      needsAttention,
+      reviewable,
+      historical,
     ] = await Promise.all([
       count('all'),
       count('active_fresh'),
@@ -603,6 +987,9 @@ export class FreshService {
       count('eligibility_unknown'),
       count('excluded_content_filter'),
       count('visibility_expired'),
+      count('needs_attention'),
+      count('reviewable'),
+      count('historical'),
     ]);
     return {
       pageInfo: {
@@ -613,21 +1000,95 @@ export class FreshService {
       },
       results: candidates.map((candidate) => {
         const media = candidate.freshMedia;
-        const evidence = media
-          ? evaluateAdmissionEvidence(
-              media,
-              observationsByCandidate.get(candidate.id) ?? [],
-              settings.mediaEligibilityDays
-            )
-          : undefined;
+        const manual = manualByKey.get(candidate.sourceEvidenceKey);
+        const effectiveMediaType =
+          candidate.effectiveMediaType ?? candidate.mediaType;
+        const identitySeasonKey =
+          effectiveMediaType === 'movie' ? -1 : candidate.seasonKey;
+        const identitySpecialEpisodeKey =
+          effectiveMediaType === 'movie' ? -1 : candidate.specialEpisodeKey;
+        const candidateHistories = histories.filter(
+          (history) =>
+            history.mediaType === effectiveMediaType &&
+            history.tmdbId === candidate.tmdbId
+        );
+        const history = candidateHistories
+          .filter(
+            (value) =>
+              value.seasonKey === identitySeasonKey &&
+              value.specialEpisodeKey === identitySpecialEpisodeKey
+          )
+          .sort((left, right) => right.id - left.id)[0];
+        const override = overrides.find(
+          (value) =>
+            value.mediaType === effectiveMediaType &&
+            value.tmdbId === candidate.tmdbId &&
+            value.seasonKey === identitySeasonKey &&
+            value.specialEpisodeKey === identitySpecialEpisodeKey
+        );
+        const evidence =
+          media?.mediaType === 'movie'
+            ? evaluateAdmissionEvidence(
+                media,
+                observationsByCandidate.get(candidate.id) ?? [],
+                settings.mediaEligibilityDays
+              )
+            : undefined;
         const selected = evidence?.selected;
+        const automaticStatus = candidate.automaticStatus ?? candidate.status;
+        const canResolve =
+          !manual &&
+          [
+            FreshCandidateStatus.NO_MATCH,
+            FreshCandidateStatus.AMBIGUOUS,
+          ].includes(automaticStatus);
+        const canAdmit =
+          !override &&
+          !!candidate.tmdbId &&
+          !!history &&
+          !media?.active &&
+          (!history.visibleUntil ||
+            history.visibleUntil.getTime() >=
+              this.dependencies.now().getTime()) &&
+          ![
+            FreshCandidateStatus.NO_MATCH,
+            FreshCandidateStatus.AMBIGUOUS,
+            FreshCandidateStatus.TRANSIENT_FAILURE,
+            FreshCandidateStatus.UNRESOLVED,
+            FreshCandidateStatus.RESOLVING,
+          ].includes(automaticStatus);
+        const actions = {
+          resolve: canResolve,
+          resetResolution: !!manual,
+          admit: canAdmit,
+          removeOverride: !!override,
+        };
         return {
           candidateId: candidate.id,
-          displayTitle: candidate.displayTitle,
-          mediaType: candidate.mediaType,
+          revision: candidate.revision,
+          displayTitle: media?.displayTitle ?? candidate.displayTitle,
+          parsedTitle: candidate.displayTitle,
+          parsedMediaType: candidate.mediaType,
+          mediaType: effectiveMediaType,
           matchYear: candidate.matchYear || undefined,
+          seasonNumber:
+            candidate.seasonKey >= 0 ? candidate.seasonKey : undefined,
+          episodeNumber:
+            candidate.specialEpisodeKey > 0
+              ? candidate.specialEpisodeKey
+              : undefined,
           resolutionStatus: candidate.status,
-          displayStatus: diagnosticStatus(candidate),
+          automaticResolution: {
+            status: automaticStatus,
+            mediaType: candidate.mediaType,
+            tmdbId: candidate.automaticTmdbId ?? undefined,
+            failureReason: candidate.automaticFailureReason ?? undefined,
+          },
+          displayStatus: diagnosticStatus(
+            candidate,
+            history,
+            this.dependencies.now()
+          ),
           tmdbId: candidate.tmdbId ?? undefined,
           firstObservedAt: candidate.firstObservedAt.toISOString(),
           lastObservedAt: candidate.lastObservedAt.toISOString(),
@@ -637,7 +1098,71 @@ export class FreshService {
           resolvedAt: candidate.resolvedAt?.toISOString(),
           failureReason: candidate.lastFailureReason ?? undefined,
           membershipReason: media?.membershipReason ?? undefined,
-          firstSeenAt: media?.firstSeenAt?.toISOString(),
+          automaticReasons: [
+            candidate.automaticFailureReason ??
+              candidate.lastFailureReason ??
+              '',
+            ...(history?.automaticReasons ?? []),
+            ...(media?.automaticReasons ?? []),
+          ].filter(
+            (value, index, all) =>
+              Boolean(value) && all.indexOf(value) === index
+          ),
+          sourceTitleSamples: [
+            ...new Set(
+              (observationsByCandidate.get(candidate.id) ?? [])
+                .map(
+                  (observation) => observation.sourceTitle || observation.title
+                )
+                .filter(Boolean)
+            ),
+          ].slice(0, 5),
+          observationCount:
+            observationsByCandidate.get(candidate.id)?.length ?? 0,
+          ...(manual
+            ? {
+                manualResolution: {
+                  mediaType: manual.mediaType,
+                  tmdbId: manual.tmdbId,
+                  actorUserId: manual.actorUserId ?? undefined,
+                  updatedAt: manual.updatedAt.toISOString(),
+                  revision: manual.revision,
+                  canonicalTitle: manual.canonicalTitle,
+                },
+              }
+            : {}),
+          ...(override
+            ? {
+                admissionOverride: {
+                  actorUserId: override.actorUserId ?? undefined,
+                  updatedAt: override.updatedAt.toISOString(),
+                  revision: override.revision,
+                },
+              }
+            : {}),
+          ...(history
+            ? {
+                discoveryHistory: {
+                  identityKind: history.identityKind,
+                  seasonNumber:
+                    history.seasonKey >= 0 ? history.seasonKey : undefined,
+                  episodeNumber:
+                    history.specialEpisodeKey > 0
+                      ? history.specialEpisodeKey
+                      : undefined,
+                  admitted: history.admitted,
+                  legacyProjection: history.legacyProjection,
+                  admissionReason: history.admissionReason,
+                  activityDate: history.activityDate ?? undefined,
+                  activitySource: history.activitySource,
+                  firstFreshAt: history.firstFreshAt?.toISOString(),
+                  visibleUntil: history.visibleUntil?.toISOString(),
+                },
+              }
+            : {}),
+          firstSeenAt:
+            history?.firstFreshAt?.toISOString() ??
+            media?.firstSeenAt?.toISOString(),
           lastSeenAt: media?.lastSeenAt?.toISOString(),
           mediaDate: media?.mediaDate ?? undefined,
           ...(selected
@@ -657,17 +1182,16 @@ export class FreshService {
               }
             : {}),
           visibleUntil:
-            media?.admitted && media.firstSeenAt
+            history?.visibleUntil?.toISOString() ??
+            (media?.admitted && media.firstSeenAt
               ? new Date(
                   media.firstSeenAt.getTime() +
                     settings.freshVisibilityDays * 86_400_000
                 ).toISOString()
-              : undefined,
+              : undefined),
           active: media?.active ?? false,
-          actionable: [
-            FreshCandidateStatus.NO_MATCH,
-            FreshCandidateStatus.AMBIGUOUS,
-          ].includes(candidate.status),
+          actionable: Object.values(actions).some(Boolean),
+          actions,
         };
       }),
       summary: {
@@ -680,7 +1204,9 @@ export class FreshService {
         eligibilityUnknown,
         excludedContentFilter,
         visibilityExpired,
-        needsAttention: noMatch + ambiguous,
+        needsAttention,
+        reviewable,
+        historical,
       },
     };
   }

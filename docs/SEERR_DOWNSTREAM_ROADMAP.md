@@ -29,7 +29,8 @@ downstream home.
 - `origin/downstream-main`: `f74657aa501e1fc28bf314673a0cedde167d47e6`.
 - Current infrastructure branch: `chore/downstream-image-publication`.
 - Upstream queue-sync contribution: [seerr-team/seerr#3535](https://github.com/seerr-team/seerr/pull/3535), open against `develop`.
-- Fresh discovery: merged into `downstream-main` and released as `custom-v1.0.7`.
+- Fresh discovery: merged into `downstream-main`; current architecture and
+  operating invariants are documented in [Fresh discovery](FRESH.md).
 - Local integration harness: the separate `seerr-harness` workspace.
 
 ## Phase 1 — safe downstream foundation
@@ -49,6 +50,10 @@ downstream home.
 ## Phase 2 — downstream features and repeatable upkeep
 
 - [x] Deliver persistent Fresh discovery with focused tests and downstream release validation.
+- [x] Refine Fresh with irreversible Movie/Season/Special history, typed manual
+  correction, admission overrides, and an administrator work queue.
+- [ ] Add administrator shortcuts from Fresh/Discover to Fresh Settings.
+- [ ] Improve validation performance without weakening exact-tree evidence.
 - [ ] Evaluate direct/on-demand Download Sync refresh as a separate downstream feature.
 - [ ] Add automated upstream change detection.
 - [ ] Add reusable upstream sync-PR generation if manual sync becomes costly.

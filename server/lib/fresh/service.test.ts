@@ -166,6 +166,41 @@ describe('Fresh application service', () => {
     assert.equal(service.running(), false);
   });
 
+  it('serializes administrator mutations behind an active synchronization', async () => {
+    const events: string[] = [];
+    let finishSync: (() => void) | undefined;
+    const service = new FreshService({
+      ...fixture().deps,
+      engine: {
+        cancel: () => undefined,
+        run: async () => {
+          events.push('sync:start');
+          await new Promise<void>((resolve) => {
+            finishSync = resolve;
+          });
+          events.push('sync:end');
+          return { diagnostics };
+        },
+        resolveManually: async () => {
+          events.push('manual');
+          return {
+            candidate: new FreshCandidate({ id: 1 }),
+            media: new FreshMedia({ mediaType: 'tv', tmdbId: 305251 }),
+          };
+        },
+      },
+    });
+    service.configure(settings);
+
+    const synchronization = service.sync();
+    const mutation = service.resolveCandidate(1, 'tv', 305251, 7, 42);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(events, ['sync:start']);
+    finishSync?.();
+    await Promise.all([synchronization, mutation]);
+    assert.deepEqual(events, ['sync:start', 'sync:end', 'manual']);
+  });
+
   it('returns sanitized browser-safe filter options', async () => {
     const f = fixture();
     const service = new FreshService(f.deps);
@@ -224,7 +259,6 @@ describe('Fresh application service', () => {
           assert.deepEqual(cleared, [
             FreshObservation,
             FreshCandidate,
-            FreshMedia,
             FreshSyncState,
           ]);
           return { diagnostics };
@@ -238,7 +272,6 @@ describe('Fresh application service', () => {
     assert.deepEqual(cleared, [
       FreshObservation,
       FreshCandidate,
-      FreshMedia,
       FreshSyncState,
     ]);
     assert.equal((cleared as unknown[]).includes(Media), false);

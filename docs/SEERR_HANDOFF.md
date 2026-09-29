@@ -54,9 +54,11 @@ maintenance branch.
 ### Fresh
 
 Fresh is merged into `downstream-main` and maintained in this repository. The
-authoritative released implementation is `custom-v1.0.7`; the earlier isolated
-prototype checkout has been retired. Continue Fresh maintenance from the primary
-Seerr checkout and preserve its persistent incremental architecture.
+earlier isolated prototype checkout has been retired. Continue Fresh maintenance
+from the primary Seerr checkout and preserve its persistent incremental
+architecture. The durable Movie/Season/Special identity, irreversible-history,
+typed correction, override, rebuild, and GAP-recovery contract is documented in
+[Fresh discovery](FRESH.md).
 
 ### Local harness
 

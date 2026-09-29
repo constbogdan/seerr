@@ -15,15 +15,20 @@ export type FreshMembershipReason =
   | 'eligibility_unknown'
   | 'visibility_expired'
   | 'excluded_genre'
+  | 'missing_required_genre'
   | 'excluded_original_language'
+  | 'missing_required_original_language'
   | 'excluded_content_rating'
+  | 'missing_required_content_rating'
   | 'below_tmdb_score'
   | 'below_tmdb_vote_count'
+  | 'season_unknown'
   | 'source_generation_inactive';
 
 export interface FreshMembershipEvaluation {
   active: boolean;
   reason: FreshMembershipReason;
+  reasons: FreshMembershipReason[];
 }
 
 export type FreshEligibilityDateSource =
@@ -60,8 +65,8 @@ export const qualifiesAtObservation = (
 ): boolean => {
   const released = validDate(mediaDate);
   if (!released) return false;
-  const age = Math.max(0, observationTime.getTime() - released.getTime());
-  return age <= mediaEligibilityDays * DAY;
+  const age = observationTime.getTime() - released.getTime();
+  return age >= 0 && age <= mediaEligibilityDays * DAY;
 };
 
 const earliestReleaseDate = (
@@ -212,56 +217,66 @@ export const evaluateFreshMembership = (
   now: Date
 ): FreshMembershipEvaluation => {
   if (!media.admitted) {
+    const reason = ['eligibility_unknown', 'season_unknown'].includes(
+      media.membershipReason ?? ''
+    )
+      ? (media.membershipReason as 'eligibility_unknown' | 'season_unknown')
+      : 'outside_eligibility_window';
     return {
       active: false,
-      reason:
-        media.membershipReason === 'eligibility_unknown'
-          ? 'eligibility_unknown'
-          : 'outside_eligibility_window',
+      reason,
+      reasons: [reason],
     };
   }
   if (
     now.getTime() >
     media.firstSeenAt.getTime() + settings.freshVisibilityDays * DAY
   ) {
-    return { active: false, reason: 'visibility_expired' };
+    return {
+      active: false,
+      reason: 'visibility_expired',
+      reasons: ['visibility_expired'],
+    };
   }
 
+  const reasons: FreshMembershipReason[] = [];
+  if (intersects(media.genreIds, settings.excludeGenreIds))
+    reasons.push('excluded_genre');
   if (
-    intersects(media.genreIds, settings.excludeGenreIds) ||
-    (settings.includeGenreIds.length > 0 &&
-      !intersects(media.genreIds, settings.includeGenreIds))
-  ) {
-    return { active: false, reason: 'excluded_genre' };
-  }
+    settings.includeGenreIds.length > 0 &&
+    !intersects(media.genreIds, settings.includeGenreIds)
+  )
+    reasons.push('missing_required_genre');
+  if (settings.excludeOriginalLanguages.includes(media.originalLanguage))
+    reasons.push('excluded_original_language');
   if (
-    settings.excludeOriginalLanguages.includes(media.originalLanguage) ||
-    (settings.includeOriginalLanguages.length > 0 &&
-      !settings.includeOriginalLanguages.includes(media.originalLanguage))
-  ) {
-    return { active: false, reason: 'excluded_original_language' };
-  }
+    settings.includeOriginalLanguages.length > 0 &&
+    !settings.includeOriginalLanguages.includes(media.originalLanguage)
+  )
+    reasons.push('missing_required_original_language');
   const contentRating = ratingKey(media);
+  if (contentRating && settings.excludeContentRatings.includes(contentRating))
+    reasons.push('excluded_content_rating');
   if (
-    (contentRating && settings.excludeContentRatings.includes(contentRating)) ||
-    (settings.includeContentRatings.length > 0 &&
-      !settings.includeContentRatings.includes(contentRating))
-  ) {
-    return { active: false, reason: 'excluded_content_rating' };
-  }
+    settings.includeContentRatings.length > 0 &&
+    !settings.includeContentRatings.includes(contentRating)
+  )
+    reasons.push('missing_required_content_rating');
   if (
     settings.minimumTmdbScore > 0 &&
     media.voteAverage < settings.minimumTmdbScore
   ) {
-    return { active: false, reason: 'below_tmdb_score' };
+    reasons.push('below_tmdb_score');
   }
   if (
     settings.minimumTmdbVotes > 0 &&
     media.voteCount < settings.minimumTmdbVotes
   ) {
-    return { active: false, reason: 'below_tmdb_vote_count' };
+    reasons.push('below_tmdb_vote_count');
   }
-  return { active: true, reason: 'active_fresh' };
+  return reasons.length
+    ? { active: false, reason: reasons[0], reasons }
+    : { active: true, reason: 'active_fresh', reasons: ['active_fresh'] };
 };
 
 export const applyFreshMembership = (
@@ -272,6 +287,7 @@ export const applyFreshMembership = (
   const result = evaluateFreshMembership(media, settings, now);
   media.active = result.active;
   media.membershipReason = result.reason;
+  media.automaticReasons = result.reasons;
   return result;
 };
 

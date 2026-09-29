@@ -66,6 +66,38 @@ export interface FreshFilterSelectOption {
   label: string;
 }
 
+export const FRESH_SECTION_STATE_KEY = 'seerr:fresh-settings-sections:v1';
+export type FreshSectionId = 'candidates' | 'pipeline' | 'configuration';
+export type FreshSectionState = Record<FreshSectionId, boolean>;
+export const defaultFreshSectionState: FreshSectionState = {
+  candidates: true,
+  pipeline: false,
+  configuration: false,
+};
+
+export const parseFreshSectionState = (
+  value: string | null
+): FreshSectionState => {
+  if (!value) return { ...defaultFreshSectionState };
+  try {
+    const parsed = JSON.parse(value) as Partial<FreshSectionState>;
+    if (
+      typeof parsed.candidates === 'boolean' &&
+      typeof parsed.pipeline === 'boolean' &&
+      typeof parsed.configuration === 'boolean'
+    ) {
+      return {
+        candidates: parsed.candidates,
+        pipeline: parsed.pipeline,
+        configuration: parsed.configuration,
+      };
+    }
+  } catch {
+    // Stale or malformed client preferences safely use first-visit defaults.
+  }
+  return { ...defaultFreshSectionState };
+};
+
 const DEFAULT_AUTOBRR_PORT = 7474;
 export const CONFIGURED_TOKEN_MASK = '•'.repeat(28);
 

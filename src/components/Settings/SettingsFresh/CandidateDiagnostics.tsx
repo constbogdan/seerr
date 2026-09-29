@@ -10,6 +10,9 @@ import type {
   FreshCandidateDiagnosticRow,
   FreshCandidateDiagnosticSort,
   FreshCandidateDiagnosticStatus,
+  FreshCandidatePresenceFilter,
+  FreshCandidateReasonFamily,
+  FreshCandidateSeasonEvidence,
 } from '@server/lib/fresh/types';
 import axios from 'axios';
 import Link from 'next/link';
@@ -31,9 +34,12 @@ const statusLabels: Record<FreshCandidateDiagnosticStatus, string> = {
   visibility_expired: 'Visibility Expired',
   active_fresh: 'Active Fresh',
   needs_attention: 'Needs Attention',
+  reviewable: 'Reviewable',
+  historical: 'Historical',
 };
 
 const sortLabels: Record<FreshCandidateDiagnosticSort, string> = {
+  priority: 'Needs Attention first',
   'title.asc': 'Title A–Z',
   'title.desc': 'Title Z–A',
   status: 'Status',
@@ -45,6 +51,32 @@ const sortLabels: Record<FreshCandidateDiagnosticSort, string> = {
   'last_seen.asc': 'Last Seen oldest',
 };
 
+const reasonFamilyLabels: Record<FreshCandidateReasonFamily, string> = {
+  all: 'All reason families',
+  resolution: 'Resolution',
+  admission: 'Admission policy',
+  content: 'Content policy',
+  history: 'Discovery history',
+  source: 'Source continuity',
+};
+
+const seasonEvidenceLabels: Record<FreshCandidateSeasonEvidence, string> = {
+  all: 'All season evidence',
+  known: 'Season known',
+  unknown: 'Season unknown',
+};
+
+const presenceLabels: Record<FreshCandidatePresenceFilter, string> = {
+  all: 'Any',
+  present: 'Present',
+  absent: 'Absent',
+};
+
+const diagnosticReasonLabel = (value: string) =>
+  value
+    .replaceAll('_', ' ')
+    .replace(/\b\w/g, (character) => character.toUpperCase());
+
 const ManualResolution = ({
   candidate,
   onResolved,
@@ -53,10 +85,21 @@ const ManualResolution = ({
   onResolved: () => Promise<unknown>;
 }) => {
   const [tmdbId, setTmdbId] = useState('');
+  const [mediaType, setMediaType] = useState<'movie' | 'tv'>(
+    candidate.mediaType
+  );
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   return (
     <div className="flex flex-wrap items-center justify-end gap-2">
+      <select
+        aria-label={`TMDB media type for ${candidate.displayTitle}`}
+        value={mediaType}
+        onChange={(event) => setMediaType(event.target.value as 'movie' | 'tv')}
+      >
+        <option value="movie">Movie</option>
+        <option value="tv">TV</option>
+      </select>
       <input
         className="w-28"
         type="text"
@@ -78,14 +121,23 @@ const ManualResolution = ({
               tmdbId: number;
             }>(
               `/api/v1/settings/fresh/candidates/${candidate.candidateId}/resolve`,
-              { tmdbId: Number(tmdbId) }
+              {
+                mediaType,
+                tmdbId: Number(tmdbId),
+                expectedRevision: candidate.revision,
+              }
             );
             setMessage(
               `Resolved as ${response.data.title} (${response.data.mediaType}:${response.data.tmdbId}).`
             );
             await onResolved();
-          } catch {
-            setMessage('The TMDB identity could not be validated.');
+          } catch (error) {
+            if (axios.isAxiosError(error) && error.response?.status === 409) {
+              setMessage('Candidate changed. Reloaded the current state.');
+              await onResolved();
+            } else {
+              setMessage('The TMDB identity could not be validated.');
+            }
           } finally {
             setBusy(false);
           }
@@ -95,6 +147,56 @@ const ManualResolution = ({
       </Button>
       {message && <span className="text-sm text-gray-300">{message}</span>}
     </div>
+  );
+};
+
+const CandidateMutation = ({
+  candidate,
+  endpoint,
+  label,
+  buttonType,
+  onChanged,
+}: {
+  candidate: FreshCandidateDiagnosticRow;
+  endpoint: 'reset-resolution' | 'admit' | 'remove-override';
+  label: string;
+  buttonType?: 'default' | 'primary' | 'danger' | 'warning' | 'success';
+  onChanged: () => Promise<unknown>;
+}) => {
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState('');
+  return (
+    <>
+      <Button
+        buttonType={buttonType}
+        disabled={busy}
+        onClick={async () => {
+          setBusy(true);
+          setMessage('');
+          try {
+            await axios.post(
+              `/api/v1/settings/fresh/candidates/${candidate.candidateId}/${endpoint}`,
+              { expectedRevision: candidate.revision }
+            );
+            await onChanged();
+          } catch (error) {
+            setMessage(
+              axios.isAxiosError(error) && error.response?.status === 409
+                ? 'Candidate changed. Reloaded the current state.'
+                : 'The candidate could not be updated.'
+            );
+            if (axios.isAxiosError(error) && error.response?.status === 409) {
+              await onChanged();
+            }
+          } finally {
+            setBusy(false);
+          }
+        }}
+      >
+        {label}
+      </Button>
+      {message && <span className="text-sm text-gray-300">{message}</span>}
+    </>
   );
 };
 
@@ -160,6 +262,39 @@ const EligibilityDetails = ({
       'Membership',
       statusLabels[candidate.displayStatus],
     ],
+    ['Parsed title', candidate.parsedTitle],
+    ['Parsed type', candidate.parsedMediaType === 'movie' ? 'Movie' : 'TV'],
+    candidate.seasonNumber !== undefined && [
+      'Parsed season',
+      `S${String(candidate.seasonNumber).padStart(2, '0')}`,
+    ],
+    candidate.episodeNumber !== undefined && [
+      'Parsed episode',
+      `E${String(candidate.episodeNumber).padStart(2, '0')}`,
+    ],
+    candidate.automaticResolution && [
+      'Automatic resolution',
+      candidate.automaticResolution.tmdbId
+        ? `${candidate.automaticResolution.mediaType}:${candidate.automaticResolution.tmdbId}`
+        : (candidate.automaticResolution.failureReason ?? 'Unresolved'),
+    ],
+    candidate.manualResolution && [
+      'Manual resolution',
+      `${candidate.manualResolution.mediaType}:${candidate.manualResolution.tmdbId} · ${candidate.manualResolution.canonicalTitle}`,
+    ],
+    ['Observations', String(candidate.observationCount)],
+    candidate.sourceTitleSamples.length > 0 && [
+      'Source samples',
+      candidate.sourceTitleSamples.join(' · '),
+    ],
+    candidate.discoveryHistory?.activityDate && [
+      'Activity date',
+      `${candidate.discoveryHistory.activityDate} (${candidate.discoveryHistory.activitySource})`,
+    ],
+    candidate.automaticReasons.length > 0 && [
+      'Automatic reasons',
+      candidate.automaticReasons.map(diagnosticReasonLabel).join(', '),
+    ],
   ].filter(Boolean) as [string, string][];
   return (
     <dl
@@ -223,6 +358,14 @@ const CandidateRow = ({
             {candidate.matchYear ? (
               <span className="text-gray-400">· {candidate.matchYear}</span>
             ) : null}
+            {candidate.seasonNumber !== undefined ? (
+              <span className="text-gray-400">
+                · S{String(candidate.seasonNumber).padStart(2, '0')}
+                {candidate.episodeNumber !== undefined
+                  ? `E${String(candidate.episodeNumber).padStart(2, '0')}`
+                  : ''}
+              </span>
+            ) : null}
             <span className="text-gray-400">
               · {candidate.mediaType === 'movie' ? 'Movie' : 'Series'}
             </span>
@@ -241,8 +384,49 @@ const CandidateRow = ({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2 md:justify-end">
           <span>{statusLabels[candidate.displayStatus]}</span>
-          {candidate.actionable && (
+          {!candidate.active && candidate.automaticReasons[0] && (
+            <span className="text-sm text-gray-400">
+              {diagnosticReasonLabel(candidate.automaticReasons[0])}
+            </span>
+          )}
+          {candidate.manualResolution && (
+            <span className="rounded bg-indigo-600 px-2 py-1 text-xs font-medium">
+              Manual resolution
+            </span>
+          )}
+          {candidate.admissionOverride && (
+            <span className="rounded bg-amber-600 px-2 py-1 text-xs font-medium">
+              Admission override
+            </span>
+          )}
+          {candidate.actions.resolve && (
             <ManualResolution candidate={candidate} onResolved={onResolved} />
+          )}
+          {candidate.actions.resetResolution && (
+            <CandidateMutation
+              candidate={candidate}
+              endpoint="reset-resolution"
+              label="Reset resolution"
+              onChanged={onResolved}
+            />
+          )}
+          {candidate.actions.admit && (
+            <CandidateMutation
+              candidate={candidate}
+              endpoint="admit"
+              label="Admit to Fresh"
+              buttonType="primary"
+              onChanged={onResolved}
+            />
+          )}
+          {candidate.actions.removeOverride && (
+            <CandidateMutation
+              candidate={candidate}
+              endpoint="remove-override"
+              label="Remove override"
+              buttonType="danger"
+              onChanged={onResolved}
+            />
           )}
         </div>
       </div>
@@ -251,18 +435,33 @@ const CandidateRow = ({
   );
 };
 
-const CandidateDiagnostics = () => {
+const CandidateDiagnostics = ({
+  showHeader = true,
+}: {
+  showHeader?: boolean;
+}) => {
   const [page, setPage] = useState(1);
   const [search, setSearch] = useState('');
   const [mediaType, setMediaType] = useState<'all' | 'movie' | 'tv'>('all');
   const [status, setStatus] = useState<FreshCandidateDiagnosticStatus>('all');
-  const [sort, setSort] =
-    useState<FreshCandidateDiagnosticSort>('last_seen.desc');
+  const [sort, setSort] = useState<FreshCandidateDiagnosticSort>('priority');
+  const [reasonFamily, setReasonFamily] =
+    useState<FreshCandidateReasonFamily>('all');
+  const [seasonEvidence, setSeasonEvidence] =
+    useState<FreshCandidateSeasonEvidence>('all');
+  const [manualResolution, setManualResolution] =
+    useState<FreshCandidatePresenceFilter>('all');
+  const [admissionOverride, setAdmissionOverride] =
+    useState<FreshCandidatePresenceFilter>('all');
   const params = new URLSearchParams({
     page: String(page),
     mediaType,
     status,
     sort,
+    reasonFamily,
+    seasonEvidence,
+    manualResolution,
+    admissionOverride,
   });
   if (search.trim()) params.set('search', search.trim());
   const { data, error, mutate } = useSWR<FreshCandidateDiagnosticResponse>(
@@ -273,45 +472,23 @@ const CandidateDiagnostics = () => {
     callback();
   };
   return (
-    <div className="mt-12">
-      <h3 className="heading">Candidate Diagnostics</h3>
-      <p className="description">
-        Durable current candidate and membership state. This is separate from
-        the latest synchronization attempt and survives restarts.
-      </p>
+    <div className={showHeader ? 'mt-12' : ''}>
+      {showHeader && (
+        <>
+          <h3 className="heading">Candidate Diagnostics</h3>
+          <p className="description">
+            Durable current candidate and membership state. This is separate
+            from the latest synchronization attempt and survives restarts.
+          </p>
+        </>
+      )}
       {data && (
         <div className="mb-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            ['Total candidates', data.summary.totalCandidates, 'all'],
-            ['Active Fresh', data.summary.activeFresh, 'active_fresh'],
-            ['No Match', data.summary.noMatch, 'no_match'],
-            ['Ambiguous', data.summary.ambiguous, 'ambiguous'],
-            [
-              'Temporary Failure',
-              data.summary.temporaryFailure,
-              'temporary_failure',
-            ],
-            [
-              'Outside Eligibility Window',
-              data.summary.outsideEligibilityWindow,
-              'outside_eligibility_window',
-            ],
-            [
-              'Eligibility Unknown',
-              data.summary.eligibilityUnknown,
-              'eligibility_unknown',
-            ],
-            [
-              'Excluded by Content Filter',
-              data.summary.excludedContentFilter,
-              'excluded_content_filter',
-            ],
-            [
-              'Visibility Expired',
-              data.summary.visibilityExpired,
-              'visibility_expired',
-            ],
             ['Needs Attention', data.summary.needsAttention, 'needs_attention'],
+            ['Reviewable', data.summary.reviewable, 'reviewable'],
+            ['Active Fresh', data.summary.activeFresh, 'active_fresh'],
+            ['Historical', data.summary.historical, 'historical'],
           ].map(([label, value, cardStatus]) => (
             <button
               type="button"
@@ -371,7 +548,75 @@ const CandidateDiagnostics = () => {
             Object.keys(sortLabels) as FreshCandidateDiagnosticSort[]
           ).map((value) => ({ value, label: sortLabels[value] }))}
           onChange={(option) =>
-            change(() => setSort(option?.value ?? 'last_seen.desc'))
+            change(() => setSort(option?.value ?? 'priority'))
+          }
+        />
+      </div>
+      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <Select
+          aria-label="Reason family"
+          className="react-select-container"
+          classNamePrefix="react-select"
+          value={{
+            value: reasonFamily,
+            label: reasonFamilyLabels[reasonFamily],
+          }}
+          options={(
+            Object.keys(reasonFamilyLabels) as FreshCandidateReasonFamily[]
+          ).map((value) => ({ value, label: reasonFamilyLabels[value] }))}
+          onChange={(option) =>
+            change(() => setReasonFamily(option?.value ?? 'all'))
+          }
+        />
+        <Select
+          aria-label="Season evidence"
+          className="react-select-container"
+          classNamePrefix="react-select"
+          value={{
+            value: seasonEvidence,
+            label: seasonEvidenceLabels[seasonEvidence],
+          }}
+          options={(
+            Object.keys(seasonEvidenceLabels) as FreshCandidateSeasonEvidence[]
+          ).map((value) => ({ value, label: seasonEvidenceLabels[value] }))}
+          onChange={(option) =>
+            change(() => setSeasonEvidence(option?.value ?? 'all'))
+          }
+        />
+        <Select
+          aria-label="Manual resolution"
+          className="react-select-container"
+          classNamePrefix="react-select"
+          value={{
+            value: manualResolution,
+            label: `Manual resolution: ${presenceLabels[manualResolution]}`,
+          }}
+          options={(
+            Object.keys(presenceLabels) as FreshCandidatePresenceFilter[]
+          ).map((value) => ({
+            value,
+            label: `Manual resolution: ${presenceLabels[value]}`,
+          }))}
+          onChange={(option) =>
+            change(() => setManualResolution(option?.value ?? 'all'))
+          }
+        />
+        <Select
+          aria-label="Admission override"
+          className="react-select-container"
+          classNamePrefix="react-select"
+          value={{
+            value: admissionOverride,
+            label: `Admission override: ${presenceLabels[admissionOverride]}`,
+          }}
+          options={(
+            Object.keys(presenceLabels) as FreshCandidatePresenceFilter[]
+          ).map((value) => ({
+            value,
+            label: `Admission override: ${presenceLabels[value]}`,
+          }))}
+          onChange={(option) =>
+            change(() => setAdmissionOverride(option?.value ?? 'all'))
           }
         />
       </div>
