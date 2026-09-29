@@ -62,6 +62,17 @@ typed correction, override, rebuild, and GAP-recovery contract is documented in
 directly from the Discover Fresh row or the dedicated Fresh page; durable
 Visible/Hidden preferences affect that work queue only.
 
+### Watchlist
+
+The downstream Watchlist remains explicit viewing intent and is enriched with
+the same user's current Jellyfin completion. The durable identity, privacy,
+Movie/TV semantics, failure behavior, reconciliation job, and Activity boundary
+are documented in [Watchlist intent and Jellyfin completion](WATCHLIST.md).
+Requests, playback, availability, and completion never create or remove
+membership. Cross-user enriched views require administrator authority or the
+purpose-built `WATCHLIST_VIEW` permission; `MANAGE_REQUESTS` alone is
+insufficient.
+
 ### Local harness
 
 The `seerr-harness` workspace is a separate repository for running queue or the

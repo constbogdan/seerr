@@ -86,6 +86,21 @@ components:
           readOnly: true
           items:
             type: number
+        watchState:
+          type: string
+          readOnly: true
+          enum:
+            - watched
+            - not_watched
+            - unknown
+        lastPlayedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        watchStateSyncedAt:
+          type: string
+          format: date-time
+          readOnly: true
         media:
           $ref: '#/components/schemas/MediaInfo'
         createdAt:
@@ -5758,6 +5773,16 @@ paths:
             type: number
             example: 1
             default: 1
+        - in: query
+          name: watched
+          description: Local Jellyfin-backed Watchlist completion filter. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: not_watched
+            enum:
+              - not_watched
+              - watched
+              - all
       responses:
         '200':
           description: Watchlist data returned
@@ -5779,6 +5804,8 @@ paths:
                       - plex
                   supportsPresentation:
                     type: boolean
+                  supportsWatchState:
+                    type: boolean
                   hasUnclassifiedItems:
                     type: boolean
                   results:
@@ -5798,6 +5825,18 @@ paths:
                             - tv
                         title:
                           type: string
+                        watchState:
+                          type: string
+                          enum:
+                            - watched
+                            - not_watched
+                            - unknown
+                        lastPlayedAt:
+                          type: string
+                          format: date-time
+                        watchStateSyncedAt:
+                          type: string
+                          format: date-time
   /user/{userId}/settings/main:
     get:
       summary: Get general settings for a user
@@ -7585,6 +7624,27 @@ paths:
               - added_asc
               - title_asc
               - title_desc
+        - in: query
+          name: watched
+          description: Local Jellyfin-backed Watchlist completion filter. Unknown remains in Not Watched. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: not_watched
+            enum:
+              - not_watched
+              - watched
+              - all
+        - in: query
+          name: owner
+          description: Watchlist owner scope. `all` and another user's numeric ID require `WATCHLIST_VIEW`; omitted or `me` selects the authenticated user.
+          schema:
+            oneOf:
+              - type: string
+                enum:
+                  - me
+                  - all
+              - type: string
+                pattern: '^[1-9][0-9]*$'
       responses:
         '200':
           description: Watchlist data returned
@@ -7606,6 +7666,8 @@ paths:
                       - plex
                   supportsPresentation:
                     type: boolean
+                  supportsWatchState:
+                    type: boolean
                   hasUnclassifiedItems:
                     type: boolean
                   results:
@@ -7625,6 +7687,27 @@ paths:
                             - tv
                         title:
                           type: string
+                        watchState:
+                          type: string
+                          enum:
+                            - watched
+                            - not_watched
+                            - unknown
+                        lastPlayedAt:
+                          type: string
+                          format: date-time
+                        watchStateSyncedAt:
+                          type: string
+                          format: date-time
+                        requestedBy:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            displayName:
+                              type: string
+                            avatar:
+                              type: string
   /request:
     get:
       summary: Get all requests

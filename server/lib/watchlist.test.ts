@@ -11,6 +11,7 @@ import {
 } from '@server/lib/watchlist';
 import { WatchlistMetadataBackfill } from '@server/lib/watchlistMetadata';
 import { AddWatchlistGenres1790000000008 } from '@server/migration/sqlite/1790000000008-AddWatchlistGenres';
+import { AddWatchlistEnrichment1790000000014 } from '@server/migration/sqlite/1790000000014-AddWatchlistEnrichment';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -82,6 +83,7 @@ const addRow = async ({
   title,
   genreIds,
   createdAt,
+  jellyfinPlayed,
 }: {
   user: User;
   tmdbId: number;
@@ -89,6 +91,7 @@ const addRow = async ({
   title: string;
   genreIds: number[] | null;
   createdAt: Date;
+  jellyfinPlayed?: boolean | null;
 }): Promise<Watchlist> => {
   const media = await getRepository(Media).save(
     new Media({ tmdbId, mediaType })
@@ -103,6 +106,7 @@ const addRow = async ({
       requestedBy: user,
       media,
       createdAt,
+      jellyfinPlayed,
     })
   );
 };
@@ -120,6 +124,7 @@ describe('local Watchlist query and ownership', () => {
       page: 1,
       category: 'all',
       sort: 'added_desc',
+      watched: 'not_watched',
     });
     assert.deepEqual(
       parseWatchlistQuery({
@@ -127,11 +132,21 @@ describe('local Watchlist query and ownership', () => {
         category: 'animation',
         sort: 'title_asc',
       }),
-      { page: 2, category: 'animation', sort: 'title_asc' }
+      {
+        page: 2,
+        category: 'animation',
+        sort: 'title_asc',
+        watched: 'not_watched',
+      }
     );
     assert.deepEqual(
       parseWatchlistQuery({ page: '-1', category: 'anime', sort: 'year' }),
-      { page: 1, category: 'all', sort: 'added_desc' }
+      {
+        page: 1,
+        category: 'all',
+        sort: 'added_desc',
+        watched: 'not_watched',
+      }
     );
   });
 
@@ -295,6 +310,80 @@ describe('local Watchlist query and ownership', () => {
     );
   });
 
+  it('filters watched state before pagination and keeps unknown in Not Watched', async () => {
+    const user = await admin();
+    const createdAt = new Date('2026-02-01T00:00:00Z');
+    await addRow({
+      user,
+      tmdbId: 6100,
+      mediaType: MediaType.MOVIE,
+      title: 'Watched',
+      genreIds: [],
+      createdAt,
+      jellyfinPlayed: true,
+    });
+    await addRow({
+      user,
+      tmdbId: 6101,
+      mediaType: MediaType.MOVIE,
+      title: 'Not Watched',
+      genreIds: [],
+      createdAt,
+      jellyfinPlayed: false,
+    });
+    await addRow({
+      user,
+      tmdbId: 6102,
+      mediaType: MediaType.TV,
+      title: 'Unknown',
+      genreIds: [],
+      createdAt,
+      jellyfinPlayed: null,
+    });
+
+    const notWatched = await getLocalWatchlist({
+      userId: user.id,
+      query: {
+        page: 1,
+        category: 'all',
+        sort: 'title_asc',
+        watched: 'not_watched',
+      },
+    });
+    assert.equal(notWatched.totalResults, 2);
+    assert.deepEqual(
+      notWatched.results.map((row) => [row.title, row.watchState]),
+      [
+        ['Not Watched', 'not_watched'],
+        ['Unknown', 'unknown'],
+      ]
+    );
+
+    const watched = await getLocalWatchlist({
+      userId: user.id,
+      query: {
+        page: 1,
+        category: 'all',
+        sort: 'added_desc',
+        watched: 'watched',
+      },
+    });
+    assert.equal(watched.totalResults, 1);
+    assert.equal(watched.results[0].watchState, 'watched');
+
+    const all = await getLocalWatchlist({
+      userId: user.id,
+      query: {
+        page: 1,
+        category: 'all',
+        sort: 'added_desc',
+        watched: 'all',
+      },
+    });
+    assert.equal(all.totalResults, 3);
+    assert.equal(all.supportsWatchState, true);
+  });
+
   it('always selects Plex for a Plex user even when legacy local rows exist', async () => {
     const user = await admin();
     user.plexToken = ' usable-token ';
@@ -315,6 +404,7 @@ describe('local Watchlist query and ownership', () => {
     assert.equal(plexCalls, 1);
     assert.equal(result.source, 'plex');
     assert.equal(result.supportsPresentation, false);
+    assert.equal(result.supportsWatchState, false);
     assert.deepEqual(
       result.results.map((row) => row.title),
       ['Plex Canonical']
@@ -499,5 +589,153 @@ describe('Watchlist genre migration', () => {
       await runner.release();
       await database.destroy();
     }
+  });
+});
+
+describe('Watchlist enrichment migration', () => {
+  const createLegacySchema = async (database: DataSource) => {
+    const runner = database.createQueryRunner();
+    await runner.query(
+      `CREATE TABLE "user" ("id" integer PRIMARY KEY, "jellyfinUserId" varchar)`
+    );
+    await runner.query(`CREATE TABLE "media" ("id" integer PRIMARY KEY)`);
+    await runner.query(
+      `CREATE TABLE "watchlist" (
+        "id" integer PRIMARY KEY AUTOINCREMENT NOT NULL,
+        "ratingKey" varchar NOT NULL,
+        "mediaType" varchar NOT NULL,
+        "title" varchar NOT NULL,
+        "tmdbId" integer NOT NULL,
+        "createdAt" datetime NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        "updatedAt" datetime NOT NULL DEFAULT (CURRENT_TIMESTAMP),
+        "requestedById" integer,
+        "mediaId" integer,
+        "genreIds" text,
+        CONSTRAINT "UNIQUE_USER_DB" UNIQUE ("tmdbId", "mediaType", "requestedById"),
+        CONSTRAINT "FK_ae34e6b153a90672eb9dc4857d7" FOREIGN KEY ("requestedById") REFERENCES "user" ("id") ON DELETE CASCADE,
+        CONSTRAINT "FK_6641da8d831b93dfcb429f8b8bc" FOREIGN KEY ("mediaId") REFERENCES "media" ("id") ON DELETE CASCADE
+      )`
+    );
+    await runner.query(
+      `CREATE INDEX "IDX_watchlist_user_created" ON "watchlist" ("requestedById", "createdAt")`
+    );
+    await runner.query(
+      `CREATE INDEX "IDX_watchlist_user_type_title" ON "watchlist" ("requestedById", "mediaType", "title")`
+    );
+    return runner;
+  };
+
+  it('migrates and rolls back an empty legacy SQLite schema', async () => {
+    const database = new DataSource({ type: 'sqlite', database: ':memory:' });
+    await database.initialize();
+    const runner = await createLegacySchema(database);
+    try {
+      const migration = new AddWatchlistEnrichment1790000000014();
+      await migration.up(runner);
+      let table = await runner.getTable('watchlist');
+      assert.ok(table?.findColumnByName('jellyfinPlayed'));
+      assert.equal(
+        table?.foreignKeys.find((key) => key.columnNames[0] === 'mediaId')
+          ?.onDelete,
+        'SET NULL'
+      );
+
+      await migration.down(runner);
+      table = await runner.getTable('watchlist');
+      assert.equal(table?.findColumnByName('jellyfinPlayed'), undefined);
+      assert.equal(
+        table?.foreignKeys.find((key) => key.columnNames[0] === 'mediaId')
+          ?.onDelete,
+        'CASCADE'
+      );
+      const userIndexes = (await runner.query(
+        `SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'user'`
+      )) as { name: string }[];
+      assert.equal(
+        userIndexes.some(
+          ({ name }) => name === 'UQ_user_jellyfin_id_normalized'
+        ),
+        false
+      );
+    } finally {
+      await runner.release();
+      await database.destroy();
+    }
+  });
+
+  it('preserves legacy membership and makes Media deletion non-destructive', async () => {
+    const database = new DataSource({ type: 'sqlite', database: ':memory:' });
+    await database.initialize();
+    const runner = await createLegacySchema(database);
+    try {
+      await runner.query(
+        `INSERT INTO "user" ("id", "jellyfinUserId") VALUES (1, '11111111111111111111111111111111')`
+      );
+      await runner.query(`INSERT INTO "media" ("id") VALUES (1)`);
+      await runner.query(
+        `INSERT INTO "watchlist" ("ratingKey", "mediaType", "title", "tmdbId", "createdAt", "updatedAt", "requestedById", "mediaId", "genreIds")
+         VALUES ('', 'movie', 'Legacy', 10, '2025-01-01 00:00:00', '2025-01-01 00:00:00', 1, 1, '[18]')`
+      );
+
+      const migration = new AddWatchlistEnrichment1790000000014();
+      await migration.up(runner);
+      const [migrated] = (await runner.query(
+        `SELECT "createdAt", "genreIds", "jellyfinPlayed", "jellyfinLastPlayedAt", "jellyfinPlayStateSyncedAt", "jellyfinPlayStateUserId" FROM "watchlist"`
+      )) as Record<string, unknown>[];
+      assert.match(String(migrated.createdAt), /2025-01-01/);
+      assert.equal(migrated.genreIds, '[18]');
+      assert.equal(migrated.jellyfinPlayed, null);
+      assert.equal(migrated.jellyfinLastPlayedAt, null);
+      assert.equal(migrated.jellyfinPlayStateSyncedAt, null);
+      assert.equal(migrated.jellyfinPlayStateUserId, null);
+
+      await runner.query(`DELETE FROM "media" WHERE "id" = 1`);
+      const [preserved] = (await runner.query(
+        `SELECT "mediaId" FROM "watchlist"`
+      )) as { mediaId: number | null }[];
+      assert.equal(preserved.mediaId, null);
+
+      await assert.rejects(() =>
+        runner.query(
+          `INSERT INTO "user" ("id", "jellyfinUserId") VALUES (2, ' 11111111-1111-1111-1111-111111111111 ')`
+        )
+      );
+    } finally {
+      await runner.release();
+      await database.destroy();
+    }
+  });
+
+  it('fails closed when legacy users contain normalized duplicate Jellyfin IDs', async () => {
+    const database = new DataSource({ type: 'sqlite', database: ':memory:' });
+    await database.initialize();
+    const runner = await createLegacySchema(database);
+    try {
+      await runner.query(
+        `INSERT INTO "user" ("id", "jellyfinUserId") VALUES
+          (1, 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'),
+          (2, 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA')`
+      );
+      await assert.rejects(() =>
+        new AddWatchlistEnrichment1790000000014().up(runner)
+      );
+    } finally {
+      await runner.release();
+      await database.destroy();
+    }
+  });
+
+  it('keeps the PostgreSQL migration contract aligned', () => {
+    const migration = readFileSync(
+      path.join(
+        __dirname,
+        '../migration/postgres/1790000000015-AddWatchlistEnrichment.ts'
+      ),
+      'utf8'
+    );
+    assert.match(migration, /type: 'timestamptz'/);
+    assert.match(migration, /onDelete: 'SET NULL'/);
+    assert.match(migration, /UQ_user_jellyfin_id_normalized/);
+    assert.match(migration, /lower\(replace\(btrim\("jellyfinUserId"/);
   });
 });

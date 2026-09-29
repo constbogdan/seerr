@@ -83,4 +83,66 @@ describe('JellyfinAPI targeted item reads', () => {
       fields: 'ProviderIds,MediaSources,Width,Height,IsHD,DateCreated',
     });
   });
+
+  it('performs a bounded exact per-user lookup with UserData enabled', async () => {
+    let params: object | undefined;
+    let timeout: number | undefined;
+    const api = new JellyfinAPI('http://jellyfin.test');
+    Object.defineProperty(api, 'get', {
+      value: async (
+        _path: string,
+        options: { params: object; timeout?: number }
+      ) => {
+        params = options.params;
+        timeout = options.timeout;
+        return {
+          Items: [item('aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa', 'FileSystem')],
+          TotalRecordCount: 1,
+          StartIndex: 0,
+        } satisfies JellyfinItemsReponse;
+      },
+    });
+
+    await api.getUserItems({
+      ids: [
+        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      ],
+      userId: 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+      fields: ['ProviderIds', 'RecursiveItemCount'],
+    });
+
+    assert.deepEqual(params, {
+      ids: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      userId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      enableUserData: true,
+      limit: 1,
+      fields: 'ProviderIds,RecursiveItemCount',
+    });
+    assert.equal(timeout, 15_000);
+  });
+
+  it('rejects missing, malformed, and oversized exact item lookups', async () => {
+    const api = new JellyfinAPI('http://jellyfin.test');
+    await assert.rejects(() =>
+      api.getUserItems({
+        ids: [],
+        userId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      })
+    );
+    await assert.rejects(() =>
+      api.getUserItems({
+        ids: ['not-an-id'],
+        userId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      })
+    );
+    await assert.rejects(() =>
+      api.getUserItems({
+        ids: Array.from({ length: 101 }, (_, index) =>
+          index.toString(16).padStart(32, '0')
+        ),
+        userId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      })
+    );
+  });
 });

@@ -1,9 +1,15 @@
+import Badge from '@app/components/Common/Badge';
 import PersonCard from '@app/components/PersonCard';
 import TitleCard from '@app/components/TitleCard';
 import TmdbTitleCard from '@app/components/TitleCard/TmdbTitleCard';
 import { Permission, useUser } from '@app/hooks/useUser';
 import useVerticalScroll from '@app/hooks/useVerticalScroll';
 import globalMessages from '@app/i18n/globalMessages';
+import defineMessages from '@app/utils/defineMessages';
+import {
+  CheckCircleIcon,
+  QuestionMarkCircleIcon,
+} from '@heroicons/react/20/solid';
 import { MediaStatus } from '@server/constants/media';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import type {
@@ -22,7 +28,13 @@ type ListViewProps = {
   isReachingEnd?: boolean;
   onScrollBottom: () => void;
   mutateParent?: () => void;
+  showWatchlistOwner?: boolean;
 };
+
+const messages = defineMessages('components.Common.ListView', {
+  watched: 'Watched',
+  watchStateUnknown: 'Watch status unavailable',
+});
 
 const ListView = ({
   items,
@@ -32,6 +44,7 @@ const ListView = ({
   isReachingEnd,
   plexItems,
   mutateParent,
+  showWatchlistOwner = false,
 }: ListViewProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -53,14 +66,43 @@ const ListView = ({
         {plexItems?.map((title, index) => {
           return (
             <li key={`${title.ratingKey}-${index}`}>
-              <TmdbTitleCard
-                id={title.tmdbId}
-                tmdbId={title.tmdbId}
-                type={title.mediaType}
-                isAddedToWatchlist={true}
-                canExpand
-                mutateParent={mutateParent}
-              />
+              <div className="relative">
+                <TmdbTitleCard
+                  id={title.tmdbId}
+                  tmdbId={title.tmdbId}
+                  type={title.mediaType}
+                  isAddedToWatchlist={true}
+                  canExpand
+                  mutateParent={mutateParent}
+                />
+                {(title.watchState === 'watched' ||
+                  title.watchState === 'unknown' ||
+                  (showWatchlistOwner && title.requestedBy)) && (
+                  <div className="pointer-events-none absolute bottom-2 left-2 z-40 flex max-w-[calc(100%-1rem)] flex-col items-start gap-1">
+                    {title.watchState === 'watched' && (
+                      <Badge badgeType="success">
+                        <span className="flex items-center gap-1">
+                          <CheckCircleIcon className="h-4 w-4" />
+                          {intl.formatMessage(messages.watched)}
+                        </span>
+                      </Badge>
+                    )}
+                    {title.watchState === 'unknown' && (
+                      <Badge badgeType="dark">
+                        <span className="flex items-center gap-1">
+                          <QuestionMarkCircleIcon className="h-4 w-4" />
+                          {intl.formatMessage(messages.watchStateUnknown)}
+                        </span>
+                      </Badge>
+                    )}
+                    {showWatchlistOwner && title.requestedBy && (
+                      <Badge badgeType="default">
+                        {title.requestedBy.displayName}
+                      </Badge>
+                    )}
+                  </div>
+                )}
+              </div>
             </li>
           );
         })}

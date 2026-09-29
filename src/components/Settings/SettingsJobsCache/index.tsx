@@ -91,6 +91,7 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'image-cache-cleanup': 'Image Cache Cleanup',
     'process-blocklisted-tags': 'Process Blocklisted Tags',
     'watchlist-metadata-backfill': 'Watchlist Metadata Backfill',
+    'watchlist-play-state-sync': 'Watchlist Play State Sync',
     'fresh-sync': 'Fresh Sync',
     'fresh-reconciliation': 'Fresh Reconciliation',
     editJobSchedule: 'Modify Job',

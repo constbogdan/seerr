@@ -38,6 +38,11 @@ const nullableNumberArray = {
 @Unique('UNIQUE_USER_DB', ['tmdbId', 'mediaType', 'requestedBy'])
 @Index('IDX_watchlist_user_created', ['requestedBy', 'createdAt'])
 @Index('IDX_watchlist_user_type_title', ['requestedBy', 'mediaType', 'title'])
+@Index('IDX_watchlist_user_played_created', [
+  'requestedBy',
+  'jellyfinPlayed',
+  'createdAt',
+])
 export class Watchlist implements WatchlistItem {
   @PrimaryGeneratedColumn()
   id: number;
@@ -67,10 +72,23 @@ export class Watchlist implements WatchlistItem {
 
   @ManyToOne(() => Media, (media) => media.watchlists, {
     eager: true,
-    onDelete: 'CASCADE',
+    nullable: true,
+    onDelete: 'SET NULL',
   })
   @Index()
-  public media: Media;
+  public media?: Media | null;
+
+  @Column({ type: 'boolean', nullable: true })
+  public jellyfinPlayed?: boolean | null;
+
+  @DbAwareColumn({ type: 'datetime', nullable: true })
+  public jellyfinLastPlayedAt?: Date | null;
+
+  @DbAwareColumn({ type: 'datetime', nullable: true })
+  public jellyfinPlayStateSyncedAt?: Date | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true, select: false })
+  public jellyfinPlayStateUserId?: string | null;
 
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;

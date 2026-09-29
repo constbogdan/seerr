@@ -16,6 +16,7 @@ import { sonarrScanner } from '@server/lib/scanners/sonarr';
 import type { JobId } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import watchlistMetadataBackfill from '@server/lib/watchlistMetadata';
+import watchlistPlayStateSync from '@server/lib/watchlistPlayState';
 import watchlistSync from '@server/lib/watchlistsync';
 import logger from '@server/logger';
 import schedule from 'node-schedule';
@@ -151,6 +152,31 @@ export const startJobs = (): void => {
       }),
       running: () => jellyfinFullScanner.status().running,
       cancelFn: () => jellyfinFullScanner.cancel(),
+    });
+
+    scheduledJobs.push({
+      id: 'watchlist-play-state-sync',
+      name: 'Watchlist Play State Sync',
+      type: 'process',
+      interval: 'minutes',
+      cronSchedule: jobs['watchlist-play-state-sync'].schedule,
+      job: schedule.scheduleJob(
+        jobs['watchlist-play-state-sync'].schedule,
+        () => {
+          logger.info('Starting scheduled job: Watchlist Play State Sync', {
+            label: 'Jobs',
+          });
+          void watchlistPlayStateSync.run().catch((error) => {
+            logger.error('Watchlist play-state scheduled sync failed', {
+              label: 'Watchlist Play State',
+              errorMessage:
+                error instanceof Error ? error.message : 'Unknown sync error',
+            });
+          });
+        }
+      ),
+      running: () => watchlistPlayStateSync.running(),
+      cancelFn: () => watchlistPlayStateSync.cancel(),
     });
   }
 
@@ -326,5 +352,6 @@ export const startJobs = (): void => {
   });
 
   logger.info('Scheduled jobs loaded', { label: 'Jobs' });
+  watchlistPlayStateSync.startCatchUp();
   freshService.startCatchUp();
 };

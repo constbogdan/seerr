@@ -14,8 +14,10 @@ import {
   movieDiscoverOptions,
   tvDiscoverOptions,
 } from '@server/lib/discoverCriteria';
+import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
 import {
+  getLocalWatchlist,
   getWatchlistForUser,
   parseWatchlistQuery,
 } from '@server/lib/watchlist';
@@ -852,11 +854,44 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
 
 discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
   '/watchlist',
-  async (req, res) => {
+  async (req, res, next) => {
     const userRepository = getRepository(User);
+    const owner = typeof req.query.owner === 'string' ? req.query.owner : 'me';
+    const canViewOthers =
+      req.user?.hasPermission(Permission.WATCHLIST_VIEW) ?? false;
+
+    if (owner === 'all') {
+      if (!canViewOthers) {
+        return next({
+          status: 403,
+          message: 'You do not have permission to view other Watchlists.',
+        });
+      }
+      return res.json(
+        await getLocalWatchlist({
+          allUsers: true,
+          query: parseWatchlistQuery(req.query),
+        })
+      );
+    }
+
+    const requestedOwnerId = owner === 'me' ? req.user?.id : Number(owner);
+    if (
+      !requestedOwnerId ||
+      !Number.isSafeInteger(requestedOwnerId) ||
+      requestedOwnerId < 1
+    ) {
+      return next({ status: 400, message: 'Invalid Watchlist owner.' });
+    }
+    if (requestedOwnerId !== req.user?.id && !canViewOthers) {
+      return next({
+        status: 403,
+        message: 'You do not have permission to view this Watchlist.',
+      });
+    }
 
     const activeUser = await userRepository.findOne({
-      where: { id: req.user?.id },
+      where: { id: requestedOwnerId },
       select: ['id', 'plexToken'],
     });
 
@@ -868,6 +903,7 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
         results: [],
         source: 'local',
         supportsPresentation: true,
+        supportsWatchState: true,
         hasUnclassifiedItems: false,
       });
     }

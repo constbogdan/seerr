@@ -2,15 +2,21 @@ import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
 import PageTitle from '@app/components/Common/PageTitle';
+import { UserSelector } from '@app/components/Selector';
 import useDiscover from '@app/hooks/useDiscover';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
-import { useUser } from '@app/hooks/useUser';
+import { Permission, useUser } from '@app/hooks/useUser';
 import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
-import { BarsArrowDownIcon } from '@heroicons/react/24/solid';
+import {
+  BarsArrowDownIcon,
+  CheckCircleIcon,
+  UserGroupIcon,
+} from '@heroicons/react/24/solid';
 import type {
   WatchlistCategory,
   WatchlistSort,
+  WatchlistWatchedFilter,
 } from '@server/constants/watchlist';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import Link from 'next/link';
@@ -39,6 +45,13 @@ const messages = defineMessages('components.Discover.DiscoverWatchlist', {
   emptyCategory: 'There are no Watchlist items in this category.',
   classificationPending:
     'Some Watchlist items are still being classified. This category may be incomplete.',
+  notWatched: 'Not Watched',
+  watched: 'Watched',
+  watchedFilter: 'Watch status',
+  me: 'Me',
+  allUsers: 'All Users',
+  specificUser: 'Specific User',
+  ownerFilter: 'Watchlist owner',
 });
 
 const DiscoverWatchlist = () => {
@@ -50,7 +63,15 @@ const DiscoverWatchlist = () => {
   const { user } = useUser({
     id: Number(router.query.userId),
   });
-  const { user: currentUser } = useUser();
+  const { user: currentUser, hasPermission } = useUser();
+  const canViewOthers = hasPermission(Permission.WATCHLIST_VIEW);
+  const owner =
+    dedicatedPage && typeof router.query.owner === 'string'
+      ? router.query.owner
+      : 'me';
+  const [ownerMode, setOwnerMode] = useState<'me' | 'all' | 'user'>(
+    owner === 'all' ? 'all' : owner === 'me' ? 'me' : 'user'
+  );
   const preferenceKey = currentUser?.id
     ? getWatchlistPreferenceKey(currentUser.id)
     : undefined;
@@ -70,9 +91,15 @@ const DiscoverWatchlist = () => {
     {
       source: 'local' | 'plex';
       supportsPresentation: boolean;
+      supportsWatchState: boolean;
       hasUnclassifiedItems: boolean;
     },
-    { category?: WatchlistCategory; sort?: WatchlistSort }
+    {
+      category?: WatchlistCategory;
+      sort?: WatchlistSort;
+      watched?: WatchlistWatchedFilter;
+      owner?: string;
+    }
   >(
     `/api/v1/${
       router.pathname.startsWith('/profile')
@@ -82,7 +109,12 @@ const DiscoverWatchlist = () => {
           : 'discover'
     }/watchlist`,
     dedicatedPage
-      ? { category: preferences.category, sort: preferences.sort }
+      ? {
+          category: preferences.category,
+          sort: preferences.sort,
+          watched: preferences.watched,
+          ...(canViewOthers && { owner }),
+        }
       : undefined,
     { hideAvailable: false, hideBlocklisted: false, hideRequested: false }
   );
@@ -102,6 +134,10 @@ const DiscoverWatchlist = () => {
           : undefined,
       querySort:
         typeof router.query.sort === 'string' ? router.query.sort : undefined,
+      queryWatched:
+        typeof router.query.watched === 'string'
+          ? router.query.watched
+          : undefined,
       stored,
     });
     setPreferences(resolved);
@@ -112,12 +148,19 @@ const DiscoverWatchlist = () => {
     router.isReady,
     router.query.category,
     router.query.sort,
+    router.query.watched,
   ]);
+
+  useEffect(() => {
+    if (!router.isReady) return;
+    setOwnerMode(owner === 'all' ? 'all' : owner === 'me' ? 'me' : 'user');
+  }, [owner, router.isReady]);
 
   const updatePreference = (
     next: Partial<{
       category: WatchlistCategory;
       sort: WatchlistSort;
+      watched: WatchlistWatchedFilter;
     }>
   ) => {
     const updated = { ...preferences, ...next };
@@ -128,6 +171,7 @@ const DiscoverWatchlist = () => {
     updateQuery({
       category: updated.category === 'all' ? undefined : updated.category,
       sort: updated.sort === 'added_desc' ? undefined : updated.sort,
+      watched: updated.watched === 'not_watched' ? undefined : updated.watched,
       page: undefined,
     });
   };
@@ -162,6 +206,63 @@ const DiscoverWatchlist = () => {
           </Header>
           {dedicatedPage && firstResultData?.supportsPresentation && (
             <div className="mt-2 flex flex-wrap gap-2">
+              {canViewOthers && (
+                <>
+                  <div className="flex">
+                    <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
+                      <UserGroupIcon className="h-6 w-6" />
+                      <span className="sr-only">
+                        {intl.formatMessage(messages.ownerFilter)}
+                      </span>
+                    </span>
+                    <select
+                      className="rounded-r-only"
+                      aria-label={intl.formatMessage(messages.ownerFilter)}
+                      value={ownerMode}
+                      onChange={(event) => {
+                        const mode = event.target.value as
+                          | 'me'
+                          | 'all'
+                          | 'user';
+                        setOwnerMode(mode);
+                        if (mode !== 'user') {
+                          updateQuery({
+                            owner: mode === 'all' ? 'all' : undefined,
+                            page: undefined,
+                          });
+                        }
+                      }}
+                    >
+                      <option value="me">
+                        {intl.formatMessage(messages.me)}
+                      </option>
+                      <option value="all">
+                        {intl.formatMessage(messages.allUsers)}
+                      </option>
+                      <option value="user">
+                        {intl.formatMessage(messages.specificUser)}
+                      </option>
+                    </select>
+                  </div>
+                  {ownerMode === 'user' && (
+                    <div className="min-w-64">
+                      <UserSelector
+                        defaultValue={
+                          owner !== 'me' && owner !== 'all' ? owner : undefined
+                        }
+                        onChange={(selected) => {
+                          if (selected?.value) {
+                            updateQuery({
+                              owner: selected.value.toString(),
+                              page: undefined,
+                            });
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
+                </>
+              )}
               <MediaTypeFilter
                 value={preferences.category}
                 ariaLabel={intl.formatMessage(messages.discoverwatchlist)}
@@ -189,6 +290,36 @@ const DiscoverWatchlist = () => {
                   })
                 }
               />
+              {firstResultData.supportsWatchState && (
+                <div className="flex">
+                  <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
+                    <CheckCircleIcon className="h-6 w-6" />
+                    <span className="sr-only">
+                      {intl.formatMessage(messages.watchedFilter)}
+                    </span>
+                  </span>
+                  <select
+                    className="rounded-r-only"
+                    aria-label={intl.formatMessage(messages.watchedFilter)}
+                    value={preferences.watched}
+                    onChange={(event) =>
+                      updatePreference({
+                        watched: event.target.value as WatchlistWatchedFilter,
+                      })
+                    }
+                  >
+                    <option value="not_watched">
+                      {intl.formatMessage(messages.notWatched)}
+                    </option>
+                    <option value="watched">
+                      {intl.formatMessage(messages.watched)}
+                    </option>
+                    <option value="all">
+                      {intl.formatMessage(messages.all)}
+                    </option>
+                  </select>
+                </div>
+              )}
               <div className="flex">
                 <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
                   <BarsArrowDownIcon className="h-6 w-6" />
@@ -245,6 +376,7 @@ const DiscoverWatchlist = () => {
           isReachingEnd={isReachingEnd}
           onScrollBottom={fetchMore}
           mutateParent={mutate}
+          showWatchlistOwner={owner === 'all'}
         />
       )}
     </>

@@ -39,17 +39,27 @@ describe('Watchlist presentation preferences', () => {
       resolveWatchlistPreferences({
         queryCategory: 'animation',
         querySort: 'title_desc',
-        stored: { category: 'movies', sort: 'added_asc' },
+        queryWatched: 'watched',
+        stored: {
+          category: 'movies',
+          sort: 'added_asc',
+          watched: 'not_watched',
+        },
       }),
-      { category: 'animation', sort: 'title_desc' }
+      { category: 'animation', sort: 'title_desc', watched: 'watched' }
     );
     assert.deepEqual(
       resolveWatchlistPreferences({
         queryCategory: 'invalid',
         querySort: 'invalid',
-        stored: { category: 'series', sort: 'added_asc' },
+        queryWatched: 'invalid',
+        stored: {
+          category: 'series',
+          sort: 'added_asc',
+          watched: 'all',
+        },
       }),
-      { category: 'series', sort: 'added_asc' }
+      { category: 'series', sort: 'added_asc', watched: 'all' }
     );
   });
 });
@@ -62,6 +72,10 @@ describe('Watchlist page and navigation integration', () => {
   );
   const mobile = readFileSync(
     path.join(__dirname, '../../Layout/MobileMenu/index.tsx'),
+    'utf8'
+  );
+  const listView = readFileSync(
+    path.join(__dirname, '../../Common/ListView/index.tsx'),
     'utf8'
   );
 
@@ -78,6 +92,12 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(page, /value="added_asc"/);
     assert.match(page, /value="title_asc"/);
     assert.match(page, /value="title_desc"/);
+    assert.match(page, /value="not_watched"/);
+    assert.match(page, /value="watched"/);
+    assert.match(page, /firstResultData\.supportsWatchState/);
+    assert.match(page, /Permission\.WATCHLIST_VIEW/);
+    assert.match(page, /<UserSelector/);
+    assert.match(page, /value="all"/);
   });
 
   it('never hides Watchlist membership because of availability or request state', () => {
@@ -86,6 +106,13 @@ describe('Watchlist page and navigation integration', () => {
       /hideAvailable: false, hideBlocklisted: false, hideRequested: false/
     );
     assert.match(page, /plexItems=\{titles\}/);
+  });
+
+  it('renders completion and owner evidence without per-card provider reads', () => {
+    assert.match(listView, /title\.watchState === 'watched'/);
+    assert.match(listView, /title\.watchState === 'unknown'/);
+    assert.match(listView, /title\.requestedBy\.displayName/);
+    assert.doesNotMatch(listView, /api\/v1\/.*jellyfin/i);
   });
 
   it('adds desktop and mobile Watchlist navigation while retaining Requests', () => {
