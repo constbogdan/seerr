@@ -1120,6 +1120,7 @@ components:
         - sourceTitleSamples
         - observationCount
         - active
+        - show
         - actionable
         - actions
       properties:
@@ -1252,15 +1253,19 @@ components:
             legacyEvidence: { type: boolean }
         visibleUntil: { type: string, format: date-time }
         active: { type: boolean }
+        show: { type: boolean }
         actionable: { type: boolean }
         actions:
           type: object
-          required: [resolve, resetResolution, admit, removeOverride]
+          required:
+            [resolve, resetResolution, admit, removeOverride, dismiss, show]
           properties:
             resolve: { type: boolean }
             resetResolution: { type: boolean }
             admit: { type: boolean }
             removeOverride: { type: boolean }
+            dismiss: { type: boolean }
+            show: { type: boolean }
     FreshCandidateDiagnosticsResponse:
       type: object
       required: [pageInfo, results, summary]
@@ -6498,6 +6503,12 @@ paths:
             type: string
             enum: [all, present, absent]
             default: all
+        - in: query
+          name: visibility
+          schema:
+            type: string
+            enum: [visible, hidden, all]
+            default: visible
       responses:
         '200':
           description: Persistent current-generation Fresh candidate state
@@ -6505,6 +6516,52 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FreshCandidateDiagnosticsResponse'
+  /settings/fresh/candidates/visibility:
+    post:
+      summary: Atomically update visibility for selected Fresh diagnostics candidates
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [show, candidates]
+              properties:
+                show: { type: boolean }
+                candidates:
+                  type: array
+                  minItems: 1
+                  maxItems: 25
+                  uniqueItems: true
+                  items:
+                    type: object
+                    additionalProperties: false
+                    required: [candidateId, expectedRevision]
+                    properties:
+                      candidateId: { type: integer, minimum: 1 }
+                      expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Candidate diagnostics visibility updated atomically
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [show, candidates]
+                properties:
+                  show: { type: boolean }
+                  candidates:
+                    type: array
+                    items:
+                      type: object
+                      required: [candidateId, revision]
+                      properties:
+                        candidateId: { type: integer }
+                        revision: { type: integer }
+        '409':
+          description: At least one candidate identity or revision is stale
   /settings/fresh/candidates/{candidateId}/resolve:
     post:
       summary: Resolve an actionable Fresh candidate to a validated TMDB identity
@@ -6600,6 +6657,50 @@ paths:
       responses:
         '200':
           description: Admission override removed
+  /settings/fresh/candidates/{candidateId}/dismiss:
+    post:
+      summary: Hide a Fresh candidate from default diagnostics results
+      tags: [settings]
+      parameters:
+        - in: path
+          name: candidateId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Candidate hidden from default diagnostics results
+  /settings/fresh/candidates/{candidateId}/show:
+    post:
+      summary: Restore a Fresh candidate to default diagnostics results
+      tags: [settings]
+      parameters:
+        - in: path
+          name: candidateId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Candidate restored to default diagnostics results
   /settings/fresh/refresh:
     post:
       summary: Force and await a Fresh refresh

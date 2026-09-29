@@ -17,6 +17,7 @@ import {
 } from '@server/constants/fresh';
 import dataSource from '@server/datasource';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
 import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
 import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
@@ -196,6 +197,12 @@ describe('persistent Fresh engine', () => {
     assert.equal(result.diagnostics.checkpoint.after, '12');
     assert.equal(await dataSource.getRepository(FreshObservation).count(), 3);
     assert.equal(await dataSource.getRepository(FreshCandidate).count(), 2);
+    assert.equal(
+      await dataSource.getRepository(FreshCandidateVisibility).countBy({
+        show: true,
+      }),
+      2
+    );
     assert.equal(await dataSource.getRepository(FreshMedia).count(), 2);
     assert.equal(
       await dataSource.getRepository(FreshMedia).countBy({ active: true }),
@@ -212,13 +219,34 @@ describe('persistent Fresh engine', () => {
       '2026-09-24T12:00:00.000Z'
     );
 
+    const movieCandidate = await dataSource
+      .getRepository(FreshCandidate)
+      .findOneByOrFail({ normalizedTitle: 'movie a' });
+    const visibilityRepository = dataSource.getRepository(
+      FreshCandidateVisibility
+    );
+    const hidden = await visibilityRepository.findOneByOrFail({
+      sourceEvidenceKey: movieCandidate.sourceEvidenceKey,
+    });
+    hidden.show = false;
+    await visibilityRepository.save(hidden);
+
     const restarted = engine();
     const replay = await restarted.run(settings);
     assert.equal(replay.diagnostics.outcome, 'succeeded');
     assert.equal(replay.diagnostics.counts.persistedObservations, 0);
+    await restarted.reevaluate(settings);
     assert.equal(await dataSource.getRepository(FreshObservation).count(), 3);
     assert.equal(movieSearches, 1);
     assert.equal(tvSearches, 1);
+    assert.equal(
+      (
+        await visibilityRepository.findOneByOrFail({
+          sourceEvidenceKey: movieCandidate.sourceEvidenceKey,
+        })
+      ).show,
+      false
+    );
   });
 
   it('reads only a real delta and advances after durable evidence exists', async () => {
@@ -768,8 +796,16 @@ describe('persistent Fresh engine', () => {
         status: FreshCandidateStatus.NO_MATCH,
         automaticStatus: FreshCandidateStatus.NO_MATCH,
         automaticFailureReason: 'no_exact_match',
+        sourceEvidenceKey: 'manual-visibility-key',
         firstObservedAt: new Date('2026-09-25T00:00:00Z'),
         lastObservedAt: new Date('2026-09-25T00:00:00Z'),
+      })
+    );
+    await dataSource.getRepository(FreshCandidateVisibility).save(
+      new FreshCandidateVisibility({
+        mediaType: candidate.mediaType,
+        sourceEvidenceKey: candidate.sourceEvidenceKey,
+        show: false,
       })
     );
     await dataSource.getRepository(FreshObservation).save(
@@ -848,6 +884,14 @@ describe('persistent Fresh engine', () => {
           .getRepository(FreshMedia)
           .findOneByOrFail({ id: resolved.media.id })
       ).active,
+      false
+    );
+    assert.equal(
+      (
+        await dataSource
+          .getRepository(FreshCandidateVisibility)
+          .findOneByOrFail({ sourceEvidenceKey: candidate.sourceEvidenceKey })
+      ).show,
       false
     );
     assert.equal(
@@ -1166,6 +1210,18 @@ describe('persistent Fresh engine', () => {
     });
 
     await resolver.run(settings, true);
+    const season13Candidate = await dataSource
+      .getRepository(FreshCandidate)
+      .findOneByOrFail({ seasonKey: 13 });
+    const season13Visibility = await dataSource
+      .getRepository(FreshCandidateVisibility)
+      .findOneByOrFail({
+        sourceEvidenceKey: season13Candidate.sourceEvidenceKey,
+      });
+    season13Visibility.show = false;
+    await dataSource
+      .getRepository(FreshCandidateVisibility)
+      .save(season13Visibility);
     let histories = await dataSource.getRepository(FreshDiscoveryHistory).find({
       order: { seasonKey: 'ASC' },
     });
@@ -1250,6 +1306,17 @@ describe('persistent Fresh engine', () => {
       '2027-02-15T01:00:00.000Z'
     );
     assert.equal(projection.active, true);
+    const visibilities = await dataSource
+      .getRepository(FreshCandidateVisibility)
+      .find({ order: { id: 'ASC' } });
+    assert.equal(
+      visibilities.find(
+        (visibility) =>
+          visibility.sourceEvidenceKey === season13Candidate.sourceEvidenceKey
+      )?.show,
+      false
+    );
+    assert.equal(visibilities.at(-1)?.show, true);
   });
 
   it('keeps explicit Specials as independent irreversible identities without inventing season zero', async () => {
@@ -1416,6 +1483,13 @@ describe('persistent Fresh engine', () => {
       .findOneByOrFail({
         displayTitle: 'Historical Movie',
       });
+    const overrideVisibility = await dataSource
+      .getRepository(FreshCandidateVisibility)
+      .findOneByOrFail({ sourceEvidenceKey: candidate.sourceEvidenceKey });
+    overrideVisibility.show = false;
+    await dataSource
+      .getRepository(FreshCandidateVisibility)
+      .save(overrideVisibility);
     let history = await dataSource
       .getRepository(FreshDiscoveryHistory)
       .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 });
@@ -1479,6 +1553,14 @@ describe('persistent Fresh engine', () => {
     assert.equal(
       history.visibleUntil?.toISOString(),
       '2026-10-05T12:00:00.000Z'
+    );
+    assert.equal(
+      (
+        await dataSource
+          .getRepository(FreshCandidateVisibility)
+          .findOneByOrFail({ sourceEvidenceKey: candidate.sourceEvidenceKey })
+      ).show,
+      false
     );
   });
 });

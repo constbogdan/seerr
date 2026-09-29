@@ -7,6 +7,9 @@ import { renderToStaticMarkup } from 'react-dom/server';
 // The node:test harness cannot resolve @app imports from its server tsconfig.
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
 import MediaTypeFilter from '../../Common/MediaTypeFilter';
+// This leaf component has no @app imports and can be rendered by node:test.
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import CandidateDiagnosticsShortcut from '../../Fresh/CandidateDiagnosticsShortcut';
 
 describe('Fresh native pagination integration', () => {
   const slider = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
@@ -23,6 +26,26 @@ describe('Fresh native pagination integration', () => {
     assert.match(slider, /url=\{FRESH_API_PATH\}/);
     assert.match(slider, /linkUrl="\/fresh"/);
     assert.doesNotMatch(slider, /items=|itemsLoading=|useSWR/);
+    assert.match(slider, /hasPermission\(Permission\.ADMIN\)/);
+    assert.match(slider, /headerAction=/);
+  });
+
+  it('renders the Candidate Diagnostics shortcut only for administrators', () => {
+    const admin = renderToStaticMarkup(
+      createElement(CandidateDiagnosticsShortcut, { show: true })
+    );
+    const user = renderToStaticMarkup(
+      createElement(CandidateDiagnosticsShortcut, { show: false })
+    );
+    assert.match(
+      admin,
+      /href="\/settings\/discovery-sources\/fresh#candidates"/
+    );
+    assert.match(admin, /Open Fresh Candidate Diagnostics/);
+    assert.match(admin, /<svg/);
+    assert.equal(user, '');
+    assert.match(page, /hasPermission\(Permission\.ADMIN\)/);
+    assert.match(page, /CandidateDiagnosticsShortcut/);
   });
 
   it('uses useDiscover for the complete paginated Fresh page', () => {

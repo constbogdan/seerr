@@ -3,6 +3,7 @@ import { MediaStatus, MediaType } from '@server/constants/media';
 import dataSource from '@server/datasource';
 import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
 import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
@@ -215,6 +216,8 @@ describe('Fresh route authorization and safe responses', () => {
     const originalReset = freshService.resetCandidateResolution;
     const originalAdmit = freshService.admitCandidate;
     const originalRemove = freshService.removeCandidateOverride;
+    const originalVisibility = freshService.setCandidateVisibility;
+    const originalBulkVisibility = freshService.setCandidateVisibilityBulk;
     const calls: string[] = [];
     freshService.resolveCandidate = async (
       candidateId,
@@ -251,6 +254,31 @@ describe('Fresh route authorization and safe responses', () => {
     freshService.removeCandidateOverride = async (candidateId, revision) => {
       calls.push(`remove:${candidateId}:${revision}`);
       return new FreshCandidate({ id: candidateId, revision: revision + 1 });
+    };
+    freshService.setCandidateVisibility = async (
+      candidateId,
+      show,
+      revision
+    ) => {
+      calls.push(`${show ? 'show' : 'dismiss'}:${candidateId}:${revision}`);
+      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
+    };
+    freshService.setCandidateVisibilityBulk = async (selections, show) => {
+      calls.push(
+        `bulk-${show ? 'show' : 'dismiss'}:${selections
+          .map(
+            ({ candidateId, expectedRevision }) =>
+              `${candidateId}:${expectedRevision}`
+          )
+          .join(',')}`
+      );
+      return selections.map(
+        ({ candidateId, expectedRevision }) =>
+          new FreshCandidate({
+            id: candidateId,
+            revision: expectedRevision + 1,
+          })
+      );
     };
     try {
       assert.equal(
@@ -290,12 +318,58 @@ describe('Fresh route authorization and safe responses', () => {
         assert.equal(response.status, 200);
         assert.ok(calls.includes(expected));
       }
+      assert.equal(
+        (
+          await request(app)
+            .post('/settings/fresh/candidates/10/dismiss')
+            .set('x-test-role', 'user')
+            .send({ expectedRevision: 9 })
+        ).status,
+        403
+      );
+      for (const [endpoint, expected] of [
+        ['dismiss', 'dismiss:10:9'],
+        ['show', 'show:10:9'],
+      ] as const) {
+        const response = await request(app)
+          .post(`/settings/fresh/candidates/10/${endpoint}`)
+          .set('x-test-role', 'admin')
+          .send({ expectedRevision: 9 });
+        assert.equal(response.status, 200);
+        assert.ok(calls.includes(expected));
+      }
+      assert.equal(
+        (
+          await request(app)
+            .post('/settings/fresh/candidates/visibility')
+            .set('x-test-role', 'user')
+            .send({
+              show: false,
+              candidates: [{ candidateId: 10, expectedRevision: 9 }],
+            })
+        ).status,
+        403
+      );
+      const bulk = await request(app)
+        .post('/settings/fresh/candidates/visibility')
+        .set('x-test-role', 'admin')
+        .send({
+          show: false,
+          candidates: [
+            { candidateId: 10, expectedRevision: 9 },
+            { candidateId: 11, expectedRevision: 4 },
+          ],
+        });
+      assert.equal(bulk.status, 200);
+      assert.ok(calls.includes('bulk-dismiss:10:9,11:4'));
       assert.ok(calls.includes('resolve:10:tv:305251:7'));
     } finally {
       freshService.resolveCandidate = originalResolve;
       freshService.resetCandidateResolution = originalReset;
       freshService.admitCandidate = originalAdmit;
       freshService.removeCandidateOverride = originalRemove;
+      freshService.setCandidateVisibility = originalVisibility;
+      freshService.setCandidateVisibilityBulk = originalBulkVisibility;
     }
   });
 
@@ -509,8 +583,12 @@ describe('Fresh route authorization and safe responses', () => {
   });
 
   it('serves persistent candidate diagnostics with admin-only filtering and summary counts', async () => {
+    const settings = getSettings();
+    settings.fresh = { ...settings.fresh, enabled: true };
+    freshService.configure(settings.fresh);
     await dataSource.getRepository(FreshManualResolution).clear();
     await dataSource.getRepository(FreshAdmissionOverride).clear();
+    await dataSource.getRepository(FreshCandidateVisibility).clear();
     await dataSource.getRepository(FreshCandidate).clear();
     await dataSource.getRepository(FreshSyncState).save(
       new FreshSyncState({
@@ -546,6 +624,7 @@ describe('Fresh route authorization and safe responses', () => {
         displayTitle: 'Needs Attention',
         matchYear: 2026,
         status: FreshCandidateStatus.NO_MATCH,
+        sourceEvidenceKey: 'needs-attention-key',
         firstObservedAt: new Date('2026-09-20T00:00:00Z'),
         lastObservedAt: new Date('2026-09-25T00:00:00Z'),
       }),
@@ -556,6 +635,7 @@ describe('Fresh route authorization and safe responses', () => {
         displayTitle: 'Identity Collision',
         matchYear: 2026,
         status: FreshCandidateStatus.RESOLVED,
+        sourceEvidenceKey: 'identity-collision-key',
         automaticStatus: FreshCandidateStatus.RESOLVED,
         lastFailureReason: 'source_evidence_collision',
         firstObservedAt: new Date('2026-09-22T00:00:00Z'),
@@ -567,6 +647,7 @@ describe('Fresh route authorization and safe responses', () => {
         normalizedTitle: 'ambiguous series',
         displayTitle: 'Ambiguous Series',
         status: FreshCandidateStatus.AMBIGUOUS,
+        sourceEvidenceKey: 'ambiguous-series-key',
         firstObservedAt: new Date('2026-09-21T00:00:00Z'),
         lastObservedAt: new Date('2026-09-24T00:00:00Z'),
       }),
@@ -717,6 +798,155 @@ describe('Fresh route authorization and safe responses', () => {
     assert.equal(overridden.status, 200);
     assert.equal(overridden.body.results.length, 1);
     assert.equal(overridden.body.results[0].admissionOverride.revision, 1);
+
+    const publicFreshBefore = await request(app)
+      .get('/fresh?page=1')
+      .set('x-test-role', 'user');
+    assert.equal(publicFreshBefore.status, 200);
+    const membershipBefore = await dataSource
+      .getRepository(FreshMedia)
+      .findOneByOrFail({ id: eligibilityUnknownMedia.id });
+    const dismissed = await request(app)
+      .post(`/settings/fresh/candidates/${candidates[0].id}/dismiss`)
+      .set('x-test-role', 'admin')
+      .send({ expectedRevision: candidates[0].revision });
+    assert.equal(dismissed.status, 200);
+    const visible = await request(app)
+      .get(
+        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(visible.body.results.length, 3);
+    assert.equal(
+      visible.body.results.some(
+        (row: { candidateId: number }) => row.candidateId === candidates[0].id
+      ),
+      false
+    );
+    const hidden = await request(app)
+      .get('/settings/fresh/candidates?visibility=hidden')
+      .set('x-test-role', 'admin');
+    assert.deepEqual(
+      hidden.body.results.map(
+        (row: { candidateId: number }) => row.candidateId
+      ),
+      [candidates[0].id]
+    );
+    assert.equal(hidden.body.results[0].show, false);
+    const all = await request(app)
+      .get('/settings/fresh/candidates?visibility=all')
+      .set('x-test-role', 'admin');
+    assert.equal(all.body.results.length, 4);
+    const shown = await request(app)
+      .post(`/settings/fresh/candidates/${candidates[0].id}/show`)
+      .set('x-test-role', 'admin')
+      .send({ expectedRevision: dismissed.body.revision });
+    assert.equal(shown.status, 200);
+    const restored = await request(app)
+      .get('/settings/fresh/candidates')
+      .set('x-test-role', 'admin');
+    assert.equal(restored.body.results.length, 4);
+
+    const bulkCandidates = await Promise.all(
+      candidates
+        .slice(0, 2)
+        .map(({ id }) =>
+          dataSource.getRepository(FreshCandidate).findOneByOrFail({ id })
+        )
+    );
+    const bulkDismissed = await request(app)
+      .post('/settings/fresh/candidates/visibility')
+      .set('x-test-role', 'admin')
+      .send({
+        show: false,
+        candidates: bulkCandidates.map((candidate) => ({
+          candidateId: candidate.id,
+          expectedRevision: candidate.revision,
+        })),
+      });
+    assert.equal(bulkDismissed.status, 200);
+    assert.equal(bulkDismissed.body.candidates.length, 2);
+    const bulkHidden = await request(app)
+      .get('/settings/fresh/candidates?visibility=hidden')
+      .set('x-test-role', 'admin');
+    assert.deepEqual(
+      new Set(
+        bulkHidden.body.results.map(
+          (row: { candidateId: number }) => row.candidateId
+        )
+      ),
+      new Set(bulkCandidates.map(({ id }) => id))
+    );
+    const bulkShown = await request(app)
+      .post('/settings/fresh/candidates/visibility')
+      .set('x-test-role', 'admin')
+      .send({
+        show: true,
+        candidates: bulkDismissed.body.candidates.map(
+          (candidate: { candidateId: number; revision: number }) => ({
+            candidateId: candidate.candidateId,
+            expectedRevision: candidate.revision,
+          })
+        ),
+      });
+    assert.equal(bulkShown.status, 200);
+
+    const beforeAtomicFailure = await Promise.all(
+      bulkCandidates.map(({ id }) =>
+        dataSource.getRepository(FreshCandidate).findOneByOrFail({ id })
+      )
+    );
+    const staleBulk = await request(app)
+      .post('/settings/fresh/candidates/visibility')
+      .set('x-test-role', 'admin')
+      .send({
+        show: false,
+        candidates: beforeAtomicFailure.map((candidate, index) => ({
+          candidateId: candidate.id,
+          expectedRevision: candidate.revision - (index === 1 ? 1 : 0),
+        })),
+      });
+    assert.equal(staleBulk.status, 409);
+    const afterAtomicFailure = await Promise.all(
+      bulkCandidates.map(({ id }) =>
+        dataSource.getRepository(FreshCandidate).findOneByOrFail({ id })
+      )
+    );
+    assert.deepEqual(
+      afterAtomicFailure.map(({ revision }) => revision),
+      beforeAtomicFailure.map(({ revision }) => revision)
+    );
+    const visibleAfterAtomicFailure = await request(app)
+      .get('/settings/fresh/candidates')
+      .set('x-test-role', 'admin');
+    assert.equal(
+      bulkCandidates.every(({ id }) =>
+        visibleAfterAtomicFailure.body.results.some(
+          (row: { candidateId: number }) => row.candidateId === id
+        )
+      ),
+      true
+    );
+    const membershipAfter = await dataSource
+      .getRepository(FreshMedia)
+      .findOneByOrFail({ id: eligibilityUnknownMedia.id });
+    assert.deepEqual(
+      {
+        active: membershipAfter.active,
+        admitted: membershipAfter.admitted,
+        reason: membershipAfter.membershipReason,
+      },
+      {
+        active: membershipBefore.active,
+        admitted: membershipBefore.admitted,
+        reason: membershipBefore.membershipReason,
+      }
+    );
+    const publicFreshAfter = await request(app)
+      .get('/fresh?page=1')
+      .set('x-test-role', 'user');
+    assert.equal(publicFreshAfter.status, 200);
+    assert.deepEqual(publicFreshAfter.body, publicFreshBefore.body);
 
     const invalidFacet = await request(app)
       .get('/settings/fresh/candidates?manualResolution=sometimes')

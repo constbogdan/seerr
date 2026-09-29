@@ -13,12 +13,21 @@ import type {
   FreshCandidatePresenceFilter,
   FreshCandidateReasonFamily,
   FreshCandidateSeasonEvidence,
+  FreshCandidateVisibilityFilter,
 } from '@server/lib/fresh/types';
 import axios from 'axios';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Select from 'react-select';
 import useSWR from 'swr';
+import {
+  bulkCandidateVisibilityTargets,
+  candidatePageSelectionState,
+  candidateSelectionScopeKey,
+  nearestCandidatePage,
+  toggleCandidatePageSelection,
+  toggleCandidateSelection,
+} from './candidateSelection';
 
 const statusLabels: Record<FreshCandidateDiagnosticStatus, string> = {
   all: 'All',
@@ -70,6 +79,12 @@ const presenceLabels: Record<FreshCandidatePresenceFilter, string> = {
   all: 'Any',
   present: 'Present',
   absent: 'Absent',
+};
+
+const visibilityLabels: Record<FreshCandidateVisibilityFilter, string> = {
+  visible: 'Visible',
+  hidden: 'Hidden',
+  all: 'All',
 };
 
 const diagnosticReasonLabel = (value: string) =>
@@ -156,12 +171,19 @@ const CandidateMutation = ({
   label,
   buttonType,
   onChanged,
+  onConflict,
 }: {
   candidate: FreshCandidateDiagnosticRow;
-  endpoint: 'reset-resolution' | 'admit' | 'remove-override';
+  endpoint:
+    | 'reset-resolution'
+    | 'admit'
+    | 'remove-override'
+    | 'dismiss'
+    | 'show';
   label: string;
   buttonType?: 'default' | 'primary' | 'danger' | 'warning' | 'success';
   onChanged: () => Promise<unknown>;
+  onConflict?: () => Promise<unknown>;
 }) => {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
@@ -186,7 +208,7 @@ const CandidateMutation = ({
                 : 'The candidate could not be updated.'
             );
             if (axios.isAxiosError(error) && error.response?.status === 409) {
-              await onChanged();
+              await (onConflict ?? onChanged)();
             }
           } finally {
             setBusy(false);
@@ -314,9 +336,15 @@ const EligibilityDetails = ({
 const CandidateRow = ({
   candidate,
   onResolved,
+  onVisibilityChanged,
+  selected,
+  onSelectionChange,
 }: {
   candidate: FreshCandidateDiagnosticRow;
   onResolved: () => Promise<unknown>;
+  onVisibilityChanged: (show: boolean) => Promise<unknown>;
+  selected: boolean;
+  onSelectionChange: (selected: boolean) => void;
 }) => {
   const [expanded, setExpanded] = useState(false);
   const detailsId = `fresh-candidate-${candidate.candidateId}-details`;
@@ -330,6 +358,13 @@ const CandidateRow = ({
     <div className="rounded-md bg-gray-800 p-3">
       <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
         <div className="flex min-w-0 items-center gap-2">
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-indigo-600 focus:ring-indigo-500"
+            aria-label={`Select ${candidate.displayTitle}`}
+            checked={selected}
+            onChange={(event) => onSelectionChange(event.target.checked)}
+          />
           <button
             type="button"
             className="shrink-0 text-gray-400 transition hover:text-white"
@@ -428,10 +463,54 @@ const CandidateRow = ({
               onChanged={onResolved}
             />
           )}
+          {candidate.actions.dismiss && (
+            <CandidateMutation
+              candidate={candidate}
+              endpoint="dismiss"
+              label="Dismiss"
+              onChanged={() => onVisibilityChanged(false)}
+              onConflict={onResolved}
+            />
+          )}
+          {candidate.actions.show && (
+            <CandidateMutation
+              candidate={candidate}
+              endpoint="show"
+              label="Show"
+              onChanged={() => onVisibilityChanged(true)}
+              onConflict={onResolved}
+            />
+          )}
         </div>
       </div>
       {expanded && <EligibilityDetails candidate={candidate} id={detailsId} />}
     </div>
+  );
+};
+
+const PageSelectionCheckbox = ({
+  state,
+  onChange,
+  disabled,
+}: {
+  state: 'none' | 'some' | 'all';
+  onChange: (selected: boolean) => void;
+  disabled: boolean;
+}) => {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = state === 'some';
+  }, [state]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      className="h-4 w-4 rounded border-gray-500 bg-gray-700 text-indigo-600 focus:ring-indigo-500"
+      aria-label="Select all candidates on this page"
+      checked={state === 'all'}
+      disabled={disabled}
+      onChange={(event) => onChange(event.target.checked)}
+    />
   );
 };
 
@@ -453,6 +532,24 @@ const CandidateDiagnostics = ({
     useState<FreshCandidatePresenceFilter>('all');
   const [admissionOverride, setAdmissionOverride] =
     useState<FreshCandidatePresenceFilter>('all');
+  const [visibility, setVisibility] =
+    useState<FreshCandidateVisibilityFilter>('visible');
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkMessage, setBulkMessage] = useState('');
+  const selectionScope = candidateSelectionScopeKey({
+    page,
+    search,
+    mediaType,
+    status,
+    sort,
+    reasonFamily,
+    seasonEvidence,
+    manualResolution,
+    admissionOverride,
+    visibility,
+  });
+  useEffect(() => setSelectedIds([]), [selectionScope]);
   const params = new URLSearchParams({
     page: String(page),
     mediaType,
@@ -462,14 +559,77 @@ const CandidateDiagnostics = ({
     seasonEvidence,
     manualResolution,
     admissionOverride,
+    visibility,
   });
   if (search.trim()) params.set('search', search.trim());
   const { data, error, mutate } = useSWR<FreshCandidateDiagnosticResponse>(
     `/api/v1/settings/fresh/candidates?${params}`
   );
   const change = (callback: () => void) => {
+    setSelectedIds([]);
     setPage(1);
     callback();
+  };
+  const pageSelection = candidatePageSelectionState(
+    data?.results ?? [],
+    selectedIds
+  );
+  const selectedOnPage = (data?.results ?? []).filter((candidate) =>
+    selectedIds.includes(candidate.candidateId)
+  ).length;
+  const dismissTargets = bulkCandidateVisibilityTargets(
+    data?.results ?? [],
+    selectedIds,
+    false
+  );
+  const showTargets = bulkCandidateVisibilityTargets(
+    data?.results ?? [],
+    selectedIds,
+    true
+  );
+  const refreshAfterVisibilityChange = async (
+    show: boolean,
+    affectedCount: number
+  ) => {
+    setSelectedIds([]);
+    const removesFromCurrentView =
+      (visibility === 'visible' && !show) || (visibility === 'hidden' && show);
+    if (data && removesFromCurrentView) {
+      const nextPage = nearestCandidatePage(
+        page,
+        data.pageInfo.results,
+        affectedCount,
+        data.pageInfo.pageSize
+      );
+      if (nextPage !== page) {
+        setPage(nextPage);
+        return;
+      }
+    }
+    await mutate();
+  };
+  const bulkVisibility = async (show: boolean) => {
+    const candidates = show ? showTargets : dismissTargets;
+    if (candidates.length === 0) return;
+    setBulkBusy(true);
+    setBulkMessage('');
+    try {
+      await axios.post('/api/v1/settings/fresh/candidates/visibility', {
+        show,
+        candidates,
+      });
+      await refreshAfterVisibilityChange(show, candidates.length);
+    } catch (error) {
+      setSelectedIds([]);
+      setBulkMessage(
+        axios.isAxiosError(error) && error.response?.status === 409
+          ? 'At least one candidate changed. Nothing was updated.'
+          : 'The selected candidates could not be updated.'
+      );
+      await mutate();
+    } finally {
+      setBulkBusy(false);
+    }
   };
   return (
     <div className={showHeader ? 'mt-12' : ''}>
@@ -552,7 +712,19 @@ const CandidateDiagnostics = ({
           }
         />
       </div>
-      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+        <Select
+          aria-label="Candidate visibility"
+          className="react-select-container"
+          classNamePrefix="react-select"
+          value={{ value: visibility, label: visibilityLabels[visibility] }}
+          options={(
+            Object.keys(visibilityLabels) as FreshCandidateVisibilityFilter[]
+          ).map((value) => ({ value, label: visibilityLabels[value] }))}
+          onChange={(option) =>
+            change(() => setVisibility(option?.value ?? 'visible'))
+          }
+        />
         <Select
           aria-label="Reason family"
           className="react-select-container"
@@ -628,12 +800,65 @@ const CandidateDiagnostics = ({
       )}
       {data && (
         <>
+          <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md bg-gray-800 px-3 py-2">
+            <PageSelectionCheckbox
+              state={pageSelection}
+              disabled={data.results.length === 0 || bulkBusy}
+              onChange={(selected) =>
+                setSelectedIds(
+                  toggleCandidatePageSelection(data.results, selected)
+                )
+              }
+            />
+            <span className="text-sm text-gray-300">
+              {selectedOnPage > 0
+                ? `${selectedOnPage} selected on this page`
+                : 'Select this page'}
+            </span>
+            <div className="flex flex-wrap gap-2">
+              {(visibility === 'visible' || visibility === 'all') &&
+                dismissTargets.length > 0 && (
+                  <Button
+                    buttonType="danger"
+                    disabled={bulkBusy}
+                    onClick={() => bulkVisibility(false)}
+                  >
+                    Dismiss selected
+                  </Button>
+                )}
+              {(visibility === 'hidden' || visibility === 'all') &&
+                showTargets.length > 0 && (
+                  <Button
+                    disabled={bulkBusy}
+                    onClick={() => bulkVisibility(true)}
+                  >
+                    Show selected
+                  </Button>
+                )}
+            </div>
+            {bulkMessage && (
+              <span className="text-sm text-gray-300">{bulkMessage}</span>
+            )}
+          </div>
           <div className="space-y-2">
             {data.results.map((candidate) => (
               <CandidateRow
                 key={candidate.candidateId}
                 candidate={candidate}
                 onResolved={mutate}
+                onVisibilityChanged={(show) =>
+                  refreshAfterVisibilityChange(show, 1)
+                }
+                selected={selectedIds.includes(candidate.candidateId)}
+                onSelectionChange={(selected) =>
+                  setSelectedIds((current) =>
+                    toggleCandidateSelection(
+                      current,
+                      candidate.candidateId,
+                      selected
+                    )
+                  )
+                }
               />
             ))}
             {data.results.length === 0 && (
@@ -645,7 +870,10 @@ const CandidateDiagnostics = ({
           <div className="mt-4 flex items-center justify-end gap-3">
             <Button
               disabled={page <= 1}
-              onClick={() => setPage((value) => value - 1)}
+              onClick={() => {
+                setSelectedIds([]);
+                setPage((value) => value - 1);
+              }}
             >
               Previous
             </Button>
@@ -654,7 +882,10 @@ const CandidateDiagnostics = ({
             </span>
             <Button
               disabled={page >= data.pageInfo.pages}
-              onClick={() => setPage((value) => value + 1)}
+              onClick={() => {
+                setSelectedIds([]);
+                setPage((value) => value + 1);
+              }}
             >
               Next
             </Button>

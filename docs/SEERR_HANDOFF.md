@@ -58,7 +58,9 @@ earlier isolated prototype checkout has been retired. Continue Fresh maintenance
 from the primary Seerr checkout and preserve its persistent incremental
 architecture. The durable Movie/Season/Special identity, irreversible-history,
 typed correction, override, rebuild, and GAP-recovery contract is documented in
-[Fresh discovery](FRESH.md).
+[Fresh discovery](FRESH.md). Administrators can open Candidate Diagnostics
+directly from the Discover Fresh row or the dedicated Fresh page; durable
+Visible/Hidden preferences affect that work queue only.
 
 ### Local harness
 

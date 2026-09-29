@@ -6,6 +6,7 @@ import CandidateDiagnostics from '@app/components/Settings/SettingsFresh/Candida
 import FreshContentFilters from '@app/components/Settings/SettingsFresh/FreshContentFilters';
 import {
   FRESH_SECTION_STATE_KEY,
+  applyFreshSectionTarget,
   defaultFreshSectionState,
   loadFreshFilters,
   parseFreshSectionState,
@@ -33,6 +34,7 @@ import type {
 } from '@server/lib/fresh';
 import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
+import { useRouter } from 'next/router';
 import { Fragment, useEffect, useState, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
 import Select from 'react-select';
@@ -93,7 +95,7 @@ const messages = defineMessages('components.Settings.SettingsFresh', {
   rebuild: 'Rebuild Fresh Data',
   rebuildTitle: 'Rebuild Fresh Data?',
   rebuildConfirm:
-    'This clears source-derived observations, automatic candidates, and synchronization state, then rebuilds from releases currently retained by autobrr. Irreversible Fresh history, canonical media metadata, typed manual resolutions, and admission overrides are preserved. Releases no longer retained by autobrr cannot be recovered.',
+    'This clears source-derived observations, automatic candidates, and synchronization state, then rebuilds from releases currently retained by autobrr. Irreversible Fresh history, canonical media metadata, typed manual resolutions, admission overrides, and Candidate Diagnostics visibility preferences are preserved. Releases no longer retained by autobrr cannot be recovered.',
   rebuildSuccess: 'Fresh data was rebuilt successfully.',
   rebuildFailed:
     'Fresh data could not be rebuilt. Check the pipeline status for the failed stage.',
@@ -204,7 +206,11 @@ const FreshSettingsSection = ({
   const contentId = `fresh-settings-${id}`;
   const orderClass = { 1: 'order-1', 2: 'order-2', 3: 'order-3' }[order];
   return (
-    <section className={`${orderClass} border-t border-gray-700 py-6`}>
+    <section
+      id={id}
+      tabIndex={-1}
+      className={`${orderClass} scroll-mt-20 border-t border-gray-700 py-6 focus:outline-none`}
+    >
       <button
         type="button"
         className="flex w-full items-start justify-between gap-4 rounded text-left focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -231,6 +237,7 @@ const FreshSettingsSection = ({
 
 const SettingsFresh = () => {
   const intl = useIntl();
+  const router = useRouter();
   const { addToast } = useToasts();
   const [filters, setFilters] = useState<FreshFilterOption[]>([]);
   const [filtersLoaded, setFiltersLoaded] = useState(false);
@@ -278,12 +285,29 @@ const SettingsFresh = () => {
     };
   }, [apiTokenConfigured, baseUrl]);
   useEffect(() => {
-    setSections(
+    const next = applyFreshSectionTarget(
       parseFreshSectionState(
         window.localStorage.getItem(FRESH_SECTION_STATE_KEY)
-      )
+      ),
+      router.asPath
     );
-  }, []);
+    setSections(next);
+    if (router.asPath.split('#')[1] === 'candidates') {
+      window.localStorage.setItem(
+        FRESH_SECTION_STATE_KEY,
+        JSON.stringify(next)
+      );
+    }
+  }, [router.asPath]);
+  useEffect(() => {
+    if (!data || router.asPath.split('#')[1] !== 'candidates') return;
+    const timeout = window.setTimeout(() => {
+      const target = document.getElementById('candidates');
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: 'start' });
+    });
+    return () => window.clearTimeout(timeout);
+  }, [data, router.asPath]);
   const toggleSection = (id: FreshSectionId) => {
     setSections((current) => {
       const next = { ...current, [id]: !current[id] };

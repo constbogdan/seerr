@@ -1,3 +1,4 @@
+import { FRESH_CANDIDATE_PAGE_SIZE } from '@server/constants/fresh';
 import freshService, {
   normalizeFreshSettings,
   publicFreshSettings,
@@ -158,6 +159,7 @@ const CandidateQuerySchema = z
     seasonEvidence: z.enum(['all', 'known', 'unknown']).default('all'),
     manualResolution: z.enum(['all', 'present', 'absent']).default('all'),
     admissionOverride: z.enum(['all', 'present', 'absent']).default('all'),
+    visibility: z.enum(['visible', 'hidden', 'all']).default('visible'),
   })
   .strict();
 
@@ -243,6 +245,63 @@ freshSettingsRoutes.post('/candidates/:id/resolve', async (req, res, next) => {
 const CandidateMutationSchema = z
   .object({ expectedRevision: z.number().int().positive() })
   .strict();
+
+const BulkCandidateVisibilitySchema = z
+  .object({
+    show: z.boolean(),
+    candidates: z
+      .array(
+        z
+          .object({
+            candidateId: z.number().int().positive(),
+            expectedRevision: z.number().int().positive(),
+          })
+          .strict()
+      )
+      .min(1)
+      .max(FRESH_CANDIDATE_PAGE_SIZE),
+  })
+  .strict()
+  .superRefine(({ candidates }, context) => {
+    if (
+      new Set(candidates.map(({ candidateId }) => candidateId)).size !==
+      candidates.length
+    )
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['candidates'],
+        message: 'Candidate identities must be unique.',
+      });
+  });
+
+freshSettingsRoutes.post('/candidates/visibility', async (req, res, next) => {
+  try {
+    const { candidates, show } = BulkCandidateVisibilitySchema.parse(req.body);
+    const updated = await freshService.setCandidateVisibilityBulk(
+      candidates,
+      show
+    );
+    return res.status(200).json({
+      show,
+      candidates: updated.map((candidate) => ({
+        candidateId: candidate.id,
+        revision: candidate.revision,
+      })),
+    });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return next({
+        status: 400,
+        message: 'Invalid candidate visibility selection.',
+      });
+    }
+    const code = error instanceof Error ? error.message : '';
+    return next({
+      status: code === 'candidate_not_found' ? 404 : 409,
+      message: 'Candidate visibility selection could not be updated.',
+    });
+  }
+});
 
 freshSettingsRoutes.post(
   '/candidates/:id/reset-resolution',
@@ -334,6 +393,45 @@ freshSettingsRoutes.post(
     }
   }
 );
+
+for (const [action, show] of [
+  ['dismiss', false],
+  ['show', true],
+] as const) {
+  freshSettingsRoutes.post(
+    `/candidates/:id/${action}`,
+    async (req, res, next) => {
+      try {
+        const candidateId = z.coerce
+          .number()
+          .int()
+          .positive()
+          .parse(req.params.id);
+        const { expectedRevision } = CandidateMutationSchema.parse(req.body);
+        const candidate = await freshService.setCandidateVisibility(
+          candidateId,
+          show,
+          expectedRevision
+        );
+        return res
+          .status(200)
+          .json({ candidateId, revision: candidate.revision, show });
+      } catch (error) {
+        if (error instanceof z.ZodError) {
+          return next({
+            status: 400,
+            message: 'Invalid candidate mutation request.',
+          });
+        }
+        const code = error instanceof Error ? error.message : '';
+        return next({
+          status: code === 'candidate_not_found' ? 404 : 409,
+          message: `Candidate could not be ${show ? 'shown' : 'dismissed'}.`,
+        });
+      }
+    }
+  );
+}
 
 freshSettingsRoutes.post('/refresh', async (_req, res, next) => {
   try {

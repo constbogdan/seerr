@@ -52,7 +52,7 @@ downstream home.
 - [x] Deliver persistent Fresh discovery with focused tests and downstream release validation.
 - [x] Refine Fresh with irreversible Movie/Season/Special history, typed manual
   correction, admission overrides, and an administrator work queue.
-- [ ] Add administrator shortcuts from Fresh/Discover to Fresh Settings.
+- [x] Add administrator shortcuts from Fresh/Discover to Candidate Diagnostics.
 - [ ] Improve validation performance without weakening exact-tree evidence.
 - [ ] Evaluate direct/on-demand Download Sync refresh as a separate downstream feature.
 - [ ] Add automated upstream change detection.

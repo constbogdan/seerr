@@ -1022,7 +1022,7 @@
   "components.Settings.SettingsFresh.port": "Port",
   "components.Settings.SettingsFresh.reason": "Reason",
   "components.Settings.SettingsFresh.rebuild": "Rebuild Fresh Data",
-  "components.Settings.SettingsFresh.rebuildConfirm": "This clears source-derived observations, automatic candidates, and synchronization state, then rebuilds from releases currently retained by autobrr. Irreversible Fresh history, canonical media metadata, typed manual resolutions, and admission overrides are preserved. Releases no longer retained by autobrr cannot be recovered.",
+  "components.Settings.SettingsFresh.rebuildConfirm": "This clears source-derived observations, automatic candidates, and synchronization state, then rebuilds from releases currently retained by autobrr. Irreversible Fresh history, canonical media metadata, typed manual resolutions, admission overrides, and Candidate Diagnostics visibility preferences are preserved. Releases no longer retained by autobrr cannot be recovered.",
   "components.Settings.SettingsFresh.rebuildFailed": "Fresh data could not be rebuilt. Check the pipeline status for the failed stage.",
   "components.Settings.SettingsFresh.rebuildSuccess": "Fresh data was rebuilt successfully.",
   "components.Settings.SettingsFresh.rebuildTitle": "Rebuild Fresh Data?",
