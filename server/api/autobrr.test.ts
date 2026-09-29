@@ -46,7 +46,12 @@ describe('autobrr Fresh boundary', () => {
         releaseId: '20',
         mediaType: 'movie',
         title: 'Example Movie',
+        sourceTitle: 'Example Movie',
         year: 2026,
+        seasonNumber: -1,
+        episodeNumber: -1,
+        explicitSeason: false,
+        explicitSpecial: false,
         observedAt: Date.parse('2026-09-26T10:00:00Z'),
         availabilityType: 'digital',
       },
@@ -54,7 +59,12 @@ describe('autobrr Fresh boundary', () => {
         releaseId: '19',
         mediaType: 'tv',
         title: 'Example Show',
+        sourceTitle: 'Example Show',
         year: 0,
+        seasonNumber: -1,
+        episodeNumber: -1,
+        explicitSeason: false,
+        explicitSpecial: false,
         observedAt: Date.parse('2026-09-26T10:00:00Z'),
         availabilityType: 'digital',
       },
@@ -83,6 +93,82 @@ describe('autobrr Fresh boundary', () => {
       ['digital', 'physical', 'physical', 'unknown']
     );
     assert.doesNotMatch(JSON.stringify(parsed.releases), /WEB-DL|BluRay|CAM/);
+  });
+
+  it('preserves bounded explicit TV season and special evidence without raw payloads', () => {
+    const parsed = parseReleasePage(
+      {
+        data: [
+          row({
+            id: 20,
+            type: 6,
+            title: 'Last Week Tonight with John Oliver',
+            torrent_name: 'Last.Week.Tonight.with.John.Oliver.S13E24.1080p',
+            season: 13,
+            episode: 24,
+          }),
+          row({
+            id: 19,
+            type: 11,
+            title: 'Example Special',
+            torrent_name: 'Example.Special.S00E14.1080p',
+            season: 0,
+            episode: 14,
+          }),
+          row({
+            id: 18,
+            type: 6,
+            title: 'Unknown Season',
+            torrent_name: 'Unknown.Season.1080p',
+            season: 0,
+            episode: 0,
+          }),
+        ],
+        next_cursor: 18,
+      },
+      { id: 7 }
+    );
+
+    assert.deepEqual(
+      parsed.releases.map((release) => ({
+        title: release.title,
+        sourceTitle: release.sourceTitle,
+        season: release.seasonNumber,
+        episode: release.episodeNumber,
+        explicitSeason: release.explicitSeason,
+        explicitSpecial: release.explicitSpecial,
+      })),
+      [
+        {
+          title: 'Last Week Tonight with John Oliver',
+          sourceTitle: 'Last.Week.Tonight.with.John.Oliver.S13E24.1080p',
+          season: 13,
+          episode: 24,
+          explicitSeason: true,
+          explicitSpecial: false,
+        },
+        {
+          title: 'Example Special',
+          sourceTitle: 'Example.Special.S00E14.1080p',
+          season: 0,
+          episode: 14,
+          explicitSeason: false,
+          explicitSpecial: true,
+        },
+        {
+          title: 'Unknown Season',
+          sourceTitle: 'Unknown.Season.1080p',
+          season: 0,
+          episode: 0,
+          explicitSeason: false,
+          explicitSpecial: false,
+        },
+      ]
+    );
+    assert.doesNotMatch(
+      JSON.stringify(parsed.releases),
+      /download_url|action_status|passkey|tracker\.invalid/
+    );
   });
 
   it('fails closed for malformed ordering and cursor boundaries', () => {

@@ -876,7 +876,7 @@ components:
           minimum: 1
           maximum: 365
           default: 90
-          description: Maximum canonical-media age at the qualifying source observation.
+          description: Movie normal eligibility window and TV recent-season activity sanity window.
         freshVisibilityDays:
           type: integer
           minimum: 1
@@ -1106,21 +1106,41 @@ components:
       type: object
       required:
         - candidateId
+        - revision
         - displayTitle
+        - parsedTitle
+        - parsedMediaType
         - mediaType
         - resolutionStatus
         - displayStatus
         - firstObservedAt
         - lastObservedAt
         - attemptCount
+        - automaticReasons
+        - sourceTitleSamples
+        - observationCount
         - active
         - actionable
+        - actions
       properties:
         candidateId: { type: integer }
+        revision: { type: integer, minimum: 1 }
         displayTitle: { type: string }
+        parsedTitle: { type: string }
+        parsedMediaType: { type: string, enum: [movie, tv] }
         mediaType: { type: string, enum: [movie, tv] }
         matchYear: { type: integer }
+        seasonNumber: { type: integer, minimum: 0 }
+        episodeNumber: { type: integer, minimum: 0 }
         resolutionStatus: { type: integer }
+        automaticResolution:
+          type: object
+          required: [status, mediaType]
+          properties:
+            status: { type: integer }
+            mediaType: { type: string, enum: [movie, tv] }
+            tmdbId: { type: integer, minimum: 1 }
+            failureReason: { type: string }
         displayStatus:
           type: string
           enum:
@@ -1136,6 +1156,9 @@ components:
               excluded_content_filter,
               visibility_expired,
               active_fresh,
+              needs_attention,
+              reviewable,
+              historical,
             ]
         tmdbId: { type: integer }
         firstObservedAt: { type: string, format: date-time }
@@ -1146,6 +1169,54 @@ components:
         resolvedAt: { type: string, format: date-time }
         failureReason: { type: string }
         membershipReason: { type: string }
+        automaticReasons:
+          type: array
+          items: { type: string }
+        sourceTitleSamples:
+          type: array
+          maxItems: 5
+          items: { type: string }
+        observationCount: { type: integer, minimum: 0 }
+        manualResolution:
+          type: object
+          required: [mediaType, tmdbId, canonicalTitle, updatedAt, revision]
+          properties:
+            mediaType: { type: string, enum: [movie, tv] }
+            tmdbId: { type: integer, minimum: 1 }
+            canonicalTitle: { type: string }
+            actorUserId: { type: integer, minimum: 1 }
+            updatedAt: { type: string, format: date-time }
+            revision: { type: integer, minimum: 1 }
+        admissionOverride:
+          type: object
+          required: [updatedAt, revision]
+          properties:
+            actorUserId: { type: integer, minimum: 1 }
+            updatedAt: { type: string, format: date-time }
+            revision: { type: integer, minimum: 1 }
+        discoveryHistory:
+          type: object
+          required:
+            [
+              identityKind,
+              admitted,
+              legacyProjection,
+              admissionReason,
+              activitySource,
+            ]
+          properties:
+            identityKind:
+              type: string
+              enum: [movie, season, special, legacy_tv]
+            seasonNumber: { type: integer, minimum: 0 }
+            episodeNumber: { type: integer, minimum: 1 }
+            admitted: { type: boolean }
+            legacyProjection: { type: boolean }
+            admissionReason: { type: string }
+            activityDate: { type: string, format: date }
+            activitySource: { type: string }
+            firstFreshAt: { type: string, format: date-time }
+            visibleUntil: { type: string, format: date-time }
         firstSeenAt: { type: string, format: date-time }
         lastSeenAt: { type: string, format: date-time }
         mediaDate: { type: string }
@@ -1182,6 +1253,14 @@ components:
         visibleUntil: { type: string, format: date-time }
         active: { type: boolean }
         actionable: { type: boolean }
+        actions:
+          type: object
+          required: [resolve, resetResolution, admit, removeOverride]
+          properties:
+            resolve: { type: boolean }
+            resetResolution: { type: boolean }
+            admit: { type: boolean }
+            removeOverride: { type: boolean }
     FreshCandidateDiagnosticsResponse:
       type: object
       required: [pageInfo, results, summary]
@@ -1204,9 +1283,11 @@ components:
             type: integer
     FreshManualResolutionResponse:
       type: object
-      required: [candidateId, mediaType, tmdbId, title, status, active]
+      required:
+        [candidateId, parsedMediaType, mediaType, tmdbId, title, status, active]
       properties:
         candidateId: { type: integer }
+        parsedMediaType: { type: string, enum: [movie, tv] }
         mediaType: { type: string, enum: [movie, tv] }
         tmdbId: { type: integer }
         title: { type: string }
@@ -6371,6 +6452,8 @@ paths:
                 visibility_expired,
                 active_fresh,
                 needs_attention,
+                reviewable,
+                historical,
               ]
             default: all
         - in: query
@@ -6379,6 +6462,7 @@ paths:
             type: string
             enum:
               [
+                priority,
                 title.asc,
                 title.desc,
                 status,
@@ -6389,7 +6473,31 @@ paths:
                 last_seen.desc,
                 last_seen.asc,
               ]
-            default: last_seen.desc
+            default: priority
+        - in: query
+          name: reasonFamily
+          schema:
+            type: string
+            enum: [all, resolution, admission, content, history, source]
+            default: all
+        - in: query
+          name: seasonEvidence
+          schema:
+            type: string
+            enum: [all, known, unknown]
+            default: all
+        - in: query
+          name: manualResolution
+          schema:
+            type: string
+            enum: [all, present, absent]
+            default: all
+        - in: query
+          name: admissionOverride
+          schema:
+            type: string
+            enum: [all, present, absent]
+            default: all
       responses:
         '200':
           description: Persistent current-generation Fresh candidate state
@@ -6413,10 +6521,12 @@ paths:
           application/json:
             schema:
               type: object
-              required: [tmdbId]
+              required: [mediaType, tmdbId, expectedRevision]
               additionalProperties: false
               properties:
+                mediaType: { type: string, enum: [movie, tv] }
                 tmdbId: { type: integer, minimum: 1 }
+                expectedRevision: { type: integer, minimum: 1 }
       responses:
         '200':
           description: Validated canonical TMDB resolution
@@ -6424,6 +6534,72 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/FreshManualResolutionResponse'
+  /settings/fresh/candidates/{candidateId}/reset-resolution:
+    post:
+      summary: Reset a typed Fresh manual canonical resolution
+      tags: [settings]
+      parameters:
+        - in: path
+          name: candidateId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Manual resolution reset
+  /settings/fresh/candidates/{candidateId}/admit:
+    post:
+      summary: Admit a stable excluded Fresh identity through an override
+      tags: [settings]
+      parameters:
+        - in: path
+          name: candidateId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Admission override applied
+  /settings/fresh/candidates/{candidateId}/remove-override:
+    post:
+      summary: Remove a Fresh admission override
+      tags: [settings]
+      parameters:
+        - in: path
+          name: candidateId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [expectedRevision]
+              properties:
+                expectedRevision: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Admission override removed
   /settings/fresh/refresh:
     post:
       summary: Force and await a Fresh refresh
@@ -6438,8 +6614,8 @@ paths:
                 $ref: '#/components/schemas/FreshStatus'
   /settings/fresh/rebuild:
     post:
-      summary: Destructively rebuild Fresh-owned discovery data
-      description: Clears only persisted Fresh observations, candidates, media, and synchronization state, then awaits the normal initial synchronization path. Fresh configuration and non-Fresh Seerr state are preserved.
+      summary: Rebuild source-derived Fresh discovery data
+      description: Clears Fresh observations, automatic candidates, and synchronization state before replaying retained source history. Canonical media metadata, irreversible discovery history, typed manual resolutions, and admission overrides are preserved.
       tags:
         - settings
       responses:

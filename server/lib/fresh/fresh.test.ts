@@ -6,6 +6,7 @@ import type {
 import type {
   TmdbMovieDetails,
   TmdbMovieResult,
+  TmdbSeasonWithEpisodes,
   TmdbTvDetails,
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
@@ -16,6 +17,8 @@ import {
 } from '@server/constants/fresh';
 import dataSource from '@server/datasource';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
+import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
@@ -84,7 +87,12 @@ const release = (
   releaseId: String(releaseId),
   mediaType,
   title,
+  sourceTitle: title,
   year,
+  seasonNumber: -1,
+  episodeNumber: -1,
+  explicitSeason: false,
+  explicitSpecial: false,
   observedAt: Date.parse(observedAt),
   availabilityType,
 });
@@ -191,7 +199,7 @@ describe('persistent Fresh engine', () => {
     assert.equal(await dataSource.getRepository(FreshMedia).count(), 2);
     assert.equal(
       await dataSource.getRepository(FreshMedia).countBy({ active: true }),
-      2
+      1
     );
     assert.equal(movieSearches, 1);
     assert.equal(tvSearches, 1);
@@ -261,7 +269,7 @@ describe('persistent Fresh engine', () => {
       .findOneByOrFail({ mediaType: 'movie', tmdbId: 101 });
     assert.equal(
       canonical.firstSeenAt.toISOString(),
-      '2026-09-20T10:00:00.000Z'
+      '2026-09-24T12:00:00.000Z'
     );
     assert.equal(
       canonical.lastSeenAt.toISOString(),
@@ -722,8 +730,8 @@ describe('persistent Fresh engine', () => {
     });
     assert.equal(repairedMovie.admitted, false);
     assert.equal(repairedMovie.membershipReason, 'eligibility_unknown');
-    assert.equal(repairedTv.admitted, true);
-    assert.equal(repairedTv.membershipReason, 'active_fresh');
+    assert.equal(repairedTv.admitted, false);
+    assert.equal(repairedTv.membershipReason, 'source_generation_inactive');
     assert.equal(
       await candidateRepository.countBy({
         status: FreshCandidateStatus.OUTSIDE_WINDOW,
@@ -758,6 +766,8 @@ describe('persistent Fresh engine', () => {
         displayTitle: 'Manual Movie',
         matchYear: 2026,
         status: FreshCandidateStatus.NO_MATCH,
+        automaticStatus: FreshCandidateStatus.NO_MATCH,
+        automaticFailureReason: 'no_exact_match',
         firstObservedAt: new Date('2026-09-25T00:00:00Z'),
         lastObservedAt: new Date('2026-09-25T00:00:00Z'),
       })
@@ -801,14 +811,674 @@ describe('persistent Fresh engine', () => {
       now: () => new Date(now),
       cancelled: () => false,
     });
-    const resolved = await manual.resolveManually(candidate.id, 9001, settings);
+    const resolved = await manual.resolveManually(
+      candidate.id,
+      'movie',
+      9001,
+      candidate.revision,
+      undefined,
+      settings
+    );
     assert.equal(resolved.candidate.status, FreshCandidateStatus.RESOLVED);
     assert.equal(resolved.candidate.tmdbId, 9001);
     assert.equal(resolved.media.displayTitle, 'Canonical Manual Movie');
     assert.equal(resolved.media.admitted, true);
     assert.equal(resolved.media.active, true);
     await assert.rejects(() =>
-      manual.resolveManually(candidate.id, 9002, settings)
+      manual.resolveManually(
+        candidate.id,
+        'movie',
+        9002,
+        candidate.revision,
+        undefined,
+        settings
+      )
+    );
+    const reset = await manual.resetManualResolution(
+      candidate.id,
+      resolved.candidate.revision,
+      settings
+    );
+    assert.equal(reset.status, FreshCandidateStatus.NO_MATCH);
+    assert.equal(reset.effectiveMediaType, 'movie');
+    assert.equal(reset.tmdbId, null);
+    assert.equal(
+      (
+        await dataSource
+          .getRepository(FreshMedia)
+          .findOneByOrFail({ id: resolved.media.id })
+      ).active,
+      false
+    );
+    assert.equal(
+      (
+        await dataSource
+          .getRepository(FreshManualResolution)
+          .findOneByOrFail({ sourceEvidenceKey: reset.sourceEvidenceKey })
+      ).active,
+      false
+    );
+  });
+
+  it('uses retained TV year evidence for Youth and Apocalypse without rank guessing', async () => {
+    await dataSource.synchronize(true);
+    releases = [
+      {
+        ...release(4002, 'tv', 'Apocalypse', 2026, '2026-09-25T00:00:00Z'),
+        seasonNumber: 1,
+        explicitSeason: true,
+      },
+      {
+        ...release(4001, 'tv', 'Youth', 2026, '2026-09-24T00:00:00Z'),
+        seasonNumber: 1,
+        explicitSeason: true,
+      },
+    ];
+    const queries: { query: string; year?: number; page?: number }[] = [];
+    const resolver = new FreshEngine({
+      database: dataSource,
+      autobrr: () => ({
+        filters: async () => filters,
+        page: async (_filter, cursor = 0) => page(releases, cursor),
+      }),
+      tmdb: {
+        getMovie: async () => {
+          throw new Error('wrong namespace');
+        },
+        getTvShow: async ({ tvId }) =>
+          tv(
+            tvId,
+            tvId === 285418 ? 'Youth' : 'Apocalypse',
+            '2026-01-01'
+          ) as unknown as TmdbTvDetails,
+        searchMoviesStrict: async () => {
+          throw new Error('wrong namespace');
+        },
+        searchTvShowsStrict: async ({ query, year, page = 1 }) => {
+          queries.push({ query, year, page });
+          const result =
+            query === 'Youth' && year === 2026
+              ? [tv(285418, 'Youth', '2026-01-01')]
+              : query === 'Apocalypse' && year === 2026
+                ? [tv(315479, 'Apocalypse', '2026-01-02')]
+                : query === 'Youth'
+                  ? [
+                      tv(1, 'Youth', '2013-01-01'),
+                      tv(285418, 'Youth', '2026-01-01'),
+                    ]
+                  : [];
+          return {
+            page,
+            total_pages: query === 'Apocalypse' && !year ? 4 : 1,
+            total_results: result.length,
+            results: result,
+          };
+        },
+      },
+      now: () => new Date(now),
+      cancelled: () => false,
+    });
+    await resolver.run(settings, true);
+    const candidates = await dataSource.getRepository(FreshCandidate).find({
+      order: { displayTitle: 'ASC' },
+    });
+    assert.deepEqual(
+      candidates.map((candidate) => [
+        candidate.displayTitle,
+        candidate.matchYear,
+        candidate.tmdbId,
+      ]),
+      [
+        ['Apocalypse', 2026, 315479],
+        ['Youth', 2026, 285418],
+      ]
+    );
+    for (const title of ['Apocalypse', 'Youth']) {
+      const titleQueries = queries.filter(({ query }) => query === title);
+      assert.equal(titleQueries[0].year, undefined);
+      assert.equal(titleQueries.at(-1)?.year, 2026);
+    }
+    assert.deepEqual(
+      queries
+        .filter(({ query, year }) => query === 'Apocalypse' && !year)
+        .map(({ page }) => page),
+      [1, 2, 3]
+    );
+  });
+
+  it('uses only the anchored terminal Volume N fallback for TV', async () => {
+    await dataSource.synchronize(true);
+    releases = [
+      release(5002, 'movie', 'Movie Volume 4', 2026, '2026-09-25T00:00:00Z'),
+      release(5001, 'tv', 'Chopped Volume 4', 0, '2026-09-24T00:00:00Z'),
+    ];
+    const queries: { namespace: 'movie' | 'tv'; query: string }[] = [];
+    const resolver = new FreshEngine({
+      database: dataSource,
+      autobrr: () => ({
+        filters: async () => filters,
+        page: async (_filter, cursor = 0) => page(releases, cursor),
+      }),
+      tmdb: {
+        getMovie: async () => {
+          throw new Error('movie must remain unresolved');
+        },
+        getTvShow: async ({ tvId }) =>
+          tv(tvId, 'Chopped', '2009-01-13') as unknown as TmdbTvDetails,
+        searchMoviesStrict: async ({ query, page = 1 }) => {
+          queries.push({ namespace: 'movie', query });
+          return { page, total_pages: 1, total_results: 0, results: [] };
+        },
+        searchTvShowsStrict: async ({ query, page = 1 }) => {
+          queries.push({ namespace: 'tv', query });
+          const results =
+            query === 'Chopped' ? [tv(17404, 'Chopped', '2009-01-13')] : [];
+          return {
+            page,
+            total_pages: 1,
+            total_results: results.length,
+            results,
+          };
+        },
+      },
+      now: () => new Date(now),
+      cancelled: () => false,
+    });
+    await resolver.run(settings, true);
+    const chopped = await dataSource
+      .getRepository(FreshCandidate)
+      .findOneByOrFail({
+        displayTitle: 'Chopped Volume 4',
+      });
+    const movieVolume = await dataSource
+      .getRepository(FreshCandidate)
+      .findOneByOrFail({ displayTitle: 'Movie Volume 4' });
+    assert.equal(chopped.tmdbId, 17404);
+    assert.equal(movieVolume.status, FreshCandidateStatus.NO_MATCH);
+    assert.deepEqual(
+      queries.sort((left, right) => left.query.localeCompare(right.query)),
+      [
+        { namespace: 'tv', query: 'Chopped' },
+        { namespace: 'tv', query: 'Chopped Volume 4' },
+        { namespace: 'movie', query: 'Movie Volume 4' },
+      ]
+    );
+  });
+
+  it('keeps FIA parsed Movie evidence while allowing typed TV manual correction', async () => {
+    await dataSource.synchronize(true);
+    releases = [
+      release(
+        6001,
+        'movie',
+        'FIA WEC 2026 6 Hours Of Fuji',
+        2026,
+        '2026-09-25T00:00:00Z'
+      ),
+    ];
+    const resolver = new FreshEngine({
+      database: dataSource,
+      autobrr: () => ({
+        filters: async () => filters,
+        page: async (_filter, cursor = 0) => page(releases, cursor),
+      }),
+      tmdb: {
+        getMovie: async () => {
+          throw new Error('wrong namespace');
+        },
+        getTvShow: async ({ tvId }) =>
+          tv(tvId, 'FIA WEC', '2012-01-01') as unknown as TmdbTvDetails,
+        searchMoviesStrict: async ({ page = 1 }) => ({
+          page,
+          total_pages: 1,
+          total_results: 0,
+          results: [],
+        }),
+        searchTvShowsStrict: async () => {
+          throw new Error('automatic cross-type lookup is forbidden');
+        },
+      },
+      now: () => new Date(now),
+      cancelled: () => false,
+    });
+    await resolver.run(settings, true);
+    const parsed = await dataSource
+      .getRepository(FreshCandidate)
+      .findOneByOrFail({
+        displayTitle: 'FIA WEC 2026 6 Hours Of Fuji',
+      });
+    assert.equal(parsed.mediaType, 'movie');
+    assert.equal(parsed.status, FreshCandidateStatus.NO_MATCH);
+    const corrected = await resolver.resolveManually(
+      parsed.id,
+      'tv',
+      305251,
+      parsed.revision,
+      42,
+      settings
+    );
+    assert.equal(corrected.candidate.mediaType, 'movie');
+    assert.equal(corrected.candidate.effectiveMediaType, 'tv');
+    assert.equal(corrected.candidate.tmdbId, 305251);
+    assert.equal(corrected.media.mediaType, 'tv');
+    assert.equal(corrected.media.displayTitle, 'FIA WEC');
+    assert.equal(
+      await dataSource.getRepository(FreshMedia).countBy({
+        mediaType: 'movie',
+        tmdbId: 305251,
+      }),
+      0
+    );
+
+    await resolver.run(
+      { ...settings, baseUrl: 'https://autobrr-generation-2.test' },
+      false
+    );
+    const reapplied = await dataSource
+      .getRepository(FreshCandidate)
+      .findOneOrFail({
+        where: { sourceGeneration: 2 },
+      });
+    assert.equal(reapplied.mediaType, 'movie');
+    assert.equal(reapplied.effectiveMediaType, 'tv');
+    assert.equal(reapplied.tmdbId, 305251);
+    assert.equal(
+      await dataSource.getRepository(FreshManualResolution).countBy({
+        sourceEvidenceKey: reapplied.sourceEvidenceKey,
+        active: true,
+      }),
+      1
+    );
+  });
+
+  it('keeps one immutable Last Week Tonight history per season and projects the newest active season', async () => {
+    await dataSource.synchronize(true);
+    let clock = new Date('2026-09-28T12:00:00.000Z');
+    const lastWeekRelease = (
+      id: number,
+      seasonNumber: number,
+      episode: number,
+      at: string
+    ) => ({
+      ...release(id, 'tv', 'Last Week Tonight with John Oliver', 2026, at),
+      sourceTitle: `Last.Week.Tonight.with.John.Oliver.S${seasonNumber}E${episode}.1080p`,
+      seasonNumber,
+      episodeNumber: episode,
+      explicitSeason: true,
+    });
+    releases = [lastWeekRelease(7001, 13, 24, '2026-09-28T01:00:00Z')];
+    const resolver = new FreshEngine({
+      database: dataSource,
+      autobrr: () => ({
+        filters: async () => filters,
+        page: async (_filter, cursor = 0) => page(releases, cursor),
+      }),
+      tmdb: {
+        getMovie: async () => {
+          throw new Error('wrong namespace');
+        },
+        getTvShow: async ({ tvId }) =>
+          tv(
+            tvId,
+            'Last Week Tonight with John Oliver',
+            '2014-04-27'
+          ) as unknown as TmdbTvDetails,
+        getTvSeason: async ({ seasonNumber }) =>
+          ({
+            id: seasonNumber,
+            name: `Season ${seasonNumber}`,
+            overview: '',
+            air_date: seasonNumber === 13 ? '2026-02-15' : '2027-02-14',
+            season_number: seasonNumber,
+            poster_path: null,
+            episodes: [
+              {
+                id: seasonNumber * 100 + 1,
+                name: 'Episode 1',
+                overview: '',
+                air_date: seasonNumber === 13 ? '2026-09-27' : '2027-02-14',
+                episode_number: seasonNumber === 13 ? 24 : 1,
+                season_number: seasonNumber,
+                production_code: '',
+                runtime: 30,
+                still_path: null,
+                vote_average: 0,
+                vote_count: 0,
+                crew: [],
+                guest_stars: [],
+              },
+            ],
+          }) as unknown as TmdbSeasonWithEpisodes,
+        searchMoviesStrict: async () => {
+          throw new Error('wrong namespace');
+        },
+        searchTvShowsStrict: async ({ page = 1 }) => ({
+          page,
+          total_pages: 1,
+          total_results: 1,
+          results: [
+            tv(60694, 'Last Week Tonight with John Oliver', '2014-04-27'),
+          ],
+        }),
+      },
+      now: () => new Date(clock),
+      cancelled: () => false,
+    });
+
+    await resolver.run(settings, true);
+    let histories = await dataSource.getRepository(FreshDiscoveryHistory).find({
+      order: { seasonKey: 'ASC' },
+    });
+    assert.equal(histories.length, 1);
+    assert.equal(histories[0].seasonKey, 13);
+    assert.equal(histories[0].admitted, true);
+    const season13FirstFresh = histories[0].firstFreshAt?.toISOString();
+    const season13VisibleUntil = histories[0].visibleUntil?.toISOString();
+
+    releases = [
+      lastWeekRelease(7002, 13, 25, '2026-09-29T01:00:00Z'),
+      ...releases,
+    ];
+    clock = new Date('2026-09-29T12:00:00.000Z');
+    await resolver.run(settings, false);
+    histories = await dataSource.getRepository(FreshDiscoveryHistory).find();
+    assert.equal(histories.length, 1);
+    assert.equal(histories[0].firstFreshAt?.toISOString(), season13FirstFresh);
+    assert.equal(
+      histories[0].visibleUntil?.toISOString(),
+      season13VisibleUntil
+    );
+
+    const generationSettings = {
+      ...settings,
+      baseUrl: 'https://autobrr-generation-2.test',
+    };
+    await resolver.run(generationSettings, false);
+    histories = await dataSource.getRepository(FreshDiscoveryHistory).find();
+    assert.equal(histories.length, 1);
+    assert.equal(histories[0].firstFreshAt?.toISOString(), season13FirstFresh);
+    assert.equal(
+      histories[0].visibleUntil?.toISOString(),
+      season13VisibleUntil
+    );
+
+    releases = [
+      lastWeekRelease(7004, 13, 27, '2026-10-10T01:00:00Z'),
+      ...releases,
+    ];
+    clock = new Date('2026-10-10T12:00:00.000Z');
+    await resolver.run(generationSettings, false);
+    histories = await dataSource.getRepository(FreshDiscoveryHistory).find();
+    assert.equal(histories.length, 1);
+    assert.equal(histories[0].firstFreshAt?.toISOString(), season13FirstFresh);
+    assert.equal(
+      histories[0].visibleUntil?.toISOString(),
+      season13VisibleUntil
+    );
+    assert.equal(
+      (
+        await dataSource.getRepository(FreshMedia).findOneByOrFail({
+          mediaType: 'tv',
+          tmdbId: 60694,
+        })
+      ).active,
+      false
+    );
+
+    releases = [
+      lastWeekRelease(7005, 14, 1, '2027-02-15T01:00:00Z'),
+      ...releases,
+    ];
+    clock = new Date('2027-02-15T12:00:00.000Z');
+    await resolver.run(generationSettings, false);
+    histories = await dataSource.getRepository(FreshDiscoveryHistory).find({
+      order: { seasonKey: 'ASC' },
+    });
+    assert.deepEqual(
+      histories.map((history) => history.seasonKey),
+      [13, 14]
+    );
+    assert.equal(histories[0].firstFreshAt?.toISOString(), season13FirstFresh);
+    const projection = await dataSource
+      .getRepository(FreshMedia)
+      .findOneByOrFail({
+        mediaType: 'tv',
+        tmdbId: 60694,
+      });
+    assert.equal(
+      projection.firstSeenAt.toISOString(),
+      '2027-02-15T01:00:00.000Z'
+    );
+    assert.equal(projection.active, true);
+  });
+
+  it('keeps explicit Specials as independent irreversible identities without inventing season zero', async () => {
+    await dataSource.synchronize(true);
+    let clock = new Date('2026-09-28T12:00:00.000Z');
+    const special = (
+      id: number,
+      episodeNumber: number,
+      at: string,
+      explicitSpecial = true
+    ): FreshRelease => ({
+      ...release(id, 'tv', 'Example Series', 2026, at),
+      sourceTitle: explicitSpecial
+        ? `Example.Series.S00E${String(episodeNumber).padStart(2, '0')}.1080p`
+        : 'Example.Series.1080p',
+      seasonNumber: 0,
+      episodeNumber,
+      explicitSpecial,
+    });
+    releases = [
+      special(7103, 0, '2026-09-28T03:00:00Z', false),
+      special(7102, 14, '2026-09-28T02:00:00Z'),
+      special(7101, 1, '2026-09-28T01:00:00Z'),
+    ];
+    const resolver = new FreshEngine({
+      database: dataSource,
+      autobrr: () => ({
+        filters: async () => filters,
+        page: async (_filter, cursor = 0) => page(releases, cursor),
+      }),
+      tmdb: {
+        getMovie: async () => {
+          throw new Error('wrong namespace');
+        },
+        getTvShow: async ({ tvId }) =>
+          tv(tvId, 'Example Series', '2020-01-01') as unknown as TmdbTvDetails,
+        getTvSeason: async () =>
+          ({
+            id: 0,
+            name: 'Specials',
+            overview: '',
+            air_date: '2020-01-01',
+            season_number: 0,
+            poster_path: null,
+            episodes: [
+              {
+                id: 1,
+                name: 'Recent Special',
+                overview: '',
+                air_date: '2026-09-27',
+                episode_number: 1,
+                season_number: 0,
+                production_code: '',
+                runtime: 30,
+                still_path: null,
+                vote_average: 0,
+                vote_count: 0,
+                crew: [],
+                guest_stars: [],
+              },
+              {
+                id: 14,
+                name: 'Historical Special',
+                overview: '',
+                air_date: '2020-01-01',
+                episode_number: 14,
+                season_number: 0,
+                production_code: '',
+                runtime: 30,
+                still_path: null,
+                vote_average: 0,
+                vote_count: 0,
+                crew: [],
+                guest_stars: [],
+              },
+            ],
+          }) as unknown as TmdbSeasonWithEpisodes,
+        searchMoviesStrict: async () => {
+          throw new Error('wrong namespace');
+        },
+        searchTvShowsStrict: async ({ page = 1 }) => ({
+          page,
+          total_pages: 1,
+          total_results: 1,
+          results: [tv(7100, 'Example Series', '2020-01-01')],
+        }),
+      },
+      now: () => new Date(clock),
+      cancelled: () => false,
+    });
+
+    await resolver.run(settings, true);
+    let histories = await dataSource.getRepository(FreshDiscoveryHistory).find({
+      order: { specialEpisodeKey: 'ASC' },
+    });
+    assert.deepEqual(
+      histories.map((history) => [
+        history.identityKind,
+        history.specialEpisodeKey,
+        history.admitted,
+      ]),
+      [
+        ['special', 1, true],
+        ['special', 14, false],
+      ]
+    );
+    assert.equal(
+      await dataSource.getRepository(FreshMedia).countBy({
+        mediaType: 'tv',
+        tmdbId: 7100,
+      }),
+      1
+    );
+    const firstFreshAt = histories[0].firstFreshAt?.toISOString();
+
+    releases = [special(7104, 1, '2026-09-29T01:00:00Z'), ...releases];
+    clock = new Date('2026-09-29T12:00:00.000Z');
+    await resolver.run(settings, false);
+    histories = await dataSource.getRepository(FreshDiscoveryHistory).find({
+      order: { specialEpisodeKey: 'ASC' },
+    });
+    assert.equal(histories.length, 2);
+    assert.equal(histories[0].firstFreshAt?.toISOString(), firstFreshAt);
+  });
+
+  it('applies and removes a durable admission override without resetting its Fresh clock', async () => {
+    await dataSource.synchronize(true);
+    let clock = new Date('2026-09-28T12:00:00.000Z');
+    releases = [
+      release(8001, 'movie', 'Historical Movie', 2020, '2026-09-28T01:00:00Z'),
+    ];
+    const resolver = new FreshEngine({
+      database: dataSource,
+      autobrr: () => ({
+        filters: async () => filters,
+        page: async (_filter, cursor = 0) => page(releases, cursor),
+      }),
+      tmdb: {
+        getMovie: async ({ movieId }) =>
+          movie(
+            movieId,
+            'Historical Movie',
+            '2020-01-01'
+          ) as unknown as TmdbMovieDetails,
+        getTvShow: async () => {
+          throw new Error('wrong namespace');
+        },
+        searchMoviesStrict: async ({ page = 1 }) => ({
+          page,
+          total_pages: 1,
+          total_results: 1,
+          results: [movie(8080, 'Historical Movie', '2020-01-01')],
+        }),
+        searchTvShowsStrict: async () => {
+          throw new Error('wrong namespace');
+        },
+      },
+      now: () => new Date(clock),
+      cancelled: () => false,
+    });
+    await resolver.run(settings, true);
+    let candidate = await dataSource
+      .getRepository(FreshCandidate)
+      .findOneByOrFail({
+        displayTitle: 'Historical Movie',
+      });
+    let history = await dataSource
+      .getRepository(FreshDiscoveryHistory)
+      .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 });
+    assert.equal(history.admitted, false);
+    assert.equal(history.firstFreshAt, null);
+
+    candidate = await resolver.setAdmissionOverride(
+      candidate.id,
+      candidate.revision,
+      settings,
+      42
+    );
+    history = await dataSource
+      .getRepository(FreshDiscoveryHistory)
+      .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 });
+    const firstFreshAt = history.firstFreshAt?.toISOString();
+    assert.equal(firstFreshAt, clock.toISOString());
+    assert.equal(
+      (
+        await dataSource
+          .getRepository(FreshMedia)
+          .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 })
+      ).active,
+      true
+    );
+    await assert.rejects(
+      () =>
+        resolver.setAdmissionOverride(
+          candidate.id,
+          candidate.revision - 1,
+          settings,
+          42
+        ),
+      /stale_candidate/
+    );
+
+    candidate = await resolver.removeAdmissionOverride(
+      candidate.id,
+      candidate.revision,
+      settings
+    );
+    assert.equal(
+      (
+        await dataSource
+          .getRepository(FreshMedia)
+          .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 })
+      ).active,
+      false
+    );
+    clock = new Date('2026-09-29T12:00:00.000Z');
+    candidate = await resolver.setAdmissionOverride(
+      candidate.id,
+      candidate.revision,
+      settings,
+      42
+    );
+    history = await dataSource
+      .getRepository(FreshDiscoveryHistory)
+      .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 });
+    assert.equal(history.firstFreshAt?.toISOString(), firstFreshAt);
+    assert.equal(
+      history.visibleUntil?.toISOString(),
+      '2026-10-05T12:00:00.000Z'
     );
   });
 });

@@ -1,7 +1,9 @@
 import { FreshCandidateStatus } from '@server/constants/fresh';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import dataSource from '@server/datasource';
+import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
@@ -205,6 +207,95 @@ describe('Fresh route authorization and safe responses', () => {
       assert.doesNotMatch(failed.text, /secret-provider-token/);
     } finally {
       freshService.rebuild = original;
+    }
+  });
+
+  it('requires typed, revision-bound administrator candidate mutations', async () => {
+    const originalResolve = freshService.resolveCandidate;
+    const originalReset = freshService.resetCandidateResolution;
+    const originalAdmit = freshService.admitCandidate;
+    const originalRemove = freshService.removeCandidateOverride;
+    const calls: string[] = [];
+    freshService.resolveCandidate = async (
+      candidateId,
+      mediaType,
+      tmdbId,
+      expectedRevision
+    ) => {
+      calls.push(
+        `resolve:${candidateId}:${mediaType}:${tmdbId}:${expectedRevision}`
+      );
+      return {
+        candidate: new FreshCandidate({
+          id: candidateId,
+          mediaType: 'movie',
+          effectiveMediaType: mediaType,
+          status: FreshCandidateStatus.RESOLVED,
+        }),
+        media: new FreshMedia({
+          mediaType,
+          tmdbId,
+          displayTitle: 'Canonical Title',
+          active: false,
+        }),
+      };
+    };
+    freshService.resetCandidateResolution = async (candidateId, revision) => {
+      calls.push(`reset:${candidateId}:${revision}`);
+      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
+    };
+    freshService.admitCandidate = async (candidateId, revision) => {
+      calls.push(`admit:${candidateId}:${revision}`);
+      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
+    };
+    freshService.removeCandidateOverride = async (candidateId, revision) => {
+      calls.push(`remove:${candidateId}:${revision}`);
+      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
+    };
+    try {
+      assert.equal(
+        (
+          await request(app)
+            .post('/settings/fresh/candidates/10/resolve')
+            .set('x-test-role', 'user')
+            .send({ mediaType: 'tv', tmdbId: 305251, expectedRevision: 7 })
+        ).status,
+        403
+      );
+      const resolved = await request(app)
+        .post('/settings/fresh/candidates/10/resolve')
+        .set('x-test-role', 'admin')
+        .send({ mediaType: 'tv', tmdbId: 305251, expectedRevision: 7 });
+      assert.equal(resolved.status, 200);
+      assert.equal(resolved.body.parsedMediaType, 'movie');
+      assert.equal(resolved.body.mediaType, 'tv');
+      assert.equal(
+        (
+          await request(app)
+            .post('/settings/fresh/candidates/10/resolve')
+            .set('x-test-role', 'admin')
+            .send({ tmdbId: 305251 })
+        ).status,
+        400
+      );
+      for (const [endpoint, expected] of [
+        ['reset-resolution', 'reset:10:8'],
+        ['admit', 'admit:10:8'],
+        ['remove-override', 'remove:10:8'],
+      ] as const) {
+        const response = await request(app)
+          .post(`/settings/fresh/candidates/10/${endpoint}`)
+          .set('x-test-role', 'admin')
+          .send({ expectedRevision: 8 });
+        assert.equal(response.status, 200);
+        assert.ok(calls.includes(expected));
+      }
+      assert.ok(calls.includes('resolve:10:tv:305251:7'));
+    } finally {
+      freshService.resolveCandidate = originalResolve;
+      freshService.resetCandidateResolution = originalReset;
+      freshService.admitCandidate = originalAdmit;
+      freshService.removeCandidateOverride = originalRemove;
     }
   });
 
@@ -418,6 +509,8 @@ describe('Fresh route authorization and safe responses', () => {
   });
 
   it('serves persistent candidate diagnostics with admin-only filtering and summary counts', async () => {
+    await dataSource.getRepository(FreshManualResolution).clear();
+    await dataSource.getRepository(FreshAdmissionOverride).clear();
     await dataSource.getRepository(FreshCandidate).clear();
     await dataSource.getRepository(FreshSyncState).save(
       new FreshSyncState({
@@ -458,6 +551,18 @@ describe('Fresh route authorization and safe responses', () => {
       }),
       new FreshCandidate({
         sourceGeneration: 3,
+        mediaType: 'movie',
+        normalizedTitle: 'identity collision',
+        displayTitle: 'Identity Collision',
+        matchYear: 2026,
+        status: FreshCandidateStatus.RESOLVED,
+        automaticStatus: FreshCandidateStatus.RESOLVED,
+        lastFailureReason: 'source_evidence_collision',
+        firstObservedAt: new Date('2026-09-22T00:00:00Z'),
+        lastObservedAt: new Date('2026-09-23T00:00:00Z'),
+      }),
+      new FreshCandidate({
+        sourceGeneration: 3,
         mediaType: 'tv',
         normalizedTitle: 'ambiguous series',
         displayTitle: 'Ambiguous Series',
@@ -472,6 +577,7 @@ describe('Fresh route authorization and safe responses', () => {
         displayTitle: 'Legacy Evidence',
         matchYear: 2025,
         status: FreshCandidateStatus.RESOLVED,
+        sourceEvidenceKey: 'diagnostic-source-key',
         tmdbId: eligibilityUnknownMedia.tmdbId,
         freshMediaId: eligibilityUnknownMedia.id,
         firstObservedAt: new Date('2026-09-20T00:00:00Z'),
@@ -483,13 +589,33 @@ describe('Fresh route authorization and safe responses', () => {
         sourceGeneration: 3,
         releaseId: 'diagnostic-legacy',
         filterId: 7,
-        candidateId: candidates[2].id,
+        candidateId: candidates[3].id,
         mediaType: 'movie',
         title: 'Legacy Evidence',
         normalizedTitle: 'legacy evidence',
         year: 2025,
         availabilityType: 'unknown',
         observedAt: new Date('2026-09-20T00:00:00Z'),
+      })
+    );
+    await dataSource.getRepository(FreshManualResolution).save(
+      new FreshManualResolution({
+        sourceEvidenceVersion: 1,
+        sourceEvidenceKey: 'diagnostic-source-key',
+        mediaType: 'movie',
+        tmdbId: 9001,
+        canonicalTitle: 'Legacy Evidence',
+        active: true,
+      })
+    );
+    await dataSource.getRepository(FreshAdmissionOverride).save(
+      new FreshAdmissionOverride({
+        mediaType: 'movie',
+        tmdbId: 9001,
+        identityKind: 'movie',
+        seasonKey: -1,
+        specialEpisodeKey: -1,
+        active: true,
       })
     );
     const forbidden = await request(app)
@@ -508,9 +634,22 @@ describe('Fresh route authorization and safe responses', () => {
     assert.equal(response.body.results[0].actionable, true);
     assert.equal(response.body.summary.noMatch, 1);
     assert.equal(response.body.summary.ambiguous, 1);
-    assert.equal(response.body.summary.needsAttention, 2);
+    assert.equal(response.body.summary.needsAttention, 3);
     assert.equal(response.body.summary.eligibilityUnknown, 1);
     assert.equal(response.body.summary.outsideEligibilityWindow, 0);
+
+    const prioritized = await request(app)
+      .get(
+        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(prioritized.status, 200);
+    assert.deepEqual(
+      prioritized.body.results
+        .slice(0, 3)
+        .map((row: { displayStatus: string }) => row.displayStatus),
+      ['no_match', 'ambiguous', 'needs_attention']
+    );
 
     const attention = await request(app)
       .get(
@@ -518,7 +657,7 @@ describe('Fresh route authorization and safe responses', () => {
       )
       .set('x-test-role', 'admin');
     assert.equal(attention.status, 200);
-    assert.equal(attention.body.results.length, 2);
+    assert.equal(attention.body.results.length, 3);
 
     const unknown = await request(app)
       .get(
@@ -537,5 +676,51 @@ describe('Fresh route authorization and safe responses', () => {
       eligibilityLimitDays: 90,
       legacyEvidence: true,
     });
+
+    const unknownSeason = await request(app)
+      .get(
+        '/settings/fresh/candidates?page=1&mediaType=tv&status=all&sort=priority&seasonEvidence=unknown'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(unknownSeason.status, 200);
+    assert.equal(unknownSeason.body.results.length, 1);
+    assert.equal(
+      unknownSeason.body.results[0].displayTitle,
+      'Ambiguous Series'
+    );
+
+    const resolutionFamily = await request(app)
+      .get(
+        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority&reasonFamily=resolution'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(resolutionFamily.status, 200);
+    assert.equal(resolutionFamily.body.results.length, 3);
+
+    const manuallyResolved = await request(app)
+      .get(
+        '/settings/fresh/candidates?page=1&search=movie%3A9001&mediaType=all&status=all&sort=priority&manualResolution=present'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(manuallyResolved.status, 200);
+    assert.equal(manuallyResolved.body.results.length, 1);
+    assert.equal(
+      manuallyResolved.body.results[0].manualResolution.mediaType,
+      'movie'
+    );
+
+    const overridden = await request(app)
+      .get(
+        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority&admissionOverride=present'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(overridden.status, 200);
+    assert.equal(overridden.body.results.length, 1);
+    assert.equal(overridden.body.results[0].admissionOverride.revision, 1);
+
+    const invalidFacet = await request(app)
+      .get('/settings/fresh/candidates?manualResolution=sometimes')
+      .set('x-test-role', 'admin');
+    assert.equal(invalidFacet.status, 400);
   });
 });

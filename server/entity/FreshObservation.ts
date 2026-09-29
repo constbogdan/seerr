@@ -29,8 +29,17 @@ export default class FreshObservation {
   public candidate: FreshCandidate;
   @Column({ type: 'varchar', length: 8 }) public mediaType: 'movie' | 'tv';
   @Column({ type: 'varchar', length: 300 }) public title: string;
+  @Column({ type: 'varchar', length: 300, default: '' }) public sourceTitle =
+    '';
   @Column({ type: 'varchar', length: 300 }) public normalizedTitle: string;
   @Column({ type: 'int', default: 0 }) public year = 0;
+  @Column({ type: 'int', default: -1 }) public seasonNumber = -1;
+  @Column({ type: 'int', default: -1 }) public episodeNumber = -1;
+  @Column({ default: false }) public explicitSeason: boolean = false;
+  @Column({ default: false }) public explicitSpecial: boolean = false;
+  @Column({ type: 'int', default: 1 }) public comparisonVersion = 1;
+  @Column({ type: 'varchar', length: 64, default: '' })
+  public sourceEvidenceKey = '';
   @Column({ type: 'varchar', length: 16, default: 'unknown' })
   public availabilityType: FreshAvailabilityType = 'unknown';
   @DbAwareColumn({ type: 'datetime' }) public observedAt: Date;

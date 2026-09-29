@@ -4,6 +4,15 @@ export {
   validReleaseId,
 } from '@server/lib/fresh/normalize';
 export type {
+  FreshCandidateDiagnosticQuery,
+  FreshCandidateDiagnosticResponse,
+  FreshCandidateDiagnosticRow,
+  FreshCandidateDiagnosticSort,
+  FreshCandidateDiagnosticStatus,
+  FreshCandidateDiagnosticSummary,
+  FreshCandidatePresenceFilter,
+  FreshCandidateReasonFamily,
+  FreshCandidateSeasonEvidence,
   FreshDiagnosticCounts,
   FreshDiagnosticDecision,
   FreshDiagnosticsSnapshot,

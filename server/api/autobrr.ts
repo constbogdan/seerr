@@ -16,7 +16,12 @@ export interface FreshRelease {
   releaseId: string;
   mediaType: FreshMediaType;
   title: string;
+  sourceTitle: string;
   year: number;
+  seasonNumber: number;
+  episodeNumber: number;
+  explicitSeason: boolean;
+  explicitSpecial: boolean;
   observedAt: number;
   availabilityType: FreshAvailabilityType;
 }
@@ -40,6 +45,23 @@ export const safeTitle = (value: unknown): value is string =>
   value.length <= 300 &&
   !Array.from(value).some((character) => character.charCodeAt(0) < 32) &&
   !/:\/\/|passkey\s*=|apikey\s*=|api_key\s*=/i.test(value);
+
+const boundedNumber = (value: unknown, maximum: number): number =>
+  Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= maximum
+    ? Number(value)
+    : -1;
+
+const sanitizedSourceTitle = (row: Record<string, unknown>): string => {
+  for (const value of [
+    row.torrent_name,
+    row.release_name,
+    row.name,
+    row.title,
+  ]) {
+    if (safeTitle(value)) return value.trim();
+  }
+  return '';
+};
 
 export interface FreshReleasePage {
   releases: FreshRelease[];
@@ -154,11 +176,31 @@ export function parseReleasePage(
         ? Number(row.year)
         : 0;
     if (mediaType === 'movie' && !year) continue;
+    const sourceTitle = sanitizedSourceTitle(row);
+    if (!sourceTitle) continue;
+    const seasonNumber = boundedNumber(row.season, 10000);
+    const episodeNumber = boundedNumber(row.episode, 100000);
+    const explicitSeason =
+      mediaType === 'tv' &&
+      (seasonNumber > 0 ||
+        /(?:^|[. _-])S0*[1-9]\d{0,3}(?:E\d{1,6})?(?:[. _-]|$)/i.test(
+          sourceTitle
+        ));
+    const explicitSpecial =
+      mediaType === 'tv' &&
+      seasonNumber === 0 &&
+      episodeNumber > 0 &&
+      /(?:^|[. _-])S0+E\d{1,6}(?:[. _-]|$)/i.test(sourceTitle);
     releases.push({
       releaseId: String(row.id),
       mediaType,
       title: row.title.trim(),
+      sourceTitle,
       year,
+      seasonNumber,
+      episodeNumber,
+      explicitSeason,
+      explicitSpecial,
       observedAt,
       availabilityType: availabilityType(row.source),
     });

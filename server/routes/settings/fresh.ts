@@ -134,10 +134,13 @@ const CandidateQuerySchema = z
         'visibility_expired',
         'active_fresh',
         'needs_attention',
+        'reviewable',
+        'historical',
       ])
       .default('all'),
     sort: z
       .enum([
+        'priority',
         'title.asc',
         'title.desc',
         'status',
@@ -148,7 +151,13 @@ const CandidateQuerySchema = z
         'last_seen.desc',
         'last_seen.asc',
       ])
-      .default('last_seen.desc'),
+      .default('priority'),
+    reasonFamily: z
+      .enum(['all', 'resolution', 'admission', 'content', 'history', 'source'])
+      .default('all'),
+    seasonEvidence: z.enum(['all', 'known', 'unknown']).default('all'),
+    manualResolution: z.enum(['all', 'present', 'absent']).default('all'),
+    admissionOverride: z.enum(['all', 'present', 'absent']).default('all'),
   })
   .strict();
 
@@ -169,13 +178,24 @@ freshSettingsRoutes.get('/candidates', async (req, res, next) => {
 freshSettingsRoutes.post('/candidates/:id/resolve', async (req, res, next) => {
   try {
     const candidateId = z.coerce.number().int().positive().parse(req.params.id);
-    const { tmdbId } = z
-      .object({ tmdbId: z.number().int().positive() })
+    const { mediaType, tmdbId, expectedRevision } = z
+      .object({
+        mediaType: z.enum(['movie', 'tv']),
+        tmdbId: z.number().int().positive(),
+        expectedRevision: z.number().int().positive(),
+      })
       .strict()
       .parse(req.body);
-    const result = await freshService.resolveCandidate(candidateId, tmdbId);
+    const result = await freshService.resolveCandidate(
+      candidateId,
+      mediaType,
+      tmdbId,
+      expectedRevision,
+      req.user?.id
+    );
     return res.status(200).json({
       candidateId: result.candidate.id,
+      parsedMediaType: result.candidate.mediaType,
       mediaType: result.media.mediaType,
       tmdbId: result.media.tmdbId,
       title: result.media.displayTitle,
@@ -184,12 +204,17 @@ freshSettingsRoutes.post('/candidates/:id/resolve', async (req, res, next) => {
       active: result.media.active,
     });
   } catch (error) {
+    if (error instanceof z.ZodError) {
+      return next({ status: 400, message: 'Invalid TMDB resolution.' });
+    }
     const code = error instanceof Error ? error.message : '';
     if (
       [
         'candidate_not_found',
         'candidate_not_actionable',
         'candidate_not_current',
+        'stale_candidate',
+        'source_evidence_collision',
       ].includes(code)
     ) {
       return next({
@@ -202,6 +227,8 @@ freshSettingsRoutes.post('/candidates/:id/resolve', async (req, res, next) => {
         'invalid_candidate',
         'invalid_tmdb_id',
         'invalid_tmdb_response',
+        'invalid_media_type',
+        'invalid_revision',
       ].includes(code)
     ) {
       return next({ status: 400, message: 'Invalid TMDB resolution.' });
@@ -212,6 +239,101 @@ freshSettingsRoutes.post('/candidates/:id/resolve', async (req, res, next) => {
     });
   }
 });
+
+const CandidateMutationSchema = z
+  .object({ expectedRevision: z.number().int().positive() })
+  .strict();
+
+freshSettingsRoutes.post(
+  '/candidates/:id/reset-resolution',
+  async (req, res, next) => {
+    try {
+      const candidateId = z.coerce
+        .number()
+        .int()
+        .positive()
+        .parse(req.params.id);
+      const { expectedRevision } = CandidateMutationSchema.parse(req.body);
+      const candidate = await freshService.resetCandidateResolution(
+        candidateId,
+        expectedRevision
+      );
+      return res
+        .status(200)
+        .json({ candidateId, revision: candidate.revision });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return next({
+          status: 400,
+          message: 'Invalid candidate mutation request.',
+        });
+      }
+      const code = error instanceof Error ? error.message : '';
+      return next({
+        status: code === 'candidate_not_found' ? 404 : 409,
+        message: 'Candidate resolution could not be reset.',
+      });
+    }
+  }
+);
+
+freshSettingsRoutes.post('/candidates/:id/admit', async (req, res, next) => {
+  try {
+    const candidateId = z.coerce.number().int().positive().parse(req.params.id);
+    const { expectedRevision } = CandidateMutationSchema.parse(req.body);
+    const candidate = await freshService.admitCandidate(
+      candidateId,
+      expectedRevision,
+      req.user?.id
+    );
+    return res.status(200).json({ candidateId, revision: candidate.revision });
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      return next({
+        status: 400,
+        message: 'Invalid candidate mutation request.',
+      });
+    }
+    const code = error instanceof Error ? error.message : '';
+    return next({
+      status: code === 'candidate_not_found' ? 404 : 409,
+      message: 'Candidate cannot be admitted to Fresh.',
+    });
+  }
+});
+
+freshSettingsRoutes.post(
+  '/candidates/:id/remove-override',
+  async (req, res, next) => {
+    try {
+      const candidateId = z.coerce
+        .number()
+        .int()
+        .positive()
+        .parse(req.params.id);
+      const { expectedRevision } = CandidateMutationSchema.parse(req.body);
+      const candidate = await freshService.removeCandidateOverride(
+        candidateId,
+        expectedRevision
+      );
+      return res
+        .status(200)
+        .json({ candidateId, revision: candidate.revision });
+    } catch (error) {
+      if (error instanceof z.ZodError) {
+        return next({
+          status: 400,
+          message: 'Invalid candidate mutation request.',
+        });
+      }
+      const code = error instanceof Error ? error.message : '';
+      return next({
+        status: code === 'candidate_not_found' ? 404 : 409,
+        message: 'Fresh admission override could not be removed.',
+      });
+    }
+  }
+);
 
 freshSettingsRoutes.post('/refresh', async (_req, res, next) => {
   try {

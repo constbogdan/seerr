@@ -14,7 +14,8 @@ const numberArray = {
 };
 const stringArray = {
   to: (value?: string[]) => JSON.stringify(value ?? []),
-  from: (value?: string) => (value ? (JSON.parse(value) as string[]) : []),
+  from: (value?: string | string[]) =>
+    Array.isArray(value) ? value : value ? (JSON.parse(value) as string[]) : [],
 };
 
 @Entity()
@@ -37,6 +38,8 @@ export default class FreshMedia {
   @Column({ default: false }) public admitted: boolean = false;
   @Column({ type: 'varchar', length: 64, nullable: true })
   public membershipReason?: string | null;
+  @Column({ type: 'text', default: () => "'[]'", transformer: stringArray })
+  public automaticReasons: string[] = [];
   @Column({ type: 'int', default: 0 }) public lastMatchedGeneration = 0;
   @DbAwareColumn({ type: 'datetime' }) public firstSeenAt: Date;
   @DbAwareColumn({ type: 'datetime' }) public lastSeenAt: Date;

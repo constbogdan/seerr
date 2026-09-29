@@ -8,6 +8,7 @@ import type {
   TmdbMovieResult,
   TmdbSearchMovieResponse,
   TmdbSearchTvResponse,
+  TmdbSeasonWithEpisodes,
   TmdbTvDetails,
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
@@ -17,10 +18,19 @@ import {
   FreshContinuityStatus,
 } from '@server/constants/fresh';
 import dataSource from '@server/datasource';
+import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
+import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
+import {
+  evaluateMovieAdmission,
+  evaluateTvAdmission,
+  freshVisibleUntil,
+  recurringIdentityForEvidence,
+} from '@server/lib/fresh/history';
 import {
   applyFreshMembership,
   evaluateAdmissionEvidence,
@@ -28,6 +38,8 @@ import {
   selectMovieAvailabilityDates,
 } from '@server/lib/fresh/membership';
 import {
+  FRESH_COMPARISON_VERSION,
+  freshSourceEvidenceKey,
   normalizeFreshTitle,
   validReleaseId,
 } from '@server/lib/fresh/normalize';
@@ -42,7 +54,7 @@ import type {
 import { getSettings, type FreshSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { createHash } from 'crypto';
-import type { DataSource } from 'typeorm';
+import type { DataSource, EntityManager } from 'typeorm';
 import { In, LessThan } from 'typeorm';
 
 const MAX_SOURCE_PAGES = 10000;
@@ -144,7 +156,8 @@ export interface FreshEngineDependencies {
   tmdb: Pick<
     TheMovieDb,
     'searchMoviesStrict' | 'searchTvShowsStrict' | 'getMovie' | 'getTvShow'
-  >;
+  > &
+    Partial<Pick<TheMovieDb, 'getTvSeason'>>;
   now: () => Date;
   cancelled: () => boolean;
   region?: () => string;
@@ -372,12 +385,7 @@ export class FreshEngine {
         item.lastMatchedGeneration === state.generation ||
         state.continuityStatus === FreshContinuityStatus.GAP_PRESERVED
       ) {
-        this.applyAdmissionEvidence(
-          item,
-          await this.observationsForMedia(item.id),
-          settings.mediaEligibilityDays
-        );
-        applyFreshMembership(item, settings, this.dependencies.now());
+        await this.refreshMediaProjection(item, state, settings);
       } else {
         item.active = false;
         item.membershipReason = 'source_generation_inactive';
@@ -405,7 +413,10 @@ export class FreshEngine {
 
   async resolveManually(
     candidateId: number,
+    mediaType: 'movie' | 'tv',
     tmdbId: number,
+    expectedRevision: number,
+    actorUserId: number | undefined,
     settings: FreshSettings
   ): Promise<{ candidate: FreshCandidate; media: FreshMedia }> {
     if (!Number.isSafeInteger(candidateId) || candidateId < 1) {
@@ -414,10 +425,24 @@ export class FreshEngine {
     if (!Number.isSafeInteger(tmdbId) || tmdbId < 1) {
       throw new Error('invalid_tmdb_id');
     }
+    if (!['movie', 'tv'].includes(mediaType))
+      throw new Error('invalid_media_type');
+    if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1)
+      throw new Error('invalid_revision');
     const candidate = await this.dependencies.database
       .getRepository(FreshCandidate)
       .findOneBy({ id: candidateId });
     if (!candidate) throw new Error('candidate_not_found');
+    if (!candidate.sourceEvidenceKey) {
+      candidate.sourceEvidenceKey = freshSourceEvidenceKey({
+        sourceTitle: candidate.displayTitle,
+        year: candidate.matchYear,
+        seasonNumber: candidate.seasonKey,
+        episodeNumber: candidate.specialEpisodeKey,
+      });
+    }
+    if (candidate.revision !== expectedRevision)
+      throw new Error('stale_candidate');
     if (
       ![FreshCandidateStatus.NO_MATCH, FreshCandidateStatus.AMBIGUOUS].includes(
         candidate.status
@@ -432,7 +457,7 @@ export class FreshEngine {
       throw new Error('candidate_not_current');
     }
     const details =
-      candidate.mediaType === 'movie'
+      mediaType === 'movie'
         ? await this.dependencies.tmdb.getMovie({ movieId: tmdbId })
         : await this.dependencies.tmdb.getTvShow({ tvId: tmdbId });
     if (details.id !== tmdbId) throw new Error('invalid_tmdb_response');
@@ -441,7 +466,9 @@ export class FreshEngine {
       details,
       state,
       settings,
-      this.dependencies.now()
+      this.dependencies.now(),
+      await this.seasonDetailsForCandidate(candidate, details.id, mediaType),
+      { mediaType, actorUserId, expectedRevision }
     );
     return {
       candidate: await this.dependencies.database
@@ -449,6 +476,233 @@ export class FreshEngine {
         .findOneByOrFail({ id: candidate.id }),
       media: result.media,
     };
+  }
+
+  async resetManualResolution(
+    candidateId: number,
+    expectedRevision: number,
+    settings: FreshSettings
+  ): Promise<FreshCandidate> {
+    const result = await this.dependencies.database.transaction(
+      async (manager) => {
+        const state = await manager
+          .getRepository(FreshSyncState)
+          .findOneByOrFail({ id: FRESH_SYNC_STATE_ID });
+        const candidates = manager.getRepository(FreshCandidate);
+        const candidate = await candidates.findOneBy({ id: candidateId });
+        if (!candidate) throw new Error('candidate_not_found');
+        if (
+          candidate.revision !== expectedRevision ||
+          candidate.sourceGeneration !== state.generation
+        )
+          throw new Error('stale_candidate');
+        const resolution = await manager
+          .getRepository(FreshManualResolution)
+          .findOneBy({
+            sourceEvidenceVersion: 1,
+            sourceEvidenceKey: candidate.sourceEvidenceKey,
+            active: true,
+          });
+        if (!resolution) throw new Error('manual_resolution_missing');
+        resolution.active = false;
+        resolution.revision += 1;
+        await manager.getRepository(FreshManualResolution).save(resolution);
+        const manualMediaId = candidate.freshMediaId;
+        candidate.status =
+          candidate.automaticStatus ?? FreshCandidateStatus.UNRESOLVED;
+        candidate.tmdbId = candidate.automaticTmdbId ?? null;
+        candidate.freshMediaId = candidate.automaticFreshMediaId ?? null;
+        candidate.effectiveMediaType = candidate.mediaType;
+        candidate.lastFailureReason = candidate.automaticFailureReason ?? null;
+        candidate.revision += 1;
+        const saved = await candidates.save(candidate);
+        const mediaRepository = manager.getRepository(FreshMedia);
+        if (manualMediaId && manualMediaId !== candidate.freshMediaId) {
+          const stillReferenced = await candidates
+            .createQueryBuilder('candidate')
+            .where('candidate.sourceGeneration = :generation', {
+              generation: state.generation,
+            })
+            .andWhere('candidate.freshMediaId = :mediaId', {
+              mediaId: manualMediaId,
+            })
+            .getCount();
+          if (!stillReferenced) {
+            const manualMedia = await mediaRepository.findOneBy({
+              id: manualMediaId,
+            });
+            if (manualMedia) {
+              manualMedia.active = false;
+              manualMedia.lastMatchedGeneration = 0;
+              manualMedia.membershipReason = 'source_generation_inactive';
+              await mediaRepository.save(manualMedia);
+            }
+          }
+        }
+        const automaticMedia = candidate.freshMediaId
+          ? await mediaRepository.findOneBy({ id: candidate.freshMediaId })
+          : undefined;
+        if (automaticMedia)
+          automaticMedia.lastMatchedGeneration = state.generation;
+        return { saved, automaticMedia, state };
+      }
+    );
+    if (result.automaticMedia) {
+      await this.refreshMediaProjection(
+        result.automaticMedia,
+        result.state,
+        settings
+      );
+      await this.dependencies.database
+        .getRepository(FreshMedia)
+        .save(result.automaticMedia);
+    }
+    return result.saved;
+  }
+
+  async setAdmissionOverride(
+    candidateId: number,
+    expectedRevision: number,
+    settings: FreshSettings,
+    actorUserId?: number
+  ): Promise<FreshCandidate> {
+    const now = this.dependencies.now();
+    const result = await this.dependencies.database.transaction(
+      async (manager) => {
+        const state = await manager
+          .getRepository(FreshSyncState)
+          .findOneByOrFail({ id: FRESH_SYNC_STATE_ID });
+        const candidates = manager.getRepository(FreshCandidate);
+        const candidate = await candidates.findOneBy({ id: candidateId });
+        if (!candidate) throw new Error('candidate_not_found');
+        if (
+          candidate.revision !== expectedRevision ||
+          candidate.sourceGeneration !== state.generation
+        )
+          throw new Error('stale_candidate');
+        if (!candidate.tmdbId || !candidate.freshMediaId)
+          throw new Error('override_not_actionable');
+        const effectiveMediaType =
+          candidate.effectiveMediaType ?? candidate.mediaType;
+        const identity = recurringIdentityForEvidence({
+          ...candidate,
+          mediaType: effectiveMediaType,
+        });
+        if (!identity) throw new Error('override_not_actionable');
+        const histories = manager.getRepository(FreshDiscoveryHistory);
+        const history = await histories.findOneBy({
+          mediaType: effectiveMediaType,
+          tmdbId: candidate.tmdbId,
+          identityKind: identity.identityKind,
+          seasonKey: identity.seasonKey,
+          specialEpisodeKey: identity.specialEpisodeKey,
+        });
+        if (!history) throw new Error('override_not_actionable');
+        if (
+          history.visibleUntil &&
+          history.visibleUntil.getTime() < now.getTime()
+        )
+          throw new Error('history_expired');
+        const media = await manager
+          .getRepository(FreshMedia)
+          .findOneByOrFail({ id: candidate.freshMediaId });
+        if (media.active) throw new Error('already_active');
+        const repository = manager.getRepository(FreshAdmissionOverride);
+        let override = await repository.findOneBy({
+          mediaType: effectiveMediaType,
+          tmdbId: candidate.tmdbId,
+          identityKind: identity.identityKind,
+          seasonKey: identity.seasonKey,
+          specialEpisodeKey: identity.specialEpisodeKey,
+        });
+        if (!history.firstFreshAt) {
+          history.firstFreshAt = override?.firstAdmittedAt ?? now;
+          history.visibleUntil = freshVisibleUntil(
+            history.firstFreshAt,
+            settings.freshVisibilityDays
+          );
+          await histories.save(history);
+        }
+        override = new FreshAdmissionOverride({
+          ...override,
+          mediaType: effectiveMediaType,
+          tmdbId: candidate.tmdbId,
+          identityKind: identity.identityKind,
+          seasonKey: identity.seasonKey,
+          specialEpisodeKey: identity.specialEpisodeKey,
+          active: true,
+          revision: (override?.revision ?? 0) + 1,
+          actorUserId: actorUserId ?? null,
+          firstAdmittedAt: override?.firstAdmittedAt ?? history.firstFreshAt,
+        });
+        await repository.save(override);
+        candidate.revision += 1;
+        await candidates.save(candidate);
+        return { candidate, media, state };
+      }
+    );
+    await this.refreshMediaProjection(result.media, result.state, settings);
+    await this.dependencies.database
+      .getRepository(FreshMedia)
+      .save(result.media);
+    return result.candidate;
+  }
+
+  async removeAdmissionOverride(
+    candidateId: number,
+    expectedRevision: number,
+    settings: FreshSettings
+  ): Promise<FreshCandidate> {
+    const result = await this.dependencies.database.transaction(
+      async (manager) => {
+        const state = await manager
+          .getRepository(FreshSyncState)
+          .findOneByOrFail({ id: FRESH_SYNC_STATE_ID });
+        const candidates = manager.getRepository(FreshCandidate);
+        const candidate = await candidates.findOneBy({ id: candidateId });
+        if (!candidate) throw new Error('candidate_not_found');
+        if (
+          candidate.revision !== expectedRevision ||
+          candidate.sourceGeneration !== state.generation
+        )
+          throw new Error('stale_candidate');
+        if (!candidate.tmdbId || !candidate.freshMediaId)
+          throw new Error('override_not_actionable');
+        const mediaType = candidate.effectiveMediaType ?? candidate.mediaType;
+        const identity = recurringIdentityForEvidence({
+          ...candidate,
+          mediaType,
+        });
+        if (!identity) throw new Error('override_not_actionable');
+        const repository = manager.getRepository(FreshAdmissionOverride);
+        const override = await repository.findOneBy({
+          mediaType,
+          tmdbId: candidate.tmdbId,
+          identityKind: identity.identityKind,
+          seasonKey: identity.seasonKey,
+          specialEpisodeKey: identity.specialEpisodeKey,
+          active: true,
+        });
+        if (!override) throw new Error('override_missing');
+        override.active = false;
+        override.revision += 1;
+        await repository.save(override);
+        candidate.revision += 1;
+        await candidates.save(candidate);
+        return {
+          candidate,
+          media: await manager
+            .getRepository(FreshMedia)
+            .findOneByOrFail({ id: candidate.freshMediaId }),
+          state,
+        };
+      }
+    );
+    await this.refreshMediaProjection(result.media, result.state, settings);
+    await this.dependencies.database
+      .getRepository(FreshMedia)
+      .save(result.media);
+    return result.candidate;
   }
 
   private requireFilter(
@@ -620,13 +874,31 @@ export class FreshEngine {
           }
           const normalizedTitle = normalizeFreshTitle(release.title);
           if (!normalizedTitle) continue;
-          const matchYear = release.mediaType === 'movie' ? release.year : 0;
+          const matchYear = release.year;
+          const seasonKey =
+            release.mediaType === 'tv' &&
+            (release.explicitSeason || release.explicitSpecial) &&
+            release.seasonNumber >= 0
+              ? release.seasonNumber
+              : -1;
+          const specialEpisodeKey =
+            release.explicitSpecial && release.episodeNumber > 0
+              ? release.episodeNumber
+              : -1;
+          const sourceEvidenceKey = freshSourceEvidenceKey({
+            sourceTitle: release.title,
+            year: release.year,
+            seasonNumber: seasonKey,
+            episodeNumber: specialEpisodeKey,
+          });
           const candidates = manager.getRepository(FreshCandidate);
           let candidate = await candidates.findOneBy({
             sourceGeneration: generation,
             mediaType: release.mediaType,
             normalizedTitle,
             matchYear,
+            seasonKey,
+            specialEpisodeKey,
           });
           const observedAt = new Date(release.observedAt);
           if (!candidate) {
@@ -637,6 +909,13 @@ export class FreshEngine {
                 normalizedTitle,
                 displayTitle: release.title,
                 matchYear,
+                seasonKey,
+                specialEpisodeKey,
+                explicitSeason: release.explicitSeason,
+                explicitSpecial: release.explicitSpecial,
+                comparisonVersion: FRESH_COMPARISON_VERSION,
+                sourceEvidenceKey,
+                effectiveMediaType: release.mediaType,
                 firstObservedAt: observedAt,
                 lastObservedAt: observedAt,
               })
@@ -647,6 +926,9 @@ export class FreshEngine {
               candidate.firstObservedAt = observedAt;
             if (observedAt > candidate.lastObservedAt)
               candidate.lastObservedAt = observedAt;
+            candidate.explicitSeason ||= release.explicitSeason;
+            candidate.explicitSpecial ||= release.explicitSpecial;
+            candidate.revision += 1;
             await candidates.save(candidate);
             if (candidate.freshMediaId) {
               const mediaRepository = manager.getRepository(FreshMedia);
@@ -657,19 +939,26 @@ export class FreshEngine {
                 if (observedAt > media.lastSeenAt)
                   media.lastSeenAt = observedAt;
                 media.lastMatchedGeneration = generation;
-                const existingEvidence = await observations.findBy({
-                  candidateId: candidate.id,
-                });
-                this.applyAdmissionEvidence(
-                  media,
-                  [
-                    ...existingEvidence,
-                    { availabilityType: release.availabilityType, observedAt },
-                  ],
-                  settings.mediaEligibilityDays
-                );
-                applyFreshMembership(media, settings, this.dependencies.now());
                 await mediaRepository.save(media);
+                const identity = recurringIdentityForEvidence(candidate);
+                if (identity) {
+                  const histories = manager.getRepository(
+                    FreshDiscoveryHistory
+                  );
+                  const history = await histories.findOneBy({
+                    mediaType: media.mediaType,
+                    tmdbId: media.tmdbId,
+                    identityKind: identity.identityKind,
+                    seasonKey: identity.seasonKey,
+                    specialEpisodeKey: identity.specialEpisodeKey,
+                  });
+                  if (history) {
+                    if (observedAt > history.lastObservedAt)
+                      history.lastObservedAt = observedAt;
+                    history.lastSeenGeneration = generation;
+                    await histories.save(history);
+                  }
+                }
               }
             }
           }
@@ -681,8 +970,15 @@ export class FreshEngine {
               candidateId: candidate.id,
               mediaType: release.mediaType,
               title: release.title,
+              sourceTitle: release.sourceTitle,
               normalizedTitle,
               year: release.year,
+              seasonNumber: release.seasonNumber,
+              episodeNumber: release.episodeNumber,
+              explicitSeason: release.explicitSeason,
+              explicitSpecial: release.explicitSpecial,
+              comparisonVersion: FRESH_COMPARISON_VERSION,
+              sourceEvidenceKey,
               availabilityType: release.availabilityType,
               observedAt,
             })
@@ -837,6 +1133,7 @@ export class FreshEngine {
             outcome: 'rejected',
             reason: 'no_exact_match',
           });
+          await this.reapplyManualResolution(candidate.id, state, settings);
         } else if (match.kind === 'ambiguous') {
           await this.finishUnmatched(
             candidate,
@@ -854,6 +1151,7 @@ export class FreshEngine {
             outcome: 'rejected',
             reason: 'ambiguous_exact_match',
           });
+          await this.reapplyManualResolution(candidate.id, state, settings);
         } else {
           const details =
             candidate.mediaType === 'movie'
@@ -868,7 +1166,8 @@ export class FreshEngine {
             details,
             state,
             settings,
-            now
+            now,
+            await this.seasonDetailsForCandidate(candidate, details.id)
           );
           if (saved.created) diagnostic.snapshot.counts.newFreshMedia!++;
           else diagnostic.snapshot.counts.existingFreshMediaUpdated!++;
@@ -886,6 +1185,7 @@ export class FreshEngine {
               ? 'canonical_identity_resolved'
               : 'outside_eligibility_window',
           });
+          await this.reapplyManualResolution(candidate.id, state, settings);
         }
       } catch (error) {
         if (error instanceof FreshRunError) throw error;
@@ -946,6 +1246,51 @@ export class FreshEngine {
     | { kind: 'ambiguous' }
     | { kind: 'match'; result: TmdbMovieResult | TmdbTvResult }
   > {
+    const year = candidate.matchYear || undefined;
+    let primary = await this.searchExactIdentity(
+      candidate,
+      candidate.displayTitle,
+      candidate.normalizedTitle,
+      candidate.mediaType === 'tv' && candidate.seasonKey >= 0
+        ? undefined
+        : year
+    );
+    if (
+      candidate.mediaType === 'tv' &&
+      candidate.seasonKey >= 0 &&
+      year &&
+      primary.kind === 'ambiguous'
+    ) {
+      primary = await this.searchExactIdentity(
+        candidate,
+        candidate.displayTitle,
+        candidate.normalizedTitle,
+        year
+      );
+    }
+    if (primary.kind !== 'none' || candidate.mediaType !== 'tv') return primary;
+    const volumeFallback = candidate.displayTitle.match(
+      /^(.*?)\s+Volume\s+\d+\s*$/i
+    );
+    if (!volumeFallback?.[1]?.trim()) return primary;
+    return this.searchExactIdentity(
+      candidate,
+      volumeFallback[1].trim(),
+      normalizeFreshTitle(volumeFallback[1]),
+      undefined
+    );
+  }
+
+  private async searchExactIdentity(
+    candidate: FreshCandidate,
+    query: string,
+    expectedNormalizedTitle: string,
+    year?: number
+  ): Promise<
+    | { kind: 'none' }
+    | { kind: 'ambiguous' }
+    | { kind: 'match'; result: TmdbMovieResult | TmdbTvResult }
+  > {
     const found = new Map<number, TmdbMovieResult | TmdbTvResult>();
     let page = 1;
     let totalPages = 1;
@@ -954,11 +1299,12 @@ export class FreshEngine {
         candidate.mediaType === 'movie'
           ? await this.dependencies.tmdb.searchMoviesStrict({
               query: candidate.displayTitle,
-              year: candidate.matchYear,
+              year,
               page,
             })
           : await this.dependencies.tmdb.searchTvShowsStrict({
-              query: candidate.displayTitle,
+              query,
+              ...(year ? { year } : {}),
               page,
             });
       this.validateSearchResponse(response, page);
@@ -976,14 +1322,20 @@ export class FreshEngine {
               ];
         if (
           !titles.some(
-            (title) => normalizeFreshTitle(title) === candidate.normalizedTitle
+            (title) => normalizeFreshTitle(title) === expectedNormalizedTitle
           )
         )
           continue;
         if (
           candidate.mediaType === 'movie' &&
-          (result as TmdbMovieResult).release_date?.slice(0, 4) !==
-            String(candidate.matchYear)
+          year &&
+          (result as TmdbMovieResult).release_date?.slice(0, 4) !== String(year)
+        )
+          continue;
+        if (
+          candidate.mediaType === 'tv' &&
+          year &&
+          (result as TmdbTvResult).first_air_date?.slice(0, 4) !== String(year)
         )
           continue;
         found.set(result.id, result);
@@ -1025,15 +1377,197 @@ export class FreshEngine {
         const repository = manager.getRepository(FreshCandidate);
         const current = await repository.findOneByOrFail({ id: candidate.id });
         current.status = status;
+        current.automaticStatus = status;
+        current.automaticTmdbId = null;
+        current.automaticFreshMediaId = null;
+        current.automaticFailureReason = reason;
         current.nextAttemptAt = retryAt(status, current.attemptCount, now);
         current.lastFailureReason = reason;
         current.resolutionStartedAt = null;
+        current.effectiveMediaType = current.mediaType;
+        current.revision += 1;
         await repository.save(current);
       });
     } catch (error) {
       if (error instanceof FreshRunError) throw error;
+      if (
+        error instanceof Error &&
+        ['stale_candidate', 'source_evidence_collision'].includes(error.message)
+      )
+        throw error;
       throw new FreshRunError('resolution_search', 'persistence_failed');
     }
+  }
+
+  private async seasonDetailsForCandidate(
+    candidate: FreshCandidate,
+    tmdbId: number,
+    mediaType: 'movie' | 'tv' = candidate.mediaType
+  ): Promise<TmdbSeasonWithEpisodes | undefined> {
+    const identity = recurringIdentityForEvidence({ ...candidate, mediaType });
+    if (!identity || identity.identityKind === 'movie') return undefined;
+    return this.dependencies.tmdb.getTvSeason?.({
+      tvId: tmdbId,
+      seasonNumber: identity.seasonKey,
+    });
+  }
+
+  private async reapplyManualResolution(
+    candidateId: number,
+    state: FreshSyncState,
+    settings: FreshSettings
+  ): Promise<void> {
+    const candidates = this.dependencies.database.getRepository(FreshCandidate);
+    const candidate = await candidates.findOneByOrFail({ id: candidateId });
+    if (!candidate.sourceEvidenceKey) return;
+    const currentMatches = await candidates.countBy({
+      sourceGeneration: state.generation,
+      sourceEvidenceKey: candidate.sourceEvidenceKey,
+    });
+    if (currentMatches !== 1) {
+      candidate.lastFailureReason = 'source_evidence_collision';
+      candidate.revision += 1;
+      await candidates.save(candidate);
+      return;
+    }
+    const resolution = await this.dependencies.database
+      .getRepository(FreshManualResolution)
+      .findOneBy({
+        sourceEvidenceVersion: 1,
+        sourceEvidenceKey: candidate.sourceEvidenceKey,
+        active: true,
+      });
+    if (!resolution) return;
+    const details =
+      resolution.mediaType === 'movie'
+        ? await this.dependencies.tmdb.getMovie({ movieId: resolution.tmdbId })
+        : await this.dependencies.tmdb.getTvShow({ tvId: resolution.tmdbId });
+    if (details.id !== resolution.tmdbId)
+      throw new Error('invalid_tmdb_response');
+    await this.finishResolved(
+      candidate,
+      details,
+      state,
+      settings,
+      this.dependencies.now(),
+      await this.seasonDetailsForCandidate(
+        candidate,
+        details.id,
+        resolution.mediaType
+      ),
+      {
+        mediaType: resolution.mediaType,
+        actorUserId: resolution.actorUserId ?? undefined,
+        expectedRevision: candidate.revision,
+        reapply: true,
+      }
+    );
+  }
+
+  private async upsertDiscoveryHistory(
+    manager: EntityManager,
+    candidate: FreshCandidate,
+    media: FreshMedia,
+    observations: FreshObservation[],
+    state: FreshSyncState,
+    settings: FreshSettings,
+    seasonDetails?: TmdbSeasonWithEpisodes
+  ): Promise<FreshDiscoveryHistory | undefined> {
+    const identity = recurringIdentityForEvidence(candidate);
+    if (!identity) return undefined;
+    const ordered = [...observations].sort(
+      (left, right) => left.observedAt.getTime() - right.observedAt.getTime()
+    );
+    const first = ordered[0]?.observedAt ?? candidate.firstObservedAt;
+    const last = ordered.at(-1)?.observedAt ?? candidate.lastObservedAt;
+    const repository = manager.getRepository(FreshDiscoveryHistory);
+    let history = await repository.findOneBy({
+      mediaType: media.mediaType,
+      tmdbId: media.tmdbId,
+      identityKind: identity.identityKind,
+      seasonKey: identity.seasonKey,
+      specialEpisodeKey: identity.specialEpisodeKey,
+    });
+
+    if (!history) {
+      const decision =
+        identity.identityKind === 'movie'
+          ? evaluateMovieAdmission(
+              media,
+              ordered,
+              settings.mediaEligibilityDays
+            )
+          : seasonDetails
+            ? evaluateTvAdmission(
+                seasonDetails,
+                first,
+                identity,
+                settings.mediaEligibilityDays
+              )
+            : {
+                eligible: false,
+                reason: 'tv_activity_unknown',
+                firstObservedAt: first,
+                activitySource: 'unavailable',
+              };
+      history = new FreshDiscoveryHistory({
+        mediaType: media.mediaType,
+        tmdbId: media.tmdbId,
+        identityKind: identity.identityKind,
+        seasonKey: identity.seasonKey,
+        specialEpisodeKey: identity.specialEpisodeKey,
+        admitted: decision?.eligible ?? false,
+        firstObservedAt: first,
+        lastObservedAt: last,
+        firstFreshAt: decision?.eligible ? first : null,
+        visibleUntil: decision?.eligible
+          ? freshVisibleUntil(first, settings.freshVisibilityDays)
+          : null,
+        activityDate: decision?.activityDate ?? null,
+        activitySource: decision?.activitySource ?? 'unavailable',
+        admissionReason: decision?.reason ?? 'not_evaluated',
+        automaticReasons: [decision?.reason ?? 'not_evaluated'],
+        firstSeenGeneration: state.generation,
+        lastSeenGeneration: state.generation,
+      });
+    } else {
+      // firstObservedAt/firstFreshAt form the irreversible Fresh clock. A
+      // later replay, source generation, PROPER, or quality variant may add
+      // evidence, but can never move that clock in either direction.
+      if (last > history.lastObservedAt) history.lastObservedAt = last;
+      history.lastSeenGeneration = state.generation;
+      // Provider/date absence is not a stable exclusion. Permit a later
+      // reconciliation to complete it, while stable admission/exclusion is
+      // irreversible for this recurring identity.
+      if (
+        !history.admitted &&
+        ['tv_activity_unknown', 'not_evaluated'].includes(
+          history.admissionReason
+        ) &&
+        identity.identityKind !== 'movie' &&
+        seasonDetails
+      ) {
+        const decision = evaluateTvAdmission(
+          seasonDetails,
+          history.firstObservedAt,
+          identity,
+          settings.mediaEligibilityDays
+        );
+        history.activityDate = decision.activityDate ?? null;
+        history.activitySource = decision.activitySource;
+        history.admissionReason = decision.reason;
+        history.automaticReasons = [decision.reason];
+        if (decision.eligible) {
+          history.admitted = true;
+          history.firstFreshAt = history.firstObservedAt;
+          history.visibleUntil = freshVisibleUntil(
+            history.firstFreshAt,
+            settings.freshVisibilityDays
+          );
+        }
+      }
+    }
+    return repository.save(history);
   }
 
   private async finishResolved(
@@ -1041,13 +1575,31 @@ export class FreshEngine {
     details: TmdbMovieDetails | TmdbTvDetails,
     state: FreshSyncState,
     settings: FreshSettings,
-    now: Date
+    now: Date,
+    seasonDetails?: TmdbSeasonWithEpisodes,
+    manual?: {
+      mediaType: 'movie' | 'tv';
+      actorUserId?: number;
+      expectedRevision: number;
+      reapply?: boolean;
+    }
   ): Promise<{ created: boolean; admitted: boolean; media: FreshMedia }> {
     try {
       return await this.dependencies.database.transaction(async (manager) => {
         const mediaRepository = manager.getRepository(FreshMedia);
+        const effectiveMediaType = manual?.mediaType ?? candidate.mediaType;
+        const currentCandidate = await manager
+          .getRepository(FreshCandidate)
+          .findOneByOrFail({ id: candidate.id });
+        if (
+          manual &&
+          (currentCandidate.revision !== manual.expectedRevision ||
+            currentCandidate.sourceGeneration !== state.generation)
+        ) {
+          throw new Error('stale_candidate');
+        }
         let media = await mediaRepository.findOneBy({
-          mediaType: candidate.mediaType,
+          mediaType: effectiveMediaType,
           tmdbId: details.id,
         });
         const created = !media;
@@ -1066,7 +1618,7 @@ export class FreshEngine {
         );
         media = new FreshMedia({
           ...media,
-          mediaType: candidate.mediaType,
+          mediaType: effectiveMediaType,
           tmdbId: details.id,
           active: media?.active ?? false,
           admitted: media?.admitted ?? false,
@@ -1084,27 +1636,126 @@ export class FreshEngine {
           originalTitle: media?.originalTitle ?? candidate.displayTitle,
         });
         this.applyMetadata(media, details, now);
-        this.applyAdmissionEvidence(
+        const history = await this.upsertDiscoveryHistory(
+          manager,
+          new FreshCandidate({ ...candidate, mediaType: effectiveMediaType }),
           media,
           observations,
-          settings.mediaEligibilityDays
+          state,
+          settings,
+          seasonDetails
         );
-        applyFreshMembership(media, settings, now);
+        if (history?.admitted && history.firstFreshAt) {
+          media.admitted = true;
+          media.firstSeenAt = history.firstFreshAt;
+          media.membershipReason = history.admissionReason;
+        } else {
+          media.admitted = false;
+          media.membershipReason =
+            history?.admissionReason ??
+            (effectiveMediaType === 'tv'
+              ? 'season_unknown'
+              : 'outside_eligibility_window');
+        }
+        if (history || effectiveMediaType === 'movie') {
+          applyFreshMembership(media, settings, now);
+        } else {
+          media.active = false;
+          media.automaticReasons = ['season_unknown'];
+        }
         media = await mediaRepository.save(media);
         const candidates = manager.getRepository(FreshCandidate);
-        const current = await candidates.findOneByOrFail({ id: candidate.id });
+        const current = currentCandidate;
+        if (!current.sourceEvidenceKey && candidate.sourceEvidenceKey) {
+          current.sourceEvidenceKey = candidate.sourceEvidenceKey;
+        }
         current.status = FreshCandidateStatus.RESOLVED;
         current.tmdbId = details.id;
+        if (!manual) {
+          current.automaticStatus = FreshCandidateStatus.RESOLVED;
+          current.automaticTmdbId = details.id;
+          current.automaticFreshMediaId = media.id;
+          current.automaticFailureReason = null;
+        }
+        current.effectiveMediaType = candidate.mediaType;
         current.freshMediaId = media.id;
         current.resolvedAt = current.resolvedAt ?? now;
         current.resolutionStartedAt = null;
         current.nextAttemptAt = null;
         current.lastFailureReason = null;
+        current.revision += 1;
         await candidates.save(current);
+        if (manual) {
+          current.effectiveMediaType = manual.mediaType;
+          await candidates.save(current);
+          const automaticMediaId = current.automaticFreshMediaId;
+          if (automaticMediaId && automaticMediaId !== media.id) {
+            const stillReferenced = await candidates
+              .createQueryBuilder('candidate')
+              .where('candidate.sourceGeneration = :generation', {
+                generation: state.generation,
+              })
+              .andWhere('candidate.id != :candidateId', {
+                candidateId: current.id,
+              })
+              .andWhere('candidate.freshMediaId = :mediaId', {
+                mediaId: automaticMediaId,
+              })
+              .getCount();
+            if (!stillReferenced) {
+              const automaticMedia = await mediaRepository.findOneBy({
+                id: automaticMediaId,
+              });
+              if (automaticMedia) {
+                automaticMedia.active = false;
+                automaticMedia.lastMatchedGeneration = 0;
+                automaticMedia.membershipReason = 'source_generation_inactive';
+                await mediaRepository.save(automaticMedia);
+              }
+            }
+          }
+        }
+        if (manual && !manual.reapply) {
+          const resolutions = manager.getRepository(FreshManualResolution);
+          const collisionCount = await candidates.countBy({
+            sourceEvidenceKey: current.sourceEvidenceKey,
+            sourceGeneration: state.generation,
+          });
+          if (!current.sourceEvidenceKey || collisionCount !== 1)
+            throw new Error('source_evidence_collision');
+          let resolution = await resolutions.findOneBy({
+            sourceEvidenceVersion: 1,
+            sourceEvidenceKey: current.sourceEvidenceKey,
+          });
+          resolution = new FreshManualResolution({
+            ...resolution,
+            sourceEvidenceVersion: 1,
+            sourceEvidenceKey: current.sourceEvidenceKey,
+            mediaType: manual.mediaType,
+            tmdbId: details.id,
+            canonicalTitle:
+              manual.mediaType === 'movie'
+                ? (details as TmdbMovieDetails).title
+                : (details as TmdbTvDetails).name,
+            canonicalDate:
+              manual.mediaType === 'movie'
+                ? (details as TmdbMovieDetails).release_date || null
+                : (details as TmdbTvDetails).first_air_date || null,
+            active: true,
+            revision: (resolution?.revision ?? 0) + 1,
+            actorUserId: manual.actorUserId ?? null,
+          });
+          await resolutions.save(resolution);
+        }
         return { created, admitted: media.admitted, media };
       });
     } catch (error) {
       if (error instanceof FreshRunError) throw error;
+      if (
+        error instanceof Error &&
+        ['stale_candidate', 'source_evidence_collision'].includes(error.message)
+      )
+        throw error;
       throw new FreshRunError('resolution_search', 'persistence_failed');
     }
   }
@@ -1132,37 +1783,124 @@ export class FreshEngine {
     const mediaRepository =
       this.dependencies.database.getRepository(FreshMedia);
     const before = await mediaRepository.countBy({ active: true });
-    if (state.continuityStatus === FreshContinuityStatus.GAP_PRESERVED) {
-      const current = await mediaRepository.findBy({
-        lastMatchedGeneration: state.generation,
-      });
-      for (const media of current) {
-        applyFreshMembership(media, settings, this.dependencies.now());
-      }
-      await mediaRepository.save(current);
-    } else if (!unresolved) {
-      const all = await mediaRepository.find();
-      for (const media of all) {
-        if (media.lastMatchedGeneration === state.generation) {
-          applyFreshMembership(media, settings, this.dependencies.now());
-        } else {
-          media.active = false;
-          media.membershipReason = 'source_generation_inactive';
-        }
-      }
-      await mediaRepository.save(all);
-    } else {
-      const current = await mediaRepository.findBy({
-        lastMatchedGeneration: state.generation,
-      });
-      for (const media of current) {
-        applyFreshMembership(media, settings, this.dependencies.now());
-      }
-      await mediaRepository.save(current);
+    const mediaToEvaluate =
+      state.continuityStatus !== FreshContinuityStatus.GAP_PRESERVED &&
+      !unresolved
+        ? await mediaRepository.find()
+        : await mediaRepository.findBy({
+            lastMatchedGeneration: state.generation,
+          });
+    for (const media of mediaToEvaluate) {
+      await this.refreshMediaProjection(media, state, settings);
     }
+    if (mediaToEvaluate.length) await mediaRepository.save(mediaToEvaluate);
     const after = await mediaRepository.countBy({ active: true });
     diagnostic.snapshot.counts.expiredFreshMedia = Math.max(0, before - after);
     diagnostic.snapshot.counts.currentFreshMedia = after;
+  }
+
+  private async refreshMediaProjection(
+    media: FreshMedia,
+    state: FreshSyncState,
+    settings: FreshSettings
+  ): Promise<void> {
+    const histories = await this.dependencies.database
+      .getRepository(FreshDiscoveryHistory)
+      .findBy({ mediaType: media.mediaType, tmdbId: media.tmdbId });
+    if (media.lastMatchedGeneration !== state.generation) {
+      media.active = false;
+      media.membershipReason = 'source_generation_inactive';
+      media.automaticReasons = ['source_generation_inactive'];
+      return;
+    }
+    if (!histories.length) {
+      if (!media.admitted && media.mediaType === 'movie') {
+        this.applyAdmissionEvidence(
+          media,
+          await this.observationsForMedia(media.id),
+          settings.mediaEligibilityDays
+        );
+      }
+      if (media.admitted && media.lastMatchedGeneration === state.generation) {
+        applyFreshMembership(media, settings, this.dependencies.now());
+      } else if (
+        !media.admitted &&
+        media.membershipReason === 'eligibility_unknown'
+      ) {
+        media.active = false;
+        media.automaticReasons = ['eligibility_unknown'];
+      } else {
+        media.active = false;
+        media.membershipReason = 'source_generation_inactive';
+        media.automaticReasons = ['source_generation_inactive'];
+      }
+      return;
+    }
+    const overrides = await this.dependencies.database
+      .getRepository(FreshAdmissionOverride)
+      .findBy({
+        mediaType: media.mediaType,
+        tmdbId: media.tmdbId,
+        active: true,
+      });
+    const overridden = new Set(
+      overrides.map(
+        (value) =>
+          `${value.identityKind}:${value.seasonKey}:${value.specialEpisodeKey}`
+      )
+    );
+    const now = this.dependencies.now();
+    const effective = histories
+      .filter((history) => history.lastSeenGeneration === state.generation)
+      .filter((history) => history.firstFreshAt && history.visibleUntil)
+      .filter(
+        (history) => (history.visibleUntil as Date).getTime() >= now.getTime()
+      )
+      .filter(
+        (history) =>
+          history.admitted ||
+          overridden.has(
+            `${history.identityKind}:${history.seasonKey}:${history.specialEpisodeKey}`
+          )
+      )
+      .sort((left, right) => {
+        const firstFresh =
+          (right.firstFreshAt?.getTime() ?? 0) -
+          (left.firstFreshAt?.getTime() ?? 0);
+        if (firstFresh) return firstFresh;
+        if (right.seasonKey !== left.seasonKey)
+          return right.seasonKey - left.seasonKey;
+        return right.id - left.id;
+      });
+    const selected = effective[0];
+    if (!selected?.firstFreshAt) {
+      media.active = false;
+      media.admitted = histories.some((history) => history.admitted);
+      media.membershipReason = histories.some(
+        (history) => history.lastSeenGeneration === state.generation
+      )
+        ? histories.some((history) => history.admitted)
+          ? 'visibility_expired'
+          : (histories[0]?.admissionReason ?? 'outside_eligibility_window')
+        : 'source_generation_inactive';
+      media.automaticReasons = [media.membershipReason];
+      return;
+    }
+    media.admitted = true;
+    media.firstSeenAt = selected.firstFreshAt;
+    media.lastSeenAt = histories.reduce(
+      (maximum, history) =>
+        history.lastObservedAt > maximum ? history.lastObservedAt : maximum,
+      selected.lastObservedAt
+    );
+    const automatic = applyFreshMembership(media, settings, now);
+    const overrideActive = overridden.has(
+      `${selected.identityKind}:${selected.seasonKey}:${selected.specialEpisodeKey}`
+    );
+    if (overrideActive && !automatic.active) {
+      media.active = true;
+      media.membershipReason = 'override_active';
+    }
   }
 
   private async refreshStaleMetadata(
@@ -1196,12 +1934,7 @@ export class FreshEngine {
         continue;
       }
       this.applyMetadata(media, details, now);
-      this.applyAdmissionEvidence(
-        media,
-        await this.observationsForMedia(media.id),
-        settings.mediaEligibilityDays
-      );
-      applyFreshMembership(media, settings, now);
+      await this.refreshMediaProjection(media, state, settings);
       try {
         await repository.save(media);
       } catch {

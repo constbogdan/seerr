@@ -98,7 +98,7 @@ describe('Fresh membership', () => {
         new Date('2026-03-20T00:00:00Z'),
         90
       ),
-      true
+      false
     );
   });
 
@@ -258,7 +258,7 @@ describe('Fresh membership', () => {
         { ...settings, includeOriginalLanguages: ['fr'] },
         new Date('2026-03-21T00:00:00Z')
       ).reason,
-      'excluded_original_language'
+      'missing_required_original_language'
     );
     assert.equal(
       evaluateFreshMembership(
@@ -283,6 +283,28 @@ describe('Fresh membership', () => {
         new Date('2026-03-21T00:00:00Z')
       ).reason,
       'below_tmdb_vote_count'
+    );
+
+    assert.deepEqual(
+      evaluateFreshMembership(
+        value,
+        {
+          ...settings,
+          excludeGenreIds: [53],
+          excludeOriginalLanguages: ['en'],
+          excludeContentRatings: ['movie:R'],
+          minimumTmdbScore: 8.5,
+          minimumTmdbVotes: 501,
+        },
+        new Date('2026-03-21T00:00:00Z')
+      ).reasons,
+      [
+        'excluded_genre',
+        'excluded_original_language',
+        'excluded_content_rating',
+        'below_tmdb_score',
+        'below_tmdb_vote_count',
+      ]
     );
   });
 
