@@ -11,6 +11,7 @@ import { UpgradeFreshMembership1790000000002 } from '@server/migration/sqlite/17
 import { AddFreshAvailabilityDates1790000000004 } from '@server/migration/sqlite/1790000000004-AddFreshAvailabilityDates';
 import { AddFreshEligibilitySchemaVersion1790000000006 } from '@server/migration/sqlite/1790000000006-AddFreshEligibilitySchemaVersion';
 import { RefineFreshDiscovery1790000000010 } from '@server/migration/sqlite/1790000000010-RefineFreshDiscovery';
+import { AddFreshCandidateVisibility1790000000012 } from '@server/migration/sqlite/1790000000012-AddFreshCandidateVisibility';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -19,6 +20,52 @@ import { describe, it } from 'node:test';
 import { DataSource } from 'typeorm';
 
 describe('Fresh persistence migration', () => {
+  it('makes existing and new diagnostic identities visible by default', async () => {
+    const database = new DataSource({ type: 'sqlite', database: ':memory:' });
+    await database.initialize();
+    const runner = database.createQueryRunner();
+    try {
+      await runner.query(
+        `CREATE TABLE "fresh_candidate" ("id" integer PRIMARY KEY, "mediaType" varchar(8) NOT NULL, "displayTitle" varchar(300) NOT NULL, "matchYear" integer NOT NULL, "seasonKey" integer NOT NULL, "specialEpisodeKey" integer NOT NULL, "sourceEvidenceKey" varchar(64) NOT NULL)`
+      );
+      await runner.query(
+        `INSERT INTO "fresh_candidate" ("id", "mediaType", "displayTitle", "matchYear", "seasonKey", "specialEpisodeKey", "sourceEvidenceKey") VALUES (1, 'movie', 'Existing Movie', 2026, -1, -1, '')`
+      );
+      await new AddFreshCandidateVisibility1790000000012().up(runner);
+      const existing = (await runner.query(
+        `SELECT visibility."show", candidate."sourceEvidenceKey"
+         FROM "fresh_candidate_visibility" visibility
+         JOIN "fresh_candidate" candidate ON candidate."sourceEvidenceKey" = visibility."sourceEvidenceKey"
+         WHERE candidate."id" = 1`
+      )) as { show: number; sourceEvidenceKey: string }[];
+      assert.equal(Boolean(existing[0].show), true);
+      assert.match(existing[0].sourceEvidenceKey, /^[a-f0-9]{64}$/);
+      await runner.query(
+        `INSERT INTO "fresh_candidate_visibility" ("sourceEvidenceVersion", "mediaType", "sourceEvidenceKey") VALUES (1, 'tv', 'new-key')`
+      );
+      const created = (await runner.query(
+        `SELECT "show" FROM "fresh_candidate_visibility" WHERE "sourceEvidenceKey" = 'new-key'`
+      )) as { show: number }[];
+      assert.equal(Boolean(created[0].show), true);
+    } finally {
+      await runner.release();
+      await database.destroy();
+    }
+  });
+
+  it('keeps the PostgreSQL visibility migration boolean and identity safe', () => {
+    const source = readFileSync(
+      path.join(
+        process.cwd(),
+        'server/migration/postgres/1790000000013-AddFreshCandidateVisibility.ts'
+      ),
+      'utf8'
+    );
+    assert.match(source, /default: true/);
+    assert.match(source, /UQ_fresh_candidate_visibility_source/);
+    assert.match(source, /ON CONFLICT/);
+  });
+
   it('preserves existing Fresh media when development synchronization adds automatic reasons', async () => {
     const directory = mkdtempSync(path.join(tmpdir(), 'seerr-fresh-sync-'));
     const databasePath = path.join(directory, 'db.sqlite3');
@@ -100,6 +147,7 @@ describe('Fresh persistence migration', () => {
         AddFreshAvailabilityDates1790000000004,
         AddFreshEligibilitySchemaVersion1790000000006,
         RefineFreshDiscovery1790000000010,
+        AddFreshCandidateVisibility1790000000012,
       ],
       synchronize: false,
     });
@@ -118,6 +166,7 @@ describe('Fresh persistence migration', () => {
         'fresh_media',
         'fresh_discovery_history',
         'fresh_manual_resolution',
+        'fresh_candidate_visibility',
         'fresh_admission_override',
       ]) {
         assert.ok(tables.includes(name));

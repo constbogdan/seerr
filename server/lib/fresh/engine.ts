@@ -20,6 +20,7 @@ import {
 import dataSource from '@server/datasource';
 import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
 import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
 import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
@@ -39,6 +40,7 @@ import {
 } from '@server/lib/fresh/membership';
 import {
   FRESH_COMPARISON_VERSION,
+  FRESH_SOURCE_EVIDENCE_VERSION,
   freshSourceEvidenceKey,
   normalizeFreshTitle,
   validReleaseId,
@@ -961,6 +963,25 @@ export class FreshEngine {
                 }
               }
             }
+          }
+          const candidateVisibility = manager.getRepository(
+            FreshCandidateVisibility
+          );
+          if (
+            !(await candidateVisibility.existsBy({
+              sourceEvidenceVersion: FRESH_SOURCE_EVIDENCE_VERSION,
+              mediaType: release.mediaType,
+              sourceEvidenceKey,
+            }))
+          ) {
+            await candidateVisibility.save(
+              new FreshCandidateVisibility({
+                sourceEvidenceVersion: FRESH_SOURCE_EVIDENCE_VERSION,
+                mediaType: release.mediaType,
+                sourceEvidenceKey,
+                show: true,
+              })
+            );
           }
           await observations.save(
             new FreshObservation({

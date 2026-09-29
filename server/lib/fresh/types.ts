@@ -130,6 +130,12 @@ export type FreshCandidateReasonFamily =
 
 export type FreshCandidateSeasonEvidence = 'all' | 'known' | 'unknown';
 export type FreshCandidatePresenceFilter = 'all' | 'present' | 'absent';
+export type FreshCandidateVisibilityFilter = 'visible' | 'hidden' | 'all';
+
+export interface FreshCandidateVisibilitySelection {
+  candidateId: number;
+  expectedRevision: number;
+}
 
 export interface FreshCandidateDiagnosticQuery {
   page: number;
@@ -141,6 +147,7 @@ export interface FreshCandidateDiagnosticQuery {
   seasonEvidence: FreshCandidateSeasonEvidence;
   manualResolution: FreshCandidatePresenceFilter;
   admissionOverride: FreshCandidatePresenceFilter;
+  visibility: FreshCandidateVisibilityFilter;
 }
 
 export interface FreshCandidateDiagnosticRow {
@@ -213,12 +220,15 @@ export interface FreshCandidateDiagnosticRow {
   };
   visibleUntil?: string;
   active: boolean;
+  show: boolean;
   actionable: boolean;
   actions: {
     resolve: boolean;
     resetResolution: boolean;
     admit: boolean;
     removeOverride: boolean;
+    dismiss: boolean;
+    show: boolean;
   };
 }
 

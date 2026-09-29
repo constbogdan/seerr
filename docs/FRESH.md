@@ -47,6 +47,13 @@ admission override, and effective presentation as separate concepts.
   active item, or expired history.
 - **Remove override** restores automatic policy. Re-adding an override reuses
   the original history and cannot create a new Fresh clock.
+- **Dismiss / Show** controls only whether a stable source-evidence identity is
+  included in Candidate Diagnostics' default Visible view. This preference is
+  durable across sync, restart, source-generation changes, and rebuild; it does
+  not alter resolution, admission, discovery history, or public Fresh results.
+  Administrators can select only the currently loaded diagnostics page and
+  apply Dismiss or Show atomically; a stale selected revision rejects the whole
+  bulk operation.
 
 All mutations are administrator-only, revision-bound, and serialized with sync,
 reconciliation, and rebuild operations. Candidate Diagnostics is the durable
@@ -61,6 +68,7 @@ candidates, checkpoint state, and the current source projection. It preserves:
 - irreversible Movie/Season/Special histories;
 - typed manual resolutions and provenance;
 - admission overrides and provenance.
+- Candidate Diagnostics visibility preferences.
 
 Evidence already pruned by autobrr cannot be recovered. A missing authenticated
 checkpoint must remain `GAP_PRESERVED`; use the explicit Fresh reconciliation

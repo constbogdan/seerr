@@ -2,6 +2,7 @@ import { Blocklist } from '@server/entity/Blocklist';
 import DiscoverSlider from '@server/entity/DiscoverSlider';
 import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
 import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
 import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
@@ -36,6 +37,7 @@ const entities = [
   DiscoverSlider,
   FreshAdmissionOverride,
   FreshCandidate,
+  FreshCandidateVisibility,
   FreshDiscoveryHistory,
   FreshManualResolution,
   FreshMedia,

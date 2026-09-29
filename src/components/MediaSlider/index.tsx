@@ -13,7 +13,7 @@ import type {
   TvResult,
 } from '@server/models/Search';
 import Link from 'next/link';
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import useSWRInfinite from 'swr/infinite';
 
 interface MixedResult {
@@ -31,6 +31,7 @@ interface MediaSliderProps {
   hideWhenEmpty?: boolean;
   extraParams?: string;
   onNewTitles?: (titleCount: number) => void;
+  headerAction?: ReactNode;
 }
 
 const MediaSlider = ({
@@ -41,6 +42,7 @@ const MediaSlider = ({
   sliderKey,
   hideWhenEmpty = false,
   onNewTitles,
+  headerAction,
 }: MediaSliderProps) => {
   const settings = useSettings();
   const { hasPermission } = useUser();
@@ -197,6 +199,9 @@ const MediaSlider = ({
           <div className="slider-title">
             <span>{title}</span>
           </div>
+        )}
+        {headerAction && (
+          <div className="ml-auto flex items-center">{headerAction}</div>
         )}
       </div>
       <Slider

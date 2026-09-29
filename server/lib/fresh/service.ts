@@ -12,6 +12,7 @@ import {
 import dataSource from '@server/datasource';
 import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
 import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
 import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
@@ -19,10 +20,12 @@ import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
 import { freshEngine } from '@server/lib/fresh/engine';
 import { evaluateAdmissionEvidence } from '@server/lib/fresh/membership';
+import { FRESH_SOURCE_EVIDENCE_VERSION } from '@server/lib/fresh/normalize';
 import type {
   FreshCandidateDiagnosticQuery,
   FreshCandidateDiagnosticResponse,
   FreshCandidateDiagnosticStatus,
+  FreshCandidateVisibilitySelection,
   FreshDiagnosticsSnapshot,
 } from '@server/lib/fresh/types';
 import type { FreshSettings } from '@server/lib/settings';
@@ -292,6 +295,19 @@ const applyDiagnosticFacets = (
   }
 };
 
+const applyDiagnosticVisibility = (
+  query: SelectQueryBuilder<FreshCandidate>,
+  visibility: FreshCandidateDiagnosticQuery['visibility']
+) => {
+  if (visibility === 'visible')
+    query.andWhere('COALESCE(candidateVisibility.show, :defaultShow) = :show', {
+      defaultShow: true,
+      show: true,
+    });
+  else if (visibility === 'hidden')
+    query.andWhere('candidateVisibility.show = :show', { show: false });
+};
+
 export interface PublicFreshSettings extends Omit<FreshSettings, 'apiToken'> {
   apiTokenConfigured: boolean;
 }
@@ -459,7 +475,8 @@ export class FreshService {
     | 'manual_resolution'
     | 'resolution_reset'
     | 'admission_override'
-    | 'override_removal';
+    | 'override_removal'
+    | 'candidate_visibility';
   private latestAttempt?: FreshDiagnosticsSnapshot;
   private coordinator: Promise<unknown> = Promise.resolve();
   private coordinatorBusy = false;
@@ -654,6 +671,111 @@ export class FreshService {
     );
   }
 
+  async setCandidateVisibility(
+    candidateId: number,
+    show: boolean,
+    expectedRevision: number
+  ): Promise<FreshCandidate> {
+    const [candidate] = await this.setCandidateVisibilityBulk(
+      [{ candidateId, expectedRevision }],
+      show
+    );
+    return candidate;
+  }
+
+  async setCandidateVisibilityBulk(
+    selections: FreshCandidateVisibilitySelection[],
+    show: boolean
+  ): Promise<FreshCandidate[]> {
+    if (
+      selections.length === 0 ||
+      selections.length > FRESH_CANDIDATE_PAGE_SIZE ||
+      new Set(selections.map(({ candidateId }) => candidateId)).size !==
+        selections.length
+    )
+      throw new Error('invalid_candidate_selection');
+    return this.coordinate('candidate_visibility', () =>
+      this.dependencies.database.transaction(async (manager) => {
+        const state = await manager
+          .getRepository(FreshSyncState)
+          .findOneByOrFail({ id: FRESH_SYNC_STATE_ID });
+        const candidates = manager.getRepository(FreshCandidate);
+        const byId = new Map(
+          (
+            await candidates.findBy({
+              id: In(selections.map(({ candidateId }) => candidateId)),
+            })
+          ).map((candidate) => [candidate.id, candidate])
+        );
+        const ordered = selections.map(({ candidateId, expectedRevision }) => {
+          const candidate = byId.get(candidateId);
+          if (!candidate) throw new Error('candidate_not_found');
+          if (
+            candidate.revision !== expectedRevision ||
+            candidate.sourceGeneration !== state.generation
+          )
+            throw new Error('stale_candidate');
+          if (!candidate.sourceEvidenceKey)
+            throw new Error('source_evidence_collision');
+          return candidate;
+        });
+
+        const collisionCounts = await Promise.all(
+          ordered.map((candidate) =>
+            candidates.countBy({
+              sourceGeneration: state.generation,
+              mediaType: candidate.mediaType,
+              sourceEvidenceKey: candidate.sourceEvidenceKey,
+            })
+          )
+        );
+        if (collisionCounts.some((count) => count !== 1))
+          throw new Error('source_evidence_collision');
+
+        const visibilityRepository = manager.getRepository(
+          FreshCandidateVisibility
+        );
+        const existing = await visibilityRepository.findBy(
+          ordered.map((candidate) => ({
+            sourceEvidenceVersion: FRESH_SOURCE_EVIDENCE_VERSION,
+            mediaType: candidate.mediaType,
+            sourceEvidenceKey: candidate.sourceEvidenceKey,
+          }))
+        );
+        const visibilityByKey = new Map(
+          existing.map((visibility) => [
+            `${visibility.mediaType}:${visibility.sourceEvidenceKey}`,
+            visibility,
+          ])
+        );
+        const changedCandidates: FreshCandidate[] = [];
+        const changedVisibilities: FreshCandidateVisibility[] = [];
+        for (const candidate of ordered) {
+          const key = `${candidate.mediaType}:${candidate.sourceEvidenceKey}`;
+          const visibility = visibilityByKey.get(key);
+          const currentShow = visibility?.show ?? true;
+          if (currentShow === show) continue;
+          changedVisibilities.push(
+            new FreshCandidateVisibility({
+              ...visibility,
+              sourceEvidenceVersion: FRESH_SOURCE_EVIDENCE_VERSION,
+              mediaType: candidate.mediaType,
+              sourceEvidenceKey: candidate.sourceEvidenceKey,
+              show,
+            })
+          );
+          candidate.revision += 1;
+          changedCandidates.push(candidate);
+        }
+        if (changedVisibilities.length > 0)
+          await visibilityRepository.save(changedVisibilities);
+        if (changedCandidates.length > 0)
+          await candidates.save(changedCandidates);
+        return ordered;
+      })
+    );
+  }
+
   cancel(): void {
     this.dependencies.engine.cancel();
   }
@@ -798,11 +920,19 @@ export class FreshService {
               ELSE candidate."specialEpisodeKey" END
             AND admissionOverride.active = true`
         )
+        .leftJoin(
+          FreshCandidateVisibility,
+          'candidateVisibility',
+          `candidateVisibility."sourceEvidenceVersion" = ${FRESH_SOURCE_EVIDENCE_VERSION}
+            AND candidateVisibility."mediaType" = candidate."mediaType"
+            AND candidateVisibility."sourceEvidenceKey" = candidate."sourceEvidenceKey"`
+        )
         .where('candidate.sourceGeneration = :generation', {
           generation: state.generation,
         })
         .setParameter('diagnosticNow', this.dependencies.now());
     const query = base();
+    applyDiagnosticVisibility(query, input.visibility);
     if (input.search?.trim()) {
       const search = input.search.trim().toLowerCase();
       const numeric = /^\d+$/.test(search) ? Number(search) : undefined;
@@ -920,6 +1050,20 @@ export class FreshService {
           .getRepository(FreshManualResolution)
           .findBy({ sourceEvidenceKey: In(sourceKeys), active: true })
       : [];
+    const visibilities = sourceKeys.length
+      ? await this.dependencies.database
+          .getRepository(FreshCandidateVisibility)
+          .findBy({
+            sourceEvidenceVersion: FRESH_SOURCE_EVIDENCE_VERSION,
+            sourceEvidenceKey: In(sourceKeys),
+          })
+      : [];
+    const visibilityByKey = new Map(
+      visibilities.map((visibility) => [
+        `${visibility.mediaType}:${visibility.sourceEvidenceKey}`,
+        visibility.show,
+      ])
+    );
     const manualByKey = new Map(
       manualResolutions.map((resolution) => [
         resolution.sourceEvidenceKey,
@@ -961,6 +1105,7 @@ export class FreshService {
 
     const count = async (status: FreshCandidateDiagnosticStatus) => {
       const countQuery = base();
+      applyDiagnosticVisibility(countQuery, input.visibility);
       applyDiagnosticStatus(countQuery, status);
       return countQuery.getCount();
     };
@@ -1057,11 +1202,18 @@ export class FreshService {
             FreshCandidateStatus.UNRESOLVED,
             FreshCandidateStatus.RESOLVING,
           ].includes(automaticStatus);
+        const diagnosticVisibility =
+          visibilityByKey.get(
+            `${candidate.mediaType}:${candidate.sourceEvidenceKey}`
+          ) !== false;
+        const actionable = canResolve || !!manual || canAdmit || !!override;
         const actions = {
           resolve: canResolve,
           resetResolution: !!manual,
           admit: canAdmit,
           removeOverride: !!override,
+          dismiss: diagnosticVisibility,
+          show: !diagnosticVisibility,
         };
         return {
           candidateId: candidate.id,
@@ -1190,7 +1342,8 @@ export class FreshService {
                 ).toISOString()
               : undefined),
           active: media?.active ?? false,
-          actionable: Object.values(actions).some(Boolean),
+          show: diagnosticVisibility,
+          actionable,
           actions,
         };
       }),

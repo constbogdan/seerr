@@ -1,6 +1,7 @@
 import type { AutobrrFilterOption } from '@server/api/autobrr';
 import { FreshContinuityStatus } from '@server/constants/fresh';
 import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
@@ -277,6 +278,10 @@ describe('Fresh application service', () => {
     assert.equal((cleared as unknown[]).includes(Media), false);
     assert.equal((cleared as unknown[]).includes(Watchlist), false);
     assert.equal((cleared as unknown[]).includes(MediaRequest), false);
+    assert.equal(
+      (cleared as unknown[]).includes(FreshCandidateVisibility),
+      false
+    );
     assert.deepEqual(synchronizedSettings, {
       ...settings,
       baseUrl: 'https://autobrr.test',

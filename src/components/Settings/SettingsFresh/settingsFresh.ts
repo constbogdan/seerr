@@ -98,6 +98,14 @@ export const parseFreshSectionState = (
   return { ...defaultFreshSectionState };
 };
 
+export const applyFreshSectionTarget = (
+  state: FreshSectionState,
+  location: string
+): FreshSectionState =>
+  location.split('#')[1] === 'candidates'
+    ? { ...state, candidates: true }
+    : state;
+
 const DEFAULT_AUTOBRR_PORT = 7474;
 export const CONFIGURED_TOKEN_MASK = '•'.repeat(28);
 

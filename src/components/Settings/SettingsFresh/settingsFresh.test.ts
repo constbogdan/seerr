@@ -9,6 +9,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import MediaTypeFilter from '../../Common/MediaTypeFilter';
 import {
   CONFIGURED_TOKEN_MASK,
+  applyFreshSectionTarget,
   composeAutobrrBaseUrl,
   defaultFreshSectionState,
   loadFreshFilters,
@@ -231,8 +232,22 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /candidate\.actions\.resetResolution/);
     assert.match(source, /candidate\.actions\.admit/);
     assert.match(source, /candidate\.actions\.removeOverride/);
+    assert.match(source, /candidate\.actions\.dismiss/);
+    assert.match(source, /candidate\.actions\.show/);
+    assert.match(
+      source,
+      /useState<FreshCandidateVisibilityFilter>\('visible'\)/
+    );
+    assert.match(source, /aria-label="Candidate visibility"/);
     assert.match(source, /expectedRevision: candidate\.revision/);
     assert.match(source, /error\.response\?\.status === 409/);
+    assert.match(source, /Select all candidates on this page/);
+    assert.match(source, /candidatePageSelectionState/);
+    assert.match(source, /toggleCandidatePageSelection/);
+    assert.match(source, /\/api\/v1\/settings\/fresh\/candidates\/visibility/);
+    assert.match(source, /Dismiss selected/);
+    assert.match(source, /Show selected/);
+    assert.match(source, /useEffect\(\(\) => setSelectedIds\(\[\]\)/);
     assert.match(source, /mediaType,/);
     assert.match(source, /\/resolve`/);
     assert.doesNotMatch(source, /latestAttempt/);
@@ -259,6 +274,13 @@ describe('Fresh settings client boundary', () => {
       ),
       { candidates: true, pipeline: true, configuration: true }
     );
+    assert.deepEqual(
+      applyFreshSectionTarget(
+        { candidates: false, pipeline: true, configuration: true },
+        '/settings/discovery-sources/fresh#candidates'
+      ),
+      { candidates: true, pipeline: true, configuration: true }
+    );
     const source = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
     assert.match(source, /FRESH_SECTION_STATE_KEY/);
     assert.match(source, /aria-expanded={open}/);
@@ -267,6 +289,11 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /id="candidates"[\s\S]*?order=\{1\}/);
     assert.match(source, /id="pipeline"[\s\S]*?order=\{2\}/);
     assert.match(source, /id="configuration"[\s\S]*?order=\{3\}/);
+    assert.match(source, /id=\{id\}/);
+    assert.match(source, /tabIndex=\{-1\}/);
+    assert.match(source, /applyFreshSectionTarget/);
+    assert.match(source, /getElementById\('candidates'\)/);
+    assert.match(source, /target\?\.focus/);
   });
 
   it('renders the native media icon segment adjacent to the media-type select', () => {
@@ -296,7 +323,10 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /rebuildTitle: 'Rebuild Fresh Data\?'/);
     assert.match(source, /Irreversible Fresh history/);
     assert.match(source, /typed manual resolutions/);
-    assert.match(source, /admission overrides are preserved/);
+    assert.match(
+      source,
+      /admission overrides, and Candidate Diagnostics visibility preferences are preserved/
+    );
     assert.match(source, /okButtonType="danger"/);
     assert.match(source, /\/api\/v1\/settings\/fresh\/rebuild/);
     assert.match(source, /await axios\.post/);

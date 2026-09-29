@@ -7,6 +7,7 @@ import {
   type FreshMediaResult,
   type FreshStatus,
 } from '@app/components/Fresh/api';
+import CandidateDiagnosticsShortcut from '@app/components/Fresh/CandidateDiagnosticsShortcut';
 import useDiscover from '@app/hooks/useDiscover';
 import { useUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -69,6 +70,9 @@ const Fresh = () => {
       <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
         <Header>{intl.formatMessage(messages.fresh)}</Header>
         <div className="mt-2 flex flex-wrap gap-2">
+          <CandidateDiagnosticsShortcut
+            show={hasPermission(Permission.ADMIN)}
+          />
           <MediaTypeFilter
             value={mediaType}
             options={[
