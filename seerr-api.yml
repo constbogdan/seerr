@@ -86,6 +86,21 @@ components:
           readOnly: true
           items:
             type: number
+        watchState:
+          type: string
+          readOnly: true
+          enum:
+            - watched
+            - not_watched
+            - unknown
+        lastPlayedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        watchStateSyncedAt:
+          type: string
+          format: date-time
+          readOnly: true
         media:
           $ref: '#/components/schemas/MediaInfo'
         createdAt:
@@ -124,6 +139,10 @@ components:
           type: integer
           example: 1
           readOnly: true
+        includeInUserMetrics:
+          type: boolean
+          default: true
+          description: Whether this account participates in user-oriented metrics and selectors. This does not affect authentication or permissions.
         permissions:
           type: number
           example: 0
@@ -1956,6 +1975,21 @@ components:
         updatedAt:
           type: string
           example: '2020-09-12T10:00:27.000Z'
+          readOnly: true
+        watchState:
+          type: string
+          enum: [watched, not_watched, unknown]
+          description: Current watched state projected only for the authenticated user.
+          readOnly: true
+        watchStateLastPlayedAt:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+        watchStateSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
           readOnly: true
     Cast:
       type: object
@@ -4967,6 +5001,12 @@ paths:
           required: false
           schema:
             type: string
+        - in: query
+          name: includeInUserMetrics
+          required: false
+          description: Filter users by explicit metrics inclusion.
+          schema:
+            type: boolean
       responses:
         '200':
           description: A JSON array of all users
@@ -5029,6 +5069,13 @@ paths:
                     type: integer
                 permissions:
                   type: integer
+                includeInUserMetrics:
+                  type: boolean
+                  description: Boolean value applied to every selected user.
+              required:
+                - ids
+                - permissions
+                - includeInUserMetrics
       responses:
         '200':
           description: Successfully updated user details
@@ -5758,6 +5805,16 @@ paths:
             type: number
             example: 1
             default: 1
+        - in: query
+          name: watched
+          description: Local Jellyfin-backed Watchlist completion filter. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: not_watched
+            enum:
+              - not_watched
+              - watched
+              - all
       responses:
         '200':
           description: Watchlist data returned
@@ -5779,6 +5836,8 @@ paths:
                       - plex
                   supportsPresentation:
                     type: boolean
+                  supportsWatchState:
+                    type: boolean
                   hasUnclassifiedItems:
                     type: boolean
                   results:
@@ -5798,6 +5857,18 @@ paths:
                             - tv
                         title:
                           type: string
+                        watchState:
+                          type: string
+                          enum:
+                            - watched
+                            - not_watched
+                            - unknown
+                        lastPlayedAt:
+                          type: string
+                          format: date-time
+                        watchStateSyncedAt:
+                          type: string
+                          format: date-time
   /user/{userId}/settings/main:
     get:
       summary: Get general settings for a user
@@ -6090,6 +6161,9 @@ paths:
                   permissions:
                     type: number
                     example: 2
+                  includeInUserMetrics:
+                    type: boolean
+                    default: true
     post:
       summary: Update permission settings for a user
       description: Updates and returns permission settings for a specific user. Requires `MANAGE_USERS` permission if editing other users.
@@ -6110,6 +6184,8 @@ paths:
               properties:
                 permissions:
                   type: number
+                includeInUserMetrics:
+                  type: boolean
               required:
                 - permissions
       responses:
@@ -6123,6 +6199,9 @@ paths:
                   permissions:
                     type: number
                     example: 2
+                  includeInUserMetrics:
+                    type: boolean
+                    default: true
   /user/{userId}/watch_data:
     get:
       summary: Get watch data
@@ -7585,6 +7664,27 @@ paths:
               - added_asc
               - title_asc
               - title_desc
+        - in: query
+          name: watched
+          description: Local Jellyfin-backed Watchlist completion filter. Unknown remains in Not Watched. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: not_watched
+            enum:
+              - not_watched
+              - watched
+              - all
+        - in: query
+          name: owner
+          description: Watchlist owner scope. `all` and another user's numeric ID require `WATCHLIST_VIEW`; omitted or `me` selects the authenticated user.
+          schema:
+            oneOf:
+              - type: string
+                enum:
+                  - me
+                  - all
+              - type: string
+                pattern: '^[1-9][0-9]*$'
       responses:
         '200':
           description: Watchlist data returned
@@ -7606,6 +7706,8 @@ paths:
                       - plex
                   supportsPresentation:
                     type: boolean
+                  supportsWatchState:
+                    type: boolean
                   hasUnclassifiedItems:
                     type: boolean
                   results:
@@ -7625,6 +7727,27 @@ paths:
                             - tv
                         title:
                           type: string
+                        watchState:
+                          type: string
+                          enum:
+                            - watched
+                            - not_watched
+                            - unknown
+                        lastPlayedAt:
+                          type: string
+                          format: date-time
+                        watchStateSyncedAt:
+                          type: string
+                          format: date-time
+                        requestedBy:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            displayName:
+                              type: string
+                            avatar:
+                              type: string
   /request:
     get:
       summary: Get all requests

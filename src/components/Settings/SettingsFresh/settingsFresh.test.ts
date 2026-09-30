@@ -214,6 +214,8 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /eligibility_unknown/);
     assert.match(source, /aria-controls={detailsId}/);
     assert.match(source, /ChevronRightIcon/);
+    assert.match(source, /\{candidate\.displayTitle\}/);
+    assert.match(source, /\['Parsed title', candidate\.parsedTitle\]/);
     assert.doesNotMatch(source, /const hasDetails/);
     assert.match(source, /eligibilityDateSource/);
     assert.match(source, /firstQualifyingObservation/);

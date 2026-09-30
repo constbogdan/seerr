@@ -19,6 +19,11 @@ export interface UserSettingsGeneralResponse {
   watchlistSyncTv?: boolean;
 }
 
+export interface UserSettingsPermissionsResponse {
+  permissions?: number;
+  includeInUserMetrics: boolean;
+}
+
 export type NotificationAgentTypes = Record<NotificationAgentKey, number>;
 export interface UserSettingsNotificationsResponse {
   emailEnabled?: boolean;

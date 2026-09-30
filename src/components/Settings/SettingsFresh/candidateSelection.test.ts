@@ -1,6 +1,8 @@
+import type { FreshCandidateDiagnosticResponse } from '@server/lib/fresh/types';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
+  applyCandidateVisibilityLocally,
   bulkCandidateVisibilityTargets,
   candidatePageSelectionState,
   candidateSelectionScopeKey,
@@ -15,6 +17,29 @@ const rows = [
   { candidateId: 2, revision: 7, show: true },
   { candidateId: 3, revision: 2, show: false },
 ];
+
+const response = {
+  pageInfo: { pages: 1, page: 1, results: 3, pageSize: 25 },
+  results: [
+    { ...rows[0], displayStatus: 'no_match' },
+    { ...rows[1], displayStatus: 'reviewable' },
+    { ...rows[2], displayStatus: 'historical' },
+  ],
+  summary: {
+    totalCandidates: 3,
+    activeFresh: 0,
+    noMatch: 1,
+    ambiguous: 0,
+    temporaryFailure: 0,
+    outsideEligibilityWindow: 0,
+    eligibilityUnknown: 0,
+    excludedContentFilter: 0,
+    visibilityExpired: 0,
+    needsAttention: 1,
+    reviewable: 1,
+    historical: 1,
+  },
+} as unknown as FreshCandidateDiagnosticResponse;
 
 describe('Fresh Candidate Diagnostics page selection', () => {
   it('tracks individual, indeterminate, and all-current-page selection', () => {
@@ -84,5 +109,30 @@ describe('Fresh Candidate Diagnostics page selection', () => {
     assert.equal(nearestCandidatePage(3, 51, 1, 25), 2);
     assert.equal(nearestCandidatePage(1, 1, 1, 25), 1);
     assert.equal(nearestCandidatePage(2, 30, 2, 25), 2);
+  });
+
+  it('removes dismissed rows and counts immediately without replacing table state', () => {
+    const next = applyCandidateVisibilityLocally(
+      response,
+      [1, 2],
+      false,
+      'visible'
+    );
+    assert.deepEqual(
+      next?.results.map((row) => row.candidateId),
+      [3]
+    );
+    assert.equal(next?.pageInfo.results, 1);
+    assert.equal(next?.summary.needsAttention, 0);
+    assert.equal(next?.summary.reviewable, 0);
+    assert.equal(next?.summary.historical, 1);
+  });
+
+  it('updates mixed All-view visibility without removing rows', () => {
+    const next = applyCandidateVisibilityLocally(response, [1], false, 'all');
+    assert.equal(next?.results.length, 3);
+    assert.equal(next?.results[0].show, false);
+    assert.equal(next?.results[0].revision, 5);
+    assert.deepEqual(next?.summary, response.summary);
   });
 });

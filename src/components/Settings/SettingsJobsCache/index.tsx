@@ -91,6 +91,11 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'image-cache-cleanup': 'Image Cache Cleanup',
     'process-blocklisted-tags': 'Process Blocklisted Tags',
     'watchlist-metadata-backfill': 'Watchlist Metadata Backfill',
+    'watchlist-metadata-backfill-description':
+      'Fills missing TMDB genre metadata used by Watchlist category filters.',
+    'watchlist-play-state-sync': 'Watchlist Play State Sync',
+    'watchlist-play-state-sync-description':
+      'Reconciles current per-user watched state from exact Jellyfin media identities.',
     'fresh-sync': 'Fresh Sync',
     'fresh-reconciliation': 'Fresh Reconciliation',
     editJobSchedule: 'Modify Job',
@@ -207,20 +212,27 @@ const SettingsJobs = () => {
   });
   const [isSaving, setIsSaving] = useState(false);
   const settings = useSettings();
-
+  const jobMessages = { ...messages };
   if (settings.currentSettings.mediaServerType === MediaServerType.EMBY) {
-    messages['jellyfin-recently-added-scan'] = {
+    jobMessages['jellyfin-recently-added-scan'] = {
       id: 'jellyfin-recently-added-scan',
       defaultMessage: 'Emby Recently Added Scan',
     };
-  }
-
-  if (settings.currentSettings.mediaServerType === MediaServerType.EMBY) {
-    messages['jellyfin-full-scan'] = {
+    jobMessages['jellyfin-full-scan'] = {
       id: 'jellyfin-full-scan',
       defaultMessage: 'Emby Full Library Scan',
     };
   }
+  const orderedJobs = data
+    ?.slice()
+    .sort((left, right) =>
+      intl
+        .formatMessage(jobMessages[left.id] ?? messages.unknownJob)
+        .localeCompare(
+          intl.formatMessage(jobMessages[right.id] ?? messages.unknownJob),
+          locale
+        )
+    );
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -498,17 +510,22 @@ const SettingsJobs = () => {
             </tr>
           </thead>
           <Table.TBody>
-            {data?.map((job) => (
+            {orderedJobs?.map((job) => (
               <tr key={`job-list-${job.id}`}>
                 <Table.TD>
                   <div className="flex items-center text-sm leading-5 text-white">
                     <span>
                       {intl.formatMessage(
-                        messages[job.id] ?? messages.unknownJob
+                        jobMessages[job.id] ?? messages.unknownJob
                       )}
                     </span>
                     {job.running && <Spinner className="ml-2 h-5 w-5" />}
                   </div>
+                  {messages[`${job.id}-description`] && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages[`${job.id}-description`])}
+                    </div>
+                  )}
                 </Table.TD>
                 <Table.TD>
                   <Badge

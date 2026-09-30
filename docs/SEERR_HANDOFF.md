@@ -62,6 +62,27 @@ typed correction, override, rebuild, and GAP-recovery contract is documented in
 directly from the Discover Fresh row or the dedicated Fresh page; durable
 Visible/Hidden preferences affect that work queue only.
 
+### Watchlist
+
+The downstream Watchlist remains explicit viewing intent and is enriched with
+the same user's current Jellyfin completion. Completion is owned by a reusable
+per-user typed-media current-state projection, so removing and re-adding
+Watchlist intent does not erase known state. The explicit
+`includeInUserMetrics` flag is independent of authentication or permissions;
+people-oriented selectors exclude opted-out accounts without username
+inference. It is managed individually or through the existing Bulk Edit flow,
+whose single checkbox directly sets the boolean for every selected account.
+Bulk Edit deliberately has no third unchanged state. Ordinary cards show only the
+positive Watched signal while retaining not-watched and unknown as distinct
+operational states. Exact typed identity remains mandatory: same-title Jellyfin
+items with a different TMDB identity must remain unknown.
+The durable identity, privacy, Movie/TV semantics, failure behavior,
+reconciliation jobs, and Activity boundary are documented in
+[Watchlist intent and Jellyfin completion](WATCHLIST.md). Requests, playback,
+availability, and completion never create or remove membership. Cross-user
+enriched views require administrator authority or the purpose-built
+`WATCHLIST_VIEW` permission; `MANAGE_REQUESTS` alone is insufficient.
+
 ### Local harness
 
 The `seerr-harness` workspace is a separate repository for running queue or the

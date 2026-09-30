@@ -171,6 +171,35 @@ describe('autobrr Fresh boundary', () => {
     );
   });
 
+  it('does not invent season evidence from date-named TV releases', () => {
+    for (const sourceTitle of [
+      'The.Price.Is.Right.2026.09.29.1080p.WEB-DL',
+      'The Price Is Right 2026-09-29 1080p WEB-DL',
+      'The Price Is Right 2026 09 29 1080p WEB-DL',
+    ]) {
+      const [release] = parseReleasePage(
+        {
+          data: [
+            row({
+              id: 20,
+              type: 6,
+              title: 'The Price Is Right',
+              torrent_name: sourceTitle,
+              season: 0,
+              episode: 0,
+            }),
+          ],
+          next_cursor: 20,
+        },
+        { id: 7 }
+      ).releases;
+      assert.equal(release.explicitSeason, false);
+      assert.equal(release.explicitSpecial, false);
+      assert.equal(release.seasonNumber, 0);
+      assert.equal(release.episodeNumber, 0);
+    }
+  });
+
   it('fails closed for malformed ordering and cursor boundaries', () => {
     assert.throws(() =>
       parseReleasePage(

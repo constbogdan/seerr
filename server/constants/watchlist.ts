@@ -13,3 +13,12 @@ export const watchlistSorts = [
   'title_desc',
 ] as const;
 export type WatchlistSort = (typeof watchlistSorts)[number];
+
+export const watchlistWatchedFilters = [
+  'not_watched',
+  'watched',
+  'all',
+] as const;
+export type WatchlistWatchedFilter = (typeof watchlistWatchedFilters)[number];
+
+export type WatchState = 'watched' | 'not_watched' | 'unknown';

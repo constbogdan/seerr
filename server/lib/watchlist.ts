@@ -3,11 +3,15 @@ import { MediaType } from '@server/constants/media';
 import {
   watchlistCategories,
   watchlistSorts,
+  watchlistWatchedFilters,
+  type WatchState,
   type WatchlistCategory,
   type WatchlistSort,
+  type WatchlistWatchedFilter,
 } from '@server/constants/watchlist';
 import { getRepository } from '@server/datasource';
 import type { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
 import type { SelectQueryBuilder } from 'typeorm';
@@ -19,12 +23,14 @@ export interface WatchlistQuery {
   page: number;
   category: WatchlistCategory;
   sort: WatchlistSort;
+  watched?: WatchlistWatchedFilter;
 }
 
 export const parseWatchlistQuery = (query: {
   page?: unknown;
   category?: unknown;
   sort?: unknown;
+  watched?: unknown;
 }): WatchlistQuery => {
   const parsedPage = Number(query.page ?? 1);
   const page =
@@ -37,9 +43,17 @@ export const parseWatchlistQuery = (query: {
   const sort = watchlistSorts.includes(query.sort as WatchlistSort)
     ? (query.sort as WatchlistSort)
     : 'added_desc';
+  const watched = watchlistWatchedFilters.includes(
+    query.watched as WatchlistWatchedFilter
+  )
+    ? (query.watched as WatchlistWatchedFilter)
+    : 'not_watched';
 
-  return { page, category, sort };
+  return { page, category, sort, watched };
 };
+
+export const toWatchState = (played?: boolean | null): WatchState =>
+  played === true ? 'watched' : played === false ? 'not_watched' : 'unknown';
 
 export const hasUsablePlexWatchlistIdentity = (
   user: Pick<User, 'plexToken'>
@@ -64,17 +78,45 @@ const addAnimationPredicate = (
 
 export const getLocalWatchlist = async ({
   userId,
+  allUsers = false,
   query,
 }: {
-  userId: number;
+  userId?: number;
+  allUsers?: boolean;
   query: WatchlistQuery;
 }): Promise<WatchlistResponse> => {
   const queryBuilder = getRepository(Watchlist)
     .createQueryBuilder('watchlist')
     .leftJoinAndSelect('watchlist.requestedBy', 'requestedBy')
     .leftJoinAndSelect('watchlist.media', 'media')
-    .addSelect('LOWER(watchlist.title)', 'watchlist_sort_title')
-    .where('watchlist.requestedById = :userId', { userId });
+    .leftJoinAndMapOne(
+      'watchlist.userMediaState',
+      UserMediaState,
+      'userMediaState',
+      `userMediaState.userId = watchlist.requestedById
+        AND userMediaState.mediaType = watchlist.mediaType
+        AND userMediaState.tmdbId = watchlist.tmdbId`
+    )
+    .addSelect('LOWER(watchlist.title)', 'watchlist_sort_title');
+
+  if (allUsers) {
+    queryBuilder.where('requestedBy.includeInUserMetrics = :included', {
+      included: true,
+    });
+  } else {
+    queryBuilder.where('watchlist.requestedById = :userId', { userId });
+  }
+
+  if (query.watched === 'watched') {
+    queryBuilder.andWhere('userMediaState.jellyfinPlayed = :played', {
+      played: true,
+    });
+  } else if (query.watched === 'not_watched') {
+    queryBuilder.andWhere(
+      '(userMediaState.jellyfinPlayed IS NULL OR userMediaState.jellyfinPlayed = :played)',
+      { played: false }
+    );
+  }
 
   if (query.category === 'animation') {
     addAnimationPredicate(queryBuilder);
@@ -108,15 +150,51 @@ export const getLocalWatchlist = async ({
     .skip((query.page - 1) * WATCHLIST_PAGE_SIZE)
     .take(WATCHLIST_PAGE_SIZE);
 
-  const [results, totalResults] = await queryBuilder.getManyAndCount();
-  const unclassifiedItem = await getRepository(Watchlist)
+  const [rows, totalResults] = await queryBuilder.getManyAndCount();
+  const unclassifiedQuery = getRepository(Watchlist)
     .createQueryBuilder('watchlist')
     .select('watchlist.id', 'id')
-    .where('watchlist.requestedById = :userId', { userId })
-    .andWhere('watchlist.genreIds IS NULL')
+    .where('watchlist.genreIds IS NULL');
+  if (!allUsers) {
+    unclassifiedQuery.andWhere('watchlist.requestedById = :userId', {
+      userId,
+    });
+  }
+  if (allUsers) {
+    unclassifiedQuery
+      .leftJoin('watchlist.requestedBy', 'requestedBy')
+      .andWhere('requestedBy.includeInUserMetrics = :included', {
+        included: true,
+      });
+  }
+  const unclassifiedItem = await unclassifiedQuery
     .limit(1)
     .getRawOne<{ id: number }>();
   const hasUnclassifiedItems = Boolean(unclassifiedItem);
+  const results = rows.map((row) => ({
+    id: row.id,
+    ratingKey: row.ratingKey,
+    tmdbId: row.tmdbId,
+    mediaType: row.mediaType,
+    title: row.title,
+    genreIds: row.genreIds,
+    media: row.media,
+    createdAt: row.createdAt,
+    updatedAt: row.updatedAt,
+    watchState: toWatchState(row.userMediaState?.jellyfinPlayed),
+    ...(row.userMediaState?.jellyfinLastPlayedAt && {
+      lastPlayedAt: row.userMediaState.jellyfinLastPlayedAt.toISOString(),
+    }),
+    ...(row.userMediaState?.jellyfinPlayStateSyncedAt && {
+      watchStateSyncedAt:
+        row.userMediaState.jellyfinPlayStateSyncedAt.toISOString(),
+    }),
+    requestedBy: {
+      id: row.requestedBy.id,
+      displayName: row.requestedBy.displayName,
+      avatar: row.requestedBy.avatar,
+    },
+  }));
 
   return {
     page: query.page,
@@ -125,6 +203,7 @@ export const getLocalWatchlist = async ({
     results,
     source: 'local',
     supportsPresentation: true,
+    supportsWatchState: true,
     hasUnclassifiedItems,
   };
 };
@@ -157,6 +236,7 @@ export const getPlexWatchlist = async ({
     })),
     source: 'plex',
     supportsPresentation: false,
+    supportsWatchState: false,
     hasUnclassifiedItems: false,
   };
 };

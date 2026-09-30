@@ -27,6 +27,7 @@ import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
 import {
+  admissionIdentityForResolvedCandidate,
   evaluateMovieAdmission,
   evaluateTvAdmission,
   freshVisibleUntil,
@@ -586,25 +587,65 @@ export class FreshEngine {
           throw new Error('override_not_actionable');
         const effectiveMediaType =
           candidate.effectiveMediaType ?? candidate.mediaType;
-        const identity = recurringIdentityForEvidence({
+        const identity = admissionIdentityForResolvedCandidate({
           ...candidate,
           mediaType: effectiveMediaType,
         });
         if (!identity) throw new Error('override_not_actionable');
         const histories = manager.getRepository(FreshDiscoveryHistory);
-        const history = await histories.findOneBy({
+        let history = await histories.findOneBy({
           mediaType: effectiveMediaType,
           tmdbId: candidate.tmdbId,
           identityKind: identity.identityKind,
           seasonKey: identity.seasonKey,
           specialEpisodeKey: identity.specialEpisodeKey,
         });
-        if (!history) throw new Error('override_not_actionable');
-        if (
-          history.visibleUntil &&
-          history.visibleUntil.getTime() < now.getTime()
-        )
-          throw new Error('history_expired');
+        if (!history) {
+          const observations = await manager
+            .getRepository(FreshObservation)
+            .findBy({ candidateId: candidate.id });
+          const firstObservedAt = observations.reduce(
+            (minimum, observation) =>
+              observation.observedAt < minimum
+                ? observation.observedAt
+                : minimum,
+            candidate.firstObservedAt
+          );
+          const lastObservedAt = observations.reduce(
+            (maximum, observation) =>
+              observation.observedAt > maximum
+                ? observation.observedAt
+                : maximum,
+            candidate.lastObservedAt
+          );
+          history = await histories.save(
+            new FreshDiscoveryHistory({
+              mediaType: effectiveMediaType,
+              tmdbId: candidate.tmdbId,
+              identityKind: identity.identityKind,
+              seasonKey: identity.seasonKey,
+              specialEpisodeKey: identity.specialEpisodeKey,
+              admitted: false,
+              firstObservedAt,
+              lastObservedAt,
+              firstFreshAt: null,
+              visibleUntil: null,
+              activityDate: null,
+              activitySource: 'unavailable',
+              admissionReason:
+                identity.identityKind === 'legacy_tv'
+                  ? 'season_unknown'
+                  : 'not_evaluated',
+              automaticReasons: [
+                identity.identityKind === 'legacy_tv'
+                  ? 'season_unknown'
+                  : 'not_evaluated',
+              ],
+              firstSeenGeneration: candidate.sourceGeneration,
+              lastSeenGeneration: candidate.sourceGeneration,
+            })
+          );
+        }
         const media = await manager
           .getRepository(FreshMedia)
           .findOneByOrFail({ id: candidate.freshMediaId });
@@ -671,7 +712,7 @@ export class FreshEngine {
         if (!candidate.tmdbId || !candidate.freshMediaId)
           throw new Error('override_not_actionable');
         const mediaType = candidate.effectiveMediaType ?? candidate.mediaType;
-        const identity = recurringIdentityForEvidence({
+        const identity = admissionIdentityForResolvedCandidate({
           ...candidate,
           mediaType,
         });
@@ -1495,13 +1536,29 @@ export class FreshEngine {
     seasonDetails?: TmdbSeasonWithEpisodes
   ): Promise<FreshDiscoveryHistory | undefined> {
     const identity = recurringIdentityForEvidence(candidate);
-    if (!identity) return undefined;
     const ordered = [...observations].sort(
       (left, right) => left.observedAt.getTime() - right.observedAt.getTime()
     );
     const first = ordered[0]?.observedAt ?? candidate.firstObservedAt;
     const last = ordered.at(-1)?.observedAt ?? candidate.lastObservedAt;
     const repository = manager.getRepository(FreshDiscoveryHistory);
+    if (!identity) {
+      if (media.mediaType !== 'tv') return undefined;
+      const seriesHistory = await repository.findOneBy({
+        mediaType: 'tv',
+        tmdbId: media.tmdbId,
+        identityKind: 'legacy_tv',
+        seasonKey: -1,
+        specialEpisodeKey: -1,
+      });
+      if (!seriesHistory) return undefined;
+      if (first < seriesHistory.firstObservedAt)
+        seriesHistory.firstObservedAt = first;
+      if (last > seriesHistory.lastObservedAt)
+        seriesHistory.lastObservedAt = last;
+      seriesHistory.lastSeenGeneration = state.generation;
+      return repository.save(seriesHistory);
+    }
     let history = await repository.findOneBy({
       mediaType: media.mediaType,
       tmdbId: media.tmdbId,
@@ -1873,9 +1930,14 @@ export class FreshEngine {
     const now = this.dependencies.now();
     const effective = histories
       .filter((history) => history.lastSeenGeneration === state.generation)
-      .filter((history) => history.firstFreshAt && history.visibleUntil)
+      .filter((history) => history.firstFreshAt)
       .filter(
-        (history) => (history.visibleUntil as Date).getTime() >= now.getTime()
+        (history) =>
+          overridden.has(
+            `${history.identityKind}:${history.seasonKey}:${history.specialEpisodeKey}`
+          ) ||
+          (!!history.visibleUntil &&
+            history.visibleUntil.getTime() >= now.getTime())
       )
       .filter(
         (history) =>

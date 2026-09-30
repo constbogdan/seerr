@@ -22,6 +22,7 @@ type ListViewProps = {
   isReachingEnd?: boolean;
   onScrollBottom: () => void;
   mutateParent?: () => void;
+  showWatchlistOwner?: boolean;
 };
 
 const ListView = ({
@@ -32,6 +33,7 @@ const ListView = ({
   isReachingEnd,
   plexItems,
   mutateParent,
+  showWatchlistOwner = false,
 }: ListViewProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -53,14 +55,22 @@ const ListView = ({
         {plexItems?.map((title, index) => {
           return (
             <li key={`${title.ratingKey}-${index}`}>
-              <TmdbTitleCard
-                id={title.tmdbId}
-                tmdbId={title.tmdbId}
-                type={title.mediaType}
-                isAddedToWatchlist={true}
-                canExpand
-                mutateParent={mutateParent}
-              />
+              <div className="relative">
+                <TmdbTitleCard
+                  id={title.tmdbId}
+                  tmdbId={title.tmdbId}
+                  type={title.mediaType}
+                  isAddedToWatchlist={true}
+                  canExpand
+                  mutateParent={mutateParent}
+                  watchState={title.watchState}
+                  watchlistOwnerName={
+                    showWatchlistOwner
+                      ? title.requestedBy?.displayName
+                      : undefined
+                  }
+                />
+              </div>
             </li>
           );
         })}

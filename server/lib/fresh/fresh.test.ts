@@ -1113,6 +1113,34 @@ describe('persistent Fresh engine', () => {
       }),
       0
     );
+    const admitted = await resolver.setAdmissionOverride(
+      corrected.candidate.id,
+      corrected.candidate.revision,
+      settings,
+      42
+    );
+    const seriesHistory = await dataSource
+      .getRepository(FreshDiscoveryHistory)
+      .findOneByOrFail({
+        mediaType: 'tv',
+        tmdbId: 305251,
+        identityKind: 'legacy_tv',
+        seasonKey: -1,
+        specialEpisodeKey: -1,
+      });
+    assert.equal(admitted.seasonKey, -1);
+    assert.equal(admitted.explicitSeason, false);
+    assert.equal(seriesHistory.admissionReason, 'season_unknown');
+    assert.deepEqual(seriesHistory.automaticReasons, ['season_unknown']);
+    assert.equal(
+      (
+        await dataSource.getRepository(FreshMedia).findOneByOrFail({
+          mediaType: 'tv',
+          tmdbId: 305251,
+        })
+      ).active,
+      true
+    );
 
     await resolver.run(
       { ...settings, baseUrl: 'https://autobrr-generation-2.test' },
@@ -1126,6 +1154,17 @@ describe('persistent Fresh engine', () => {
     assert.equal(reapplied.mediaType, 'movie');
     assert.equal(reapplied.effectiveMediaType, 'tv');
     assert.equal(reapplied.tmdbId, 305251);
+    assert.equal(reapplied.seasonKey, -1);
+    assert.equal(
+      (
+        await dataSource.getRepository(FreshDiscoveryHistory).findOneByOrFail({
+          mediaType: 'tv',
+          tmdbId: 305251,
+          identityKind: 'legacy_tv',
+        })
+      ).lastSeenGeneration,
+      2
+    );
     assert.equal(
       await dataSource.getRepository(FreshManualResolution).countBy({
         sourceEvidenceKey: reapplied.sourceEvidenceKey,
@@ -1562,5 +1601,28 @@ describe('persistent Fresh engine', () => {
       ).show,
       false
     );
+    clock = new Date('2026-10-20T12:00:00.000Z');
+    candidate = await resolver.removeAdmissionOverride(
+      candidate.id,
+      candidate.revision,
+      settings
+    );
+    candidate = await resolver.setAdmissionOverride(
+      candidate.id,
+      candidate.revision,
+      settings,
+      42
+    );
+    history = await dataSource
+      .getRepository(FreshDiscoveryHistory)
+      .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 });
+    const overriddenMedia = await dataSource
+      .getRepository(FreshMedia)
+      .findOneByOrFail({ mediaType: 'movie', tmdbId: 8080 });
+    assert.equal(history.firstFreshAt?.toISOString(), firstFreshAt);
+    assert.equal(history.admissionReason, 'outside_movie_eligibility');
+    assert.deepEqual(history.automaticReasons, ['outside_movie_eligibility']);
+    assert.equal(overriddenMedia.active, true);
+    assert.equal(overriddenMedia.membershipReason, 'override_active');
   });
 });

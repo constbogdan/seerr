@@ -412,6 +412,7 @@ export type JobId =
   | 'availability-sync'
   | 'process-blocklisted-tags'
   | 'watchlist-metadata-backfill'
+  | 'watchlist-play-state-sync'
   | 'fresh-sync'
   | 'fresh-reconciliation';
 
@@ -658,6 +659,9 @@ class Settings {
         },
         'watchlist-metadata-backfill': {
           schedule: '0 */5 * * * *',
+        },
+        'watchlist-play-state-sync': {
+          schedule: '30 */5 * * * *',
         },
         'fresh-sync': {
           schedule: '0 */5 * * * *',

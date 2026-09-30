@@ -3,6 +3,7 @@ import { MediaType } from '@server/constants/media';
 import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import logger from '@server/logger';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
@@ -67,10 +68,13 @@ export class Watchlist implements WatchlistItem {
 
   @ManyToOne(() => Media, (media) => media.watchlists, {
     eager: true,
-    onDelete: 'CASCADE',
+    nullable: true,
+    onDelete: 'SET NULL',
   })
   @Index()
-  public media: Media;
+  public media?: Media | null;
+
+  public userMediaState?: UserMediaState | null;
 
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;
@@ -131,6 +135,7 @@ export class Watchlist implements WatchlistItem {
     return dataSource.transaction(async (manager) => {
       const transactionalWatchlistRepository = manager.getRepository(this);
       const mediaRepository = manager.getRepository(Media);
+      const mediaStateRepository = manager.getRepository(UserMediaState);
       let media = await mediaRepository.findOne({
         where: {
           tmdbId: watchlistRequest.tmdbId,
@@ -155,6 +160,26 @@ export class Watchlist implements WatchlistItem {
 
       await mediaRepository.save(media);
       await transactionalWatchlistRepository.save(watchlist);
+      const existingState = await mediaStateRepository.findOne({
+        where: {
+          user: { id: user.id },
+          mediaType: watchlistRequest.mediaType,
+          tmdbId: watchlistRequest.tmdbId,
+        },
+      });
+      if (!existingState) {
+        await mediaStateRepository.save(
+          new UserMediaState({
+            user,
+            mediaType: watchlistRequest.mediaType,
+            tmdbId: watchlistRequest.tmdbId,
+            media,
+          })
+        );
+      } else if (!existingState.media) {
+        existingState.media = media;
+        await mediaStateRepository.save(existingState);
+      }
       return watchlist;
     });
   }

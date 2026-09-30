@@ -39,7 +39,6 @@ import {
   ExclamationTriangleIcon,
   EyeSlashIcon,
   FilmIcon,
-  MinusCircleIcon,
   PlayIcon,
   StarIcon,
   TicketIcon,
@@ -47,6 +46,7 @@ import {
 import {
   ChevronDoubleDownIcon,
   ChevronDoubleUpIcon,
+  StarIcon as StarIconSolid,
 } from '@heroicons/react/24/solid';
 import { type RatingResponse } from '@server/api/ratings';
 import { IssueStatus } from '@server/constants/issue';
@@ -596,6 +596,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                       buttonType={'ghost'}
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(messages.addtowatchlist)}
                       onClick={onClickWatchlistBtn}
                     >
                       {isUpdating ? (
@@ -612,9 +613,16 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                     <Button
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(
+                        messages.removefromwatchlist
+                      )}
                       onClick={onClickDeleteWatchlistBtn}
                     >
-                      {isUpdating ? <Spinner /> : <MinusCircleIcon />}
+                      {isUpdating ? (
+                        <Spinner />
+                      ) : (
+                        <StarIconSolid className="text-amber-300" />
+                      )}
                     </Button>
                   </Tooltip>
                 )}

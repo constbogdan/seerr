@@ -21,6 +21,7 @@ import { useEffect, useRef, useState } from 'react';
 import Select from 'react-select';
 import useSWR from 'swr';
 import {
+  applyCandidateVisibilityLocally,
   bulkCandidateVisibilityTargets,
   candidatePageSelectionState,
   candidateSelectionScopeKey,
@@ -342,7 +343,7 @@ const CandidateRow = ({
 }: {
   candidate: FreshCandidateDiagnosticRow;
   onResolved: () => Promise<unknown>;
-  onVisibilityChanged: (show: boolean) => Promise<unknown>;
+  onVisibilityChanged: (candidateId: number, show: boolean) => Promise<unknown>;
   selected: boolean;
   onSelectionChange: (selected: boolean) => void;
 }) => {
@@ -468,7 +469,9 @@ const CandidateRow = ({
               candidate={candidate}
               endpoint="dismiss"
               label="Dismiss"
-              onChanged={() => onVisibilityChanged(false)}
+              onChanged={() =>
+                onVisibilityChanged(candidate.candidateId, false)
+              }
               onConflict={onResolved}
             />
           )}
@@ -477,7 +480,7 @@ const CandidateRow = ({
               candidate={candidate}
               endpoint="show"
               label="Show"
-              onChanged={() => onVisibilityChanged(true)}
+              onChanged={() => onVisibilityChanged(candidate.candidateId, true)}
               onConflict={onResolved}
             />
           )}
@@ -589,16 +592,21 @@ const CandidateDiagnostics = ({
   );
   const refreshAfterVisibilityChange = async (
     show: boolean,
-    affectedCount: number
+    affectedIds: number[]
   ) => {
     setSelectedIds([]);
+    await mutate(
+      (current) =>
+        applyCandidateVisibilityLocally(current, affectedIds, show, visibility),
+      { revalidate: false }
+    );
     const removesFromCurrentView =
       (visibility === 'visible' && !show) || (visibility === 'hidden' && show);
     if (data && removesFromCurrentView) {
       const nextPage = nearestCandidatePage(
         page,
         data.pageInfo.results,
-        affectedCount,
+        affectedIds.length,
         data.pageInfo.pageSize
       );
       if (nextPage !== page) {
@@ -606,7 +614,7 @@ const CandidateDiagnostics = ({
         return;
       }
     }
-    await mutate();
+    void mutate();
   };
   const bulkVisibility = async (show: boolean) => {
     const candidates = show ? showTargets : dismissTargets;
@@ -618,7 +626,10 @@ const CandidateDiagnostics = ({
         show,
         candidates,
       });
-      await refreshAfterVisibilityChange(show, candidates.length);
+      await refreshAfterVisibilityChange(
+        show,
+        candidates.map(({ candidateId }) => candidateId)
+      );
     } catch (error) {
       setSelectedIds([]);
       setBulkMessage(
@@ -846,8 +857,8 @@ const CandidateDiagnostics = ({
                 key={candidate.candidateId}
                 candidate={candidate}
                 onResolved={mutate}
-                onVisibilityChanged={(show) =>
-                  refreshAfterVisibilityChange(show, 1)
+                onVisibilityChanged={(candidateId, show) =>
+                  refreshAfterVisibilityChange(show, [candidateId])
                 }
                 selected={selectedIds.includes(candidate.candidateId)}
                 onSelectionChange={(selected) =>

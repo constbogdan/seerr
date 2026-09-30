@@ -5,8 +5,11 @@ import CachedImage from '@app/components/Common/CachedImage';
 import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
 import RequestModal from '@app/components/RequestModal';
+import ActionStateGrid from '@app/components/TitleCard/ActionStateGrid';
+import TitleCardCornerBadge from '@app/components/TitleCard/CornerBadge';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
+import { buildTitleCardStateIndicators } from '@app/components/TitleCard/stateIndicators';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
@@ -17,10 +20,10 @@ import { Transition } from '@headlessui/react';
 import {
   ArrowDownTrayIcon,
   EyeIcon,
-  EyeSlashIcon,
-  MinusCircleIcon,
+  NoSymbolIcon,
   StarIcon,
 } from '@heroicons/react/24/outline';
+import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type { Watchlist } from '@server/entity/Watchlist';
 import type { MediaType } from '@server/models/Search';
@@ -43,17 +46,23 @@ interface TitleCardProps {
   inProgress?: boolean;
   isAddedToWatchlist?: number | boolean;
   mutateParent?: () => void;
+  watchState?: 'watched' | 'not_watched' | 'unknown';
+  watchlistOwnerName?: string;
 }
 
 const messages = defineMessages('components.TitleCard', {
   addToWatchList: 'Add to watchlist',
+  removeFromWatchList: 'Remove from watchlist',
   watchlistSuccess:
     '<strong>{title}</strong> added to watchlist  successfully!',
   watchlistDeleted:
     '<strong>{title}</strong> Removed from watchlist  successfully!',
   watchlistCancel: 'watchlist for <strong>{title}</strong> canceled.',
   watchlistError: 'Something went wrong. Please try again.',
+  watched: 'Watched',
 });
+
+const watchlistIconClassName = '!h-[1.4375rem] !w-[1.4375rem] text-amber-300';
 
 const TitleCard = ({
   id,
@@ -67,6 +76,8 @@ const TitleCard = ({
   inProgress = false,
   canExpand = false,
   mutateParent,
+  watchState,
+  watchlistOwnerName,
 }: TitleCardProps) => {
   const isTouch = useIsTouch();
   const intl = useIntl();
@@ -314,6 +325,114 @@ const TitleCard = ({
     type: 'or',
   });
 
+  const stateIndicators = buildTitleCardStateIndicators({
+    currentStatus,
+    watchState,
+    inProgress,
+  });
+
+  const watchlistAction = toggleWatchlist
+    ? {
+        label: intl.formatMessage(messages.addToWatchList),
+        onClick: onClickWatchlistBtn,
+        icon: <StarIcon className={watchlistIconClassName} />,
+      }
+    : {
+        label: intl.formatMessage(messages.removeFromWatchList),
+        onClick: onClickDeleteWatchlistBtn,
+        icon: <StarIconSolid className={watchlistIconClassName} />,
+      };
+  const canAddToBlocklist =
+    currentStatus !== MediaStatus.PROCESSING &&
+    currentStatus !== MediaStatus.AVAILABLE &&
+    currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
+    currentStatus !== MediaStatus.PENDING;
+  const blocklistAction =
+    currentStatus === MediaStatus.BLOCKLISTED
+      ? {
+          label: intl.formatMessage(globalMessages.removefromBlocklist),
+          onClick: onClickShowBlocklistBtn,
+          icon: <EyeIcon className="h-4 w-4 sm:h-5 sm:w-5" />,
+        }
+      : canAddToBlocklist
+        ? {
+            label: intl.formatMessage(globalMessages.addToBlocklist),
+            onClick: () => setShowBlocklistModal(true),
+            icon: <NoSymbolIcon className="h-4 w-4 sm:h-5 sm:w-5" />,
+          }
+        : undefined;
+  const rightSideActions = showDetail
+    ? [
+        ...(currentStatus !== MediaStatus.BLOCKLISTED &&
+        user?.userType !== UserType.PLEX
+          ? [
+              {
+                id: 'watchlist',
+                content: (
+                  <Tooltip content={watchlistAction.label}>
+                    <Button
+                      buttonType="ghost"
+                      className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
+                      buttonSize="sm"
+                      aria-label={watchlistAction.label}
+                      onClick={watchlistAction.onClick}
+                    >
+                      {watchlistAction.icon}
+                    </Button>
+                  </Tooltip>
+                ),
+              },
+            ]
+          : []),
+        ...(showHideButton && blocklistAction
+          ? [
+              {
+                id: 'blocklist',
+                content: (
+                  <Tooltip content={blocklistAction.label}>
+                    <Button
+                      buttonType="ghost"
+                      className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
+                      buttonSize="sm"
+                      aria-label={blocklistAction.label}
+                      onClick={blocklistAction.onClick}
+                    >
+                      {blocklistAction.icon}
+                    </Button>
+                  </Tooltip>
+                ),
+              },
+            ]
+          : []),
+      ]
+    : [];
+  const rightSideStates = stateIndicators.map((indicator) => ({
+    id: indicator.id,
+    content: (
+      <div
+        className={`z-40 flex ${
+          indicator.id === 'availability' ? 'pointer-events-none' : ''
+        }`}
+      >
+        <StatusBadgeMini
+          status={indicator.status}
+          inProgress={indicator.inProgress}
+          label={
+            indicator.id === 'watched'
+              ? intl.formatMessage(messages.watched)
+              : undefined
+          }
+          shrink
+        />
+      </div>
+    ),
+  }));
+  const canRequestTitle =
+    showRequestButton &&
+    (!currentStatus ||
+      currentStatus === MediaStatus.UNKNOWN ||
+      currentStatus === MediaStatus.DELETED);
+
   return (
     <div
       className={canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'}
@@ -385,88 +504,83 @@ const TitleCard = ({
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             fill
           />
-          <div className="absolute left-0 right-0 flex items-center justify-between p-2">
-            <div
-              className={`pointer-events-none z-40 self-start rounded-full border shadow-md ${
-                mediaType === 'movie' || mediaType === 'collection'
-                  ? 'border-blue-500 bg-blue-600/80'
-                  : 'border-purple-600 bg-purple-600/80'
-              }`}
-            >
-              <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-white sm:h-5">
-                {mediaType === 'movie'
-                  ? intl.formatMessage(globalMessages.movie)
-                  : mediaType === 'collection'
-                    ? intl.formatMessage(globalMessages.collection)
-                    : intl.formatMessage(globalMessages.tvshow)}
-              </div>
-            </div>
-            {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
-              <div className="flex flex-col gap-1">
-                {user?.userType !== UserType.PLEX &&
-                  (toggleWatchlist ? (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickWatchlistBtn}
-                    >
-                      <StarIcon className={'h-3 text-amber-300'} />
-                    </Button>
-                  ) : (
-                    <Button
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickDeleteWatchlistBtn}
-                    >
-                      <MinusCircleIcon className={'h-3'} />
-                    </Button>
-                  ))}
-                {showHideButton &&
-                  currentStatus !== MediaStatus.PROCESSING &&
-                  currentStatus !== MediaStatus.AVAILABLE &&
-                  currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
-                  currentStatus !== MediaStatus.PENDING && (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={() => setShowBlocklistModal(true)}
-                    >
-                      <EyeSlashIcon className={'h-3'} />
-                    </Button>
-                  )}
-              </div>
-            )}
-            {showDetail &&
-              showHideButton &&
-              currentStatus == MediaStatus.BLOCKLISTED && (
-                <Tooltip
-                  content={intl.formatMessage(
-                    globalMessages.removefromBlocklist
-                  )}
+          <div
+            className="pointer-events-none absolute inset-0 z-30 p-2"
+            data-testid="title-card-corner-frame"
+          >
+            <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_1fr_auto] gap-x-2">
+              <div
+                className="col-start-1 row-start-1 min-w-0 self-start justify-self-start"
+                data-testid="title-card-classification-state"
+              >
+                <TitleCardCornerBadge
+                  tone={
+                    mediaType === 'movie' || mediaType === 'collection'
+                      ? 'movie'
+                      : 'series'
+                  }
                 >
-                  <Button
-                    buttonType={'ghost'}
-                    className="z-40"
-                    buttonSize={'sm'}
-                    onClick={() => onClickShowBlocklistBtn()}
-                  >
-                    <EyeIcon className={'h-3'} />
-                  </Button>
-                </Tooltip>
-              )}
-            {currentStatus && currentStatus !== MediaStatus.UNKNOWN && (
-              <div className="flex flex-col items-center gap-1">
-                <div className="pointer-events-none z-40 flex">
-                  <StatusBadgeMini
-                    status={currentStatus}
-                    inProgress={inProgress}
-                    shrink
-                  />
-                </div>
+                  {mediaType === 'movie'
+                    ? intl.formatMessage(globalMessages.movie)
+                    : mediaType === 'collection'
+                      ? intl.formatMessage(globalMessages.collection)
+                      : intl.formatMessage(globalMessages.tvshow)}
+                </TitleCardCornerBadge>
               </div>
-            )}
+              <div
+                className="col-start-2 row-start-1 self-start justify-self-end"
+                data-testid="title-card-action-state-region"
+              >
+                <ActionStateGrid
+                  actions={rightSideActions}
+                  states={rightSideStates}
+                />
+              </div>
+              {watchlistOwnerName && (
+                <div
+                  className="col-start-1 row-start-3 min-w-0 self-end justify-self-start"
+                  data-testid="title-card-owner-region"
+                >
+                  <TitleCardCornerBadge className="max-w-full" tone="owner">
+                    {watchlistOwnerName}
+                  </TitleCardCornerBadge>
+                </div>
+              )}
+              {canRequestTitle && (
+                <Transition
+                  as={Fragment}
+                  show={!image || showDetail || showRequestModal}
+                  enter="transition-opacity"
+                  enterFrom="opacity-0"
+                  enterTo="opacity-100"
+                  leave="transition-opacity"
+                  leaveFrom="opacity-100"
+                  leaveTo="opacity-0"
+                >
+                  <div
+                    className="pointer-events-auto col-start-2 row-start-3 self-end justify-self-end"
+                    data-testid="title-card-request-region"
+                  >
+                    <Tooltip
+                      content={intl.formatMessage(globalMessages.request)}
+                    >
+                      <Button
+                        buttonType="primary"
+                        buttonSize="sm"
+                        aria-label={intl.formatMessage(globalMessages.request)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setShowRequestModal(true);
+                        }}
+                        className="z-40 !h-8 !w-8 !rounded-md !border-transparent !bg-orange-500/90 !p-1.5 !text-white shadow-md hover:!border-transparent hover:!bg-orange-400 focus:!border-transparent focus:!ring-orange-300 active:!bg-orange-600"
+                      >
+                        <ArrowDownTrayIcon className="h-4 w-4" />
+                      </Button>
+                    </Tooltip>
+                  </div>
+                </Transition>
+              )}
+            </div>
           </div>
           <Transition
             as={Fragment}
@@ -511,12 +625,7 @@ const TitleCard = ({
                 <div className="flex h-full w-full items-end">
                   <div
                     className={`px-2 text-white ${
-                      !showRequestButton ||
-                      (currentStatus &&
-                        currentStatus !== MediaStatus.UNKNOWN &&
-                        currentStatus !== MediaStatus.DELETED)
-                        ? 'pb-2'
-                        : 'pb-11'
+                      canRequestTitle ? 'pb-11' : 'pb-2'
                     }`}
                   >
                     {year && <div className="text-sm font-medium">{year}</div>}
@@ -537,13 +646,7 @@ const TitleCard = ({
                     <div
                       className="whitespace-normal text-xs"
                       style={{
-                        WebkitLineClamp:
-                          !showRequestButton ||
-                          (currentStatus &&
-                            currentStatus !== MediaStatus.UNKNOWN &&
-                            currentStatus !== MediaStatus.DELETED)
-                            ? 5
-                            : 3,
+                        WebkitLineClamp: canRequestTitle ? 3 : 5,
                         display: '-webkit-box',
                         overflow: 'hidden',
                         WebkitBoxOrient: 'vertical',
@@ -555,26 +658,6 @@ const TitleCard = ({
                   </div>
                 </div>
               </Link>
-
-              <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2 py-2">
-                {showRequestButton &&
-                  (!currentStatus ||
-                    currentStatus === MediaStatus.UNKNOWN ||
-                    currentStatus === MediaStatus.DELETED) && (
-                    <Button
-                      buttonType="primary"
-                      buttonSize="sm"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setShowRequestModal(true);
-                      }}
-                      className="h-7 w-full"
-                    >
-                      <ArrowDownTrayIcon />
-                      <span>{intl.formatMessage(globalMessages.request)}</span>
-                    </Button>
-                  )}
-              </div>
             </div>
           </Transition>
         </div>
