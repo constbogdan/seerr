@@ -23,7 +23,7 @@ export default class FreshAdmissionOverride {
   @Column({ type: 'varchar', length: 8 }) public mediaType: 'movie' | 'tv';
   @Column({ type: 'int' }) public tmdbId: number;
   @Column({ type: 'varchar', length: 16 })
-  public identityKind: 'movie' | 'season' | 'special';
+  public identityKind: 'movie' | 'season' | 'special' | 'legacy_tv';
   @Column({ type: 'int', default: -1 }) public seasonKey = -1;
   @Column({ type: 'int', default: -1 }) public specialEpisodeKey = -1;
   @Column({ default: true }) public active: boolean = true;

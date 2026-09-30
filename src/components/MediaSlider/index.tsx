@@ -201,7 +201,14 @@ const MediaSlider = ({
           </div>
         )}
         {headerAction && (
-          <div className="ml-2 flex items-center">{headerAction}</div>
+          <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+            <div data-testid="media-slider-header-action">{headerAction}</div>
+            <div
+              aria-hidden="true"
+              className="h-6 w-12 shrink-0"
+              data-testid="media-slider-navigation-reservation"
+            />
+          </div>
         )}
       </div>
       <Slider

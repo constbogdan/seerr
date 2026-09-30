@@ -263,7 +263,7 @@ describe('user metrics inclusion', () => {
     );
   });
 
-  it('bulk-updates metrics inclusion or leaves it unchanged', async () => {
+  it('requires and bulk-updates the boolean metrics value', async () => {
     const { agent } = await loginAs('admin@seerr.dev', 'test1234');
     const first = await getRepository(User).save(
       new User({
@@ -282,11 +282,11 @@ describe('user metrics inclusion', () => {
       })
     );
 
-    const unchanged = await agent.put('/user').send({
+    const missing = await agent.put('/user').send({
       ids: [String(first.id), String(second.id)],
       permissions: 0,
     });
-    assert.equal(unchanged.status, 200);
+    assert.equal(missing.status, 400);
     assert.equal(
       (await getRepository(User).findOneByOrFail({ id: first.id }))
         .includeInUserMetrics,

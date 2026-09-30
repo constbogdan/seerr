@@ -5071,7 +5071,11 @@ paths:
                   type: integer
                 includeInUserMetrics:
                   type: boolean
-                  description: Optional bulk update. Omit to leave metrics inclusion unchanged.
+                  description: Boolean value applied to every selected user.
+              required:
+                - ids
+                - permissions
+                - includeInUserMetrics
       responses:
         '200':
           description: Successfully updated user details

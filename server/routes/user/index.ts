@@ -534,15 +534,12 @@ export const canMakePermissionsChange = (
 router.put<
   Record<string, never>,
   Partial<User>[],
-  { ids: string[]; permissions: number; includeInUserMetrics?: boolean }
+  { ids: string[]; permissions: number; includeInUserMetrics: boolean }
 >('/', isAuthenticated(Permission.MANAGE_USERS), async (req, res, next) => {
   try {
     const isOwner = req.user?.id === 1;
 
-    if (
-      req.body.includeInUserMetrics !== undefined &&
-      typeof req.body.includeInUserMetrics !== 'boolean'
-    ) {
+    if (typeof req.body.includeInUserMetrics !== 'boolean') {
       return next({
         status: 400,
         message: 'includeInUserMetrics must be a boolean.',
@@ -571,9 +568,7 @@ router.put<
         return userRepository.save(<User>{
           ...user,
           ...{ permissions: req.body.permissions },
-          ...(req.body.includeInUserMetrics !== undefined && {
-            includeInUserMetrics: req.body.includeInUserMetrics,
-          }),
+          includeInUserMetrics: req.body.includeInUserMetrics,
         });
       })
     );

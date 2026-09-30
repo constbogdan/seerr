@@ -616,6 +616,25 @@ describe('Fresh route authorization and safe responses', () => {
           mediaDate: '2025-01-01',
         })
       );
+    const seasonUnknownMedia = await dataSource.getRepository(FreshMedia).save(
+      new FreshMedia({
+        mediaType: 'tv',
+        tmdbId: 305251,
+        admitted: false,
+        active: false,
+        membershipReason: 'season_unknown',
+        automaticReasons: ['season_unknown'],
+        lastMatchedGeneration: 3,
+        firstSeenAt: new Date('2026-09-20T00:00:00Z'),
+        lastSeenAt: new Date('2026-09-25T00:00:00Z'),
+        resolvedAt: new Date('2026-09-25T00:00:00Z'),
+        metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
+        displayTitle: 'FIA WEC',
+        sortTitle: 'fia wec',
+        originalTitle: 'FIA WEC',
+        mediaDate: '2012-01-01',
+      })
+    );
     const candidates = await dataSource.getRepository(FreshCandidate).save([
       new FreshCandidate({
         sourceGeneration: 3,
@@ -664,6 +683,25 @@ describe('Fresh route authorization and safe responses', () => {
         firstObservedAt: new Date('2026-09-20T00:00:00Z'),
         lastObservedAt: new Date('2026-09-25T00:00:00Z'),
       }),
+      new FreshCandidate({
+        sourceGeneration: 3,
+        mediaType: 'movie',
+        effectiveMediaType: 'tv',
+        normalizedTitle: 'fia wec 2026 6 hours of fuji',
+        displayTitle: 'FIA WEC 2026 6 Hours Of Fuji',
+        matchYear: 2026,
+        seasonKey: -1,
+        specialEpisodeKey: -1,
+        explicitSeason: false,
+        explicitSpecial: false,
+        status: FreshCandidateStatus.RESOLVED,
+        automaticStatus: FreshCandidateStatus.NO_MATCH,
+        sourceEvidenceKey: 'fia-wec-source-key',
+        tmdbId: seasonUnknownMedia.tmdbId,
+        freshMediaId: seasonUnknownMedia.id,
+        firstObservedAt: new Date('2026-09-20T00:00:00Z'),
+        lastObservedAt: new Date('2026-09-25T00:00:00Z'),
+      }),
     ]);
     await dataSource.getRepository(FreshObservation).save(
       new FreshObservation({
@@ -687,6 +725,16 @@ describe('Fresh route authorization and safe responses', () => {
         mediaType: 'movie',
         tmdbId: 9001,
         canonicalTitle: 'Legacy Evidence',
+        active: true,
+      })
+    );
+    await dataSource.getRepository(FreshManualResolution).save(
+      new FreshManualResolution({
+        sourceEvidenceVersion: 1,
+        sourceEvidenceKey: 'fia-wec-source-key',
+        mediaType: 'tv',
+        tmdbId: 305251,
+        canonicalTitle: 'FIA WEC',
         active: true,
       })
     );
@@ -729,9 +777,16 @@ describe('Fresh route authorization and safe responses', () => {
     assert.equal(prioritized.status, 200);
     assert.deepEqual(
       prioritized.body.results
-        .slice(0, 3)
+        .slice(0, 2)
         .map((row: { displayStatus: string }) => row.displayStatus),
-      ['no_match', 'ambiguous', 'needs_attention']
+      ['no_match', 'ambiguous']
+    );
+    assert.equal(
+      prioritized.body.results.some(
+        (row: { displayStatus: string }) =>
+          row.displayStatus === 'needs_attention'
+      ),
+      true
     );
 
     const attention = await request(app)
@@ -775,7 +830,8 @@ describe('Fresh route authorization and safe responses', () => {
       .set('x-test-role', 'admin');
     assert.equal(unknown.status, 200);
     assert.equal(unknown.body.results.length, 1);
-    assert.equal(unknown.body.results[0].displayStatus, 'eligibility_unknown');
+    assert.equal(unknown.body.results[0].displayStatus, 'reviewable');
+    assert.equal(unknown.body.results[0].actions.admit, false);
     assert.deepEqual(unknown.body.results[0].sourceTitleSamples, [
       'Legacy.Evidence.2025.1080p.WEB-DL-GROUP',
     ]);
@@ -795,11 +851,16 @@ describe('Fresh route authorization and safe responses', () => {
       )
       .set('x-test-role', 'admin');
     assert.equal(unknownSeason.status, 200);
-    assert.equal(unknownSeason.body.results.length, 1);
-    assert.equal(
-      unknownSeason.body.results[0].displayTitle,
-      'Ambiguous Series'
+    assert.equal(unknownSeason.body.results.length, 2);
+    const fia = unknownSeason.body.results.find(
+      (row: { displayTitle: string }) => row.displayTitle === 'FIA WEC'
     );
+    assert.equal(fia.parsedTitle, 'FIA WEC 2026 6 Hours Of Fuji');
+    assert.equal(fia.mediaType, 'tv');
+    assert.equal(fia.tmdbId, 305251);
+    assert.equal(fia.seasonNumber, undefined);
+    assert.equal(fia.displayStatus, 'reviewable');
+    assert.equal(fia.actions.admit, true);
 
     const resolutionFamily = await request(app)
       .get(
@@ -847,7 +908,7 @@ describe('Fresh route authorization and safe responses', () => {
         '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority'
       )
       .set('x-test-role', 'admin');
-    assert.equal(visible.body.results.length, 3);
+    assert.equal(visible.body.results.length, 4);
     assert.equal(
       visible.body.results.some(
         (row: { candidateId: number }) => row.candidateId === candidates[0].id
@@ -867,7 +928,7 @@ describe('Fresh route authorization and safe responses', () => {
     const all = await request(app)
       .get('/settings/fresh/candidates?visibility=all')
       .set('x-test-role', 'admin');
-    assert.equal(all.body.results.length, 4);
+    assert.equal(all.body.results.length, 5);
     const shown = await request(app)
       .post(`/settings/fresh/candidates/${candidates[0].id}/show`)
       .set('x-test-role', 'admin')
@@ -876,7 +937,7 @@ describe('Fresh route authorization and safe responses', () => {
     const restored = await request(app)
       .get('/settings/fresh/candidates')
       .set('x-test-role', 'admin');
-    assert.equal(restored.body.results.length, 4);
+    assert.equal(restored.body.results.length, 5);
 
     const bulkCandidates = await Promise.all(
       candidates
@@ -983,5 +1044,103 @@ describe('Fresh route authorization and safe responses', () => {
       .get('/settings/fresh/candidates?manualResolution=sometimes')
       .set('x-test-role', 'admin');
     assert.equal(invalidFacet.status, 400);
+  });
+
+  it('uses canonical display casing without rewriting parsed or source evidence', async () => {
+    await dataSource.getRepository(FreshObservation).clear();
+    await dataSource.getRepository(FreshCandidate).clear();
+    await dataSource.getRepository(FreshMedia).clear();
+    await dataSource.getRepository(FreshSyncState).save(
+      new FreshSyncState({
+        id: 1,
+        generation: 4,
+        sourceFingerprint: 'canonical-title-fixture',
+      })
+    );
+    const media = await dataSource.getRepository(FreshMedia).save(
+      new FreshMedia({
+        mediaType: 'movie',
+        tmdbId: 1480387,
+        active: false,
+        admitted: false,
+        lastMatchedGeneration: 4,
+        firstSeenAt: new Date('2026-09-29T00:00:00Z'),
+        lastSeenAt: new Date('2026-09-29T00:00:00Z'),
+        resolvedAt: new Date('2026-09-29T00:00:00Z'),
+        metadataRefreshedAt: new Date('2026-09-29T00:00:00Z'),
+        displayTitle: 'undertone',
+        sortTitle: 'undertone',
+        originalTitle: 'undertone',
+        mediaDate: '2026-01-01',
+      })
+    );
+    const resolved = await dataSource.getRepository(FreshCandidate).save(
+      new FreshCandidate({
+        sourceGeneration: 4,
+        mediaType: 'movie',
+        effectiveMediaType: 'movie',
+        normalizedTitle: 'undertone',
+        displayTitle: 'Undertone',
+        matchYear: 2026,
+        status: FreshCandidateStatus.RESOLVED,
+        sourceEvidenceKey: 'undertone-source-key',
+        tmdbId: 1480387,
+        freshMediaId: media.id,
+        firstObservedAt: new Date('2026-09-29T00:00:00Z'),
+        lastObservedAt: new Date('2026-09-29T00:00:00Z'),
+      })
+    );
+    await dataSource.getRepository(FreshObservation).save(
+      new FreshObservation({
+        sourceGeneration: 4,
+        releaseId: 'undertone-release',
+        filterId: 7,
+        candidateId: resolved.id,
+        mediaType: 'movie',
+        title: 'Undertone',
+        sourceTitle: 'Undertone.2026.1080p.WEB-DL-GROUP',
+        normalizedTitle: 'undertone',
+        year: 2026,
+        availabilityType: 'digital',
+        observedAt: new Date('2026-09-29T00:00:00Z'),
+      })
+    );
+    await dataSource.getRepository(FreshCandidate).save(
+      new FreshCandidate({
+        sourceGeneration: 4,
+        mediaType: 'movie',
+        normalizedTitle: 'unresolved evidence',
+        displayTitle: 'Unresolved Evidence',
+        matchYear: 2026,
+        status: FreshCandidateStatus.NO_MATCH,
+        sourceEvidenceKey: 'unresolved-title-key',
+        firstObservedAt: new Date('2026-09-29T00:00:00Z'),
+        lastObservedAt: new Date('2026-09-29T00:00:00Z'),
+      })
+    );
+
+    const canonical = await request(app)
+      .get('/settings/fresh/candidates?search=undertone&visibility=all')
+      .set('x-test-role', 'admin');
+    assert.equal(canonical.status, 200);
+    assert.equal(canonical.body.results.length, 1);
+    assert.equal(canonical.body.results[0].displayTitle, 'Undertone');
+    assert.equal(canonical.body.results[0].parsedTitle, 'undertone');
+    assert.deepEqual(canonical.body.results[0].sourceTitleSamples, [
+      'Undertone.2026.1080p.WEB-DL-GROUP',
+    ]);
+
+    const unresolved = await request(app)
+      .get(
+        '/settings/fresh/candidates?search=unresolved%20evidence&visibility=all'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(unresolved.status, 200);
+    assert.equal(unresolved.body.results.length, 1);
+    assert.equal(
+      unresolved.body.results[0].displayTitle,
+      'Unresolved Evidence'
+    );
+    assert.equal(unresolved.body.results[0].parsedTitle, 'Unresolved Evidence');
   });
 });

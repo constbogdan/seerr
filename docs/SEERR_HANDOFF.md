@@ -71,7 +71,8 @@ Watchlist intent does not erase known state. The explicit
 `includeInUserMetrics` flag is independent of authentication or permissions;
 people-oriented selectors exclude opted-out accounts without username
 inference. It is managed individually or through the existing Bulk Edit flow,
-whose Unchanged state preserves mixed selections. Ordinary cards show only the
+whose single checkbox directly sets the boolean for every selected account.
+Bulk Edit deliberately has no third unchanged state. Ordinary cards show only the
 positive Watched signal while retaining not-watched and unknown as distinct
 operational states. Exact typed identity remains mandatory: same-title Jellyfin
 items with a different TMDB identity must remain unknown.

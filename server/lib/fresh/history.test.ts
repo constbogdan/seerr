@@ -1,6 +1,7 @@
 import type { TmdbSeasonWithEpisodes } from '@server/api/themoviedb/interfaces';
 import FreshMedia from '@server/entity/FreshMedia';
 import {
+  admissionIdentityForResolvedCandidate,
   evaluateMovieAdmission,
   evaluateTvAdmission,
   recurringIdentityForEvidence,
@@ -148,6 +149,16 @@ describe('Fresh discovery history policy', () => {
         explicitSpecial: false,
       }),
       undefined
+    );
+    assert.deepEqual(
+      admissionIdentityForResolvedCandidate({
+        mediaType: 'tv',
+        seasonKey: -1,
+        specialEpisodeKey: -1,
+        explicitSeason: false,
+        explicitSpecial: false,
+      }),
+      { identityKind: 'legacy_tv', seasonKey: -1, specialEpisodeKey: -1 }
     );
   });
 

@@ -24,7 +24,10 @@ const FreshSlider = () => {
       linkUrl="/fresh"
       hideWhenEmpty
       headerAction={
-        <CandidateDiagnosticsShortcut show={hasPermission(Permission.ADMIN)} />
+        <CandidateDiagnosticsShortcut
+          show={hasPermission(Permission.ADMIN)}
+          bordered={false}
+        />
       }
     />
   );

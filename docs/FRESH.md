@@ -41,10 +41,14 @@ admission override, and effective presentation as separate concepts.
   evidence and can correct both type and ID without rewriting parsed evidence.
 - **Reset resolution** deactivates that human mapping and restores the current
   automatic result. It does not erase source evidence or discovery history.
-- **Admit to Fresh** overrides a stable automatic policy exclusion only after a
-  typed identity and Movie/Season/Special identity exist. It cannot override No
-  Match, Ambiguous, transient provider failure, unknown TV season, an already
-  active item, or expired history.
+- **Admit to Fresh** overrides ordinary automatic admission policy only after a
+  valid typed canonical identity exists. Movie, explicit Season/Special, and
+  typed TV-series identities are supported. A TV-series override with missing
+  season evidence is stored as series-level `legacy_tv`; it preserves **Season
+  Unknown** and never fabricates a season. No Match, Ambiguous, transient
+  provider failure, unresolved identity, invalid TMDB identity, or an untyped
+  numeric ID cannot be admitted directly. Automatic reasons remain visible and
+  truthful while an override determines effective membership.
 - **Remove override** restores automatic policy. Re-adding an override reuses
   the original history and cannot create a new Fresh clock.
 - **Dismiss / Show** controls only whether a stable source-evidence identity is
@@ -63,8 +67,8 @@ Candidate Diagnostics uses these operational categories:
 
 | Category | Meaning | Corrective actions |
 | --- | --- | --- |
-| Needs Attention | Identity cannot be used safely: No Match, Ambiguous, a technical identity conflict, or resolved TV evidence without a durable Season/Special identity. | Resolve to an exact typed TMDB identity (or reset an existing manual resolution where present). |
-| Reviewable | The typed identity is stable but automatic admission policy excluded it. | Admit to Fresh when the durable history and invariants permit an override; remove an existing override when present. |
+| Needs Attention | Identity cannot be used safely: No Match, Ambiguous, or a technical identity conflict. | Resolve to an exact typed TMDB identity (or reset an existing manual resolution where present). |
+| Reviewable | The typed identity is stable but automatic admission policy excluded it, including an old Movie, content-policy exclusion, or TV series with missing season evidence. | Admit to Fresh deliberately; remove an existing override when present. |
 | Active Fresh | The durable identity is currently admitted and visible. | No admission correction is required. |
 | Historical | Retained evidence is transient, pending, still resolving, expired, or inactive for the current source generation. | Informational by default; exact typed correction remains available for safely recognized inactive evidence. |
 
@@ -72,8 +76,16 @@ Dismiss is never considered a corrective action and therefore does not, by
 itself, place a row in **Needs Attention**. No Match and Ambiguous candidates
 must be resolved before they can be admitted. Stable typed policy exclusions,
 including movie eligibility and content-policy exclusions, may retain **Admit
-to Fresh**; an override cannot invent identity or reset expired discovery
-history.
+to Fresh**; an override cannot invent identity and does not erase the automatic
+reason.
+
+Date-named TV releases such as `The.Price.Is.Right.2026.09.29` remain explicit
+source evidence but do not currently establish a season. The autobrr boundary
+does not reinterpret the date as `SxxEyy`, and Seerr's current TMDB adapter can
+only fetch episodes after a season is known. Searching arbitrary seasons would
+weaken ambiguity and request bounds, so this case remains conservatively
+**Season Unknown** unless an administrator supplies typed identity; no season
+is guessed.
 
 The **Source Samples** column is derived from bounded, sanitized
 `FreshObservation.sourceTitle` evidence. It remains distinct from the parsed
@@ -88,8 +100,9 @@ then confirms the revision-bound server result without a disruptive full-table
 reload.
 
 Administrators can reach Candidate Diagnostics through an icon-only,
-keyboard-accessible shortcut beside the Fresh navigation control on Discover
-and inline with the filters on `/fresh`. Its accessible label and tooltip are
+keyboard-accessible shortcut at the far right of the Discover Fresh row header
+and inline with the filters on `/fresh`. The Discover shortcut is separate from
+the Fresh-page navigation control. Its accessible label and tooltip are
 **Candidate Diagnostics**, and it opens Fresh Settings at the stable
 `#candidates` target. Non-administrators do not receive the shortcut.
 

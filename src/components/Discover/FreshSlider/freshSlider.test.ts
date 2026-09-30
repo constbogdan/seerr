@@ -21,6 +21,10 @@ describe('Fresh native pagination integration', () => {
     path.join(__dirname, '../../MediaSlider/index.tsx'),
     'utf8'
   );
+  const sliderComponent = readFileSync(
+    path.join(__dirname, '../../Slider/index.tsx'),
+    'utf8'
+  );
 
   it('uses the ordinary URL-driven MediaSlider for the Fresh row', () => {
     assert.match(slider, /url=\{FRESH_API_PATH\}/);
@@ -28,6 +32,7 @@ describe('Fresh native pagination integration', () => {
     assert.doesNotMatch(slider, /items=|itemsLoading=|useSWR/);
     assert.match(slider, /hasPermission\(Permission\.ADMIN\)/);
     assert.match(slider, /headerAction=/);
+    assert.match(slider, /bordered=\{false\}/);
   });
 
   it('renders the Candidate Diagnostics shortcut only for administrators', () => {
@@ -47,8 +52,31 @@ describe('Fresh native pagination integration', () => {
     assert.equal(user, '');
     assert.match(page, /hasPermission\(Permission\.ADMIN\)/);
     assert.match(page, /CandidateDiagnosticsShortcut/);
-    assert.match(mediaSlider, /className="ml-2 flex items-center"/);
-    assert.doesNotMatch(mediaSlider, /className="ml-auto flex items-center"/);
+  });
+
+  it('keeps diagnostics and carousel navigation in separate header regions', () => {
+    assert.match(mediaSlider, /data-testid="media-slider-header-action"/);
+    assert.match(
+      mediaSlider,
+      /data-testid="media-slider-navigation-reservation"/
+    );
+    assert.match(mediaSlider, /className="h-6 w-12 shrink-0"/);
+    assert.ok(
+      mediaSlider.indexOf('media-slider-header-action') <
+        mediaSlider.indexOf('media-slider-navigation-reservation')
+    );
+    assert.match(sliderComponent, /data-testid="media-slider-navigation"/);
+    assert.match(sliderComponent, /w-12 justify-end/);
+    assert.match(
+      sliderComponent,
+      /onClick=\{\(\) => slide\(Direction\.LEFT\)\}/
+    );
+    assert.match(
+      sliderComponent,
+      /onClick=\{\(\) => slide\(Direction\.RIGHT\)\}/
+    );
+    assert.match(sliderComponent, /disabled=\{scrollPos\.isStart\}/);
+    assert.match(sliderComponent, /disabled=\{scrollPos\.isEnd\}/);
   });
 
   it('uses useDiscover for the complete paginated Fresh page', () => {

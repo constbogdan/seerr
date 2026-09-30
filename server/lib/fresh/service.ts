@@ -20,7 +20,10 @@ import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
 import { freshEngine } from '@server/lib/fresh/engine';
 import { evaluateAdmissionEvidence } from '@server/lib/fresh/membership';
-import { FRESH_SOURCE_EVIDENCE_VERSION } from '@server/lib/fresh/normalize';
+import {
+  FRESH_SOURCE_EVIDENCE_VERSION,
+  normalizeFreshTitle,
+} from '@server/lib/fresh/normalize';
 import type {
   FreshCandidateDiagnosticQuery,
   FreshCandidateDiagnosticResponse,
@@ -48,6 +51,48 @@ const technicalIdentityReasons = [
   'special_identity_ambiguous',
 ];
 
+const candidateDiagnosticTitles = (
+  candidate: FreshCandidate,
+  media?: FreshMedia | null,
+  manual?: FreshManualResolution
+): { displayTitle: string; parsedTitle: string } => {
+  const manualTitle = manual?.canonicalTitle.trim();
+  if (manualTitle)
+    return {
+      displayTitle: manualTitle,
+      parsedTitle: candidate.displayTitle,
+    };
+
+  const canonicalTitle = media?.displayTitle.trim();
+  if (!canonicalTitle)
+    return {
+      displayTitle: candidate.displayTitle,
+      parsedTitle: candidate.displayTitle,
+    };
+
+  const candidateTitle = candidate.displayTitle.trim();
+  const canonicalHasDisplayCase =
+    canonicalTitle !== canonicalTitle.toLocaleLowerCase();
+  const candidatePreservesDisplayCase =
+    candidateTitle !== candidateTitle.toLocaleLowerCase();
+  if (
+    !canonicalHasDisplayCase &&
+    candidatePreservesDisplayCase &&
+    normalizeFreshTitle(canonicalTitle) === candidate.normalizedTitle &&
+    normalizeFreshTitle(candidateTitle) === candidate.normalizedTitle
+  ) {
+    return {
+      displayTitle: candidateTitle,
+      parsedTitle: candidate.normalizedTitle,
+    };
+  }
+
+  return {
+    displayTitle: canonicalTitle,
+    parsedTitle: candidate.displayTitle,
+  };
+};
+
 const diagnosticStatus = (
   candidate: FreshCandidate,
   history?: FreshDiscoveryHistory,
@@ -69,7 +114,8 @@ const diagnosticStatus = (
     (candidate.effectiveMediaType ?? candidate.mediaType) === 'tv' &&
     !history
   )
-    return 'needs_attention';
+    return candidate.tmdbId ? 'reviewable' : 'needs_attention';
+  if (media?.active) return 'active_fresh';
   if (
     history?.firstFreshAt &&
     history.visibleUntil &&
@@ -81,6 +127,13 @@ const diagnosticStatus = (
     media?.membershipReason === 'source_generation_inactive'
   )
     return 'historical';
+  if (
+    candidate.status === FreshCandidateStatus.RESOLVED &&
+    candidate.tmdbId &&
+    media &&
+    !media.active
+  )
+    return 'reviewable';
   if (history && !history.admitted) return 'reviewable';
   if (media?.membershipReason === 'eligibility_unknown')
     return 'eligibility_unknown';
@@ -94,7 +147,6 @@ const diagnosticStatus = (
     contentFilterReasons.includes(media.membershipReason)
   )
     return 'excluded_content_filter';
-  if (media?.active) return 'active_fresh';
   return 'resolved';
 };
 
@@ -131,12 +183,16 @@ const applyDiagnosticStatus = (
     query.andWhere(
       `(candidate.status = :outsideStatus OR
         (candidate.status = :resolvedStatus AND media.admitted = :notAdmitted
-          AND (media.membershipReason IS NULL OR media.membershipReason != :unknownReason)))`,
+          AND (media.membershipReason IS NULL OR media.membershipReason NOT IN (:...nonWindowReasons))))`,
       {
         outsideStatus: FreshCandidateStatus.OUTSIDE_WINDOW,
         resolvedStatus: FreshCandidateStatus.RESOLVED,
         notAdmitted: false,
-        unknownReason: 'eligibility_unknown',
+        nonWindowReasons: [
+          'eligibility_unknown',
+          'season_unknown',
+          ...contentFilterReasons,
+        ],
       }
     );
   else if (status === 'eligibility_unknown')
@@ -153,7 +209,8 @@ const applyDiagnosticStatus = (
         candidate.lastFailureReason IN (:...technicalIdentityReasons) OR
         (candidate.status = :attentionResolved
           AND COALESCE(candidate."effectiveMediaType", candidate."mediaType") = 'tv'
-          AND history.id IS NULL))`,
+          AND history.id IS NULL
+          AND candidate."tmdbId" IS NULL))`,
       {
         attentionStatuses: [
           FreshCandidateStatus.NO_MATCH,
@@ -187,6 +244,7 @@ const applyDiagnosticStatus = (
           reviewableReasons: [
             'outside_eligibility_window',
             'eligibility_unknown',
+            'season_unknown',
             ...contentFilterReasons,
           ],
         }
@@ -1200,23 +1258,25 @@ export class FreshService {
         const canAdmit =
           !override &&
           !!candidate.tmdbId &&
-          !!history &&
           !media?.active &&
-          (!history.visibleUntil ||
-            history.visibleUntil.getTime() >=
-              this.dependencies.now().getTime()) &&
-          ![
-            FreshCandidateStatus.NO_MATCH,
-            FreshCandidateStatus.AMBIGUOUS,
-            FreshCandidateStatus.TRANSIENT_FAILURE,
-            FreshCandidateStatus.UNRESOLVED,
-            FreshCandidateStatus.RESOLVING,
-          ].includes(automaticStatus);
+          (!!manual ||
+            ![
+              FreshCandidateStatus.NO_MATCH,
+              FreshCandidateStatus.AMBIGUOUS,
+              FreshCandidateStatus.TRANSIENT_FAILURE,
+              FreshCandidateStatus.UNRESOLVED,
+              FreshCandidateStatus.RESOLVING,
+            ].includes(automaticStatus));
         const diagnosticVisibility =
           visibilityByKey.get(
             `${candidate.mediaType}:${candidate.sourceEvidenceKey}`
           ) !== false;
         const actionable = canResolve || !!manual || canAdmit || !!override;
+        const diagnosticTitles = candidateDiagnosticTitles(
+          candidate,
+          media,
+          manual
+        );
         const actions = {
           resolve: canResolve,
           resetResolution: !!manual,
@@ -1228,8 +1288,8 @@ export class FreshService {
         return {
           candidateId: candidate.id,
           revision: candidate.revision,
-          displayTitle: media?.displayTitle ?? candidate.displayTitle,
-          parsedTitle: candidate.displayTitle,
+          displayTitle: diagnosticTitles.displayTitle,
+          parsedTitle: diagnosticTitles.parsedTitle,
           parsedMediaType: candidate.mediaType,
           mediaType: effectiveMediaType,
           matchYear: candidate.matchYear || undefined,

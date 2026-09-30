@@ -59,8 +59,9 @@ enabled. The flag is independent of authentication provider, sign-in
 capability, role, permissions, requests, and Jellyfin identity. Administrators
 manage it on the existing User Permissions page through the single checkbox
 **Include in user metrics**, or for selected accounts through the existing
-Bulk Edit dialog. Bulk Edit preserves mixed values when left **Unchanged** and
-can explicitly include or exclude all selected accounts. People-oriented
+Bulk Edit dialog. Bulk Edit presents the same single boolean checkbox: checked
+includes every selected account and unchecked excludes every selected account.
+There is deliberately no third unchanged state. People-oriented
 Watchlist selectors and the **All** scope include only opted-in accounts; no
 username or email inference is used. Owner, media type, watch status, and sort
 preferences are browser-local and safely fall back when stored values become
@@ -98,10 +99,30 @@ Plex Watchlists remain upstream-owned remote projections. They report that
 Jellyfin completion filtering is unsupported rather than pretending a remote
 page was fully filtered locally.
 
-Watchlist, Blocklist, and Request are compact card actions with accessible
-hover/focus labels; Request still opens the existing request flow only on
-activation. Requested, Partially Available, and Available remain presentation
-states rather than being normalized into those actions.
+Watchlist and Blocklist are compact secondary card actions with transparent
+circular hit targets, accessible names, and hover/focus tooltips. Request is
+the compact primary action and still opens the existing request flow only on
+activation. Requested, Partially Available, and Available remain non-clickable
+presentation states; destructive cleanup remains red and distinct. The
+positive **Watched** state uses the cyan Play indicator in the top-right state
+column, while Movie/Series remains top left and owner attribution remains
+bottom left in the all-users view.
+
+| Card element | Semantic class | Interaction / primitive |
+| --- | --- | --- |
+| Watchlist star, Blocklist prohibition icon | Secondary action | Hover-only native `Button` + `Tooltip`; activation mutates the explicit user state. |
+| Request download arrow | Primary action | Native primary `Button` + `Tooltip`; activation opens the existing request modal. |
+| Available, Requested, Partially Available, Processing, Blocklisted | Lifecycle state | Persistent, non-clickable `StatusBadgeMini`. |
+| Movie/Series | Classification | Persistent, non-clickable badge in the top-left region. |
+| Watched | Current user state | Persistent, non-clickable Play indicator in the top-right state column. |
+| Watchlist owner | Attribution | Persistent, non-clickable bottom-left badge in the all-users view. |
+| Error-card cleanup | Destructive action | Red native danger button; it is intentionally not normalized into a neutral state badge. |
+
+The apparent historical “two icon systems” comes from these distinct native
+primitives: outlined 24px Heroicons inside interactive buttons versus solid
+20/24px glyphs inside non-interactive status badges. Shared hit geometry,
+spacing, focus, and tooltip behavior align actions without making states
+clickable or erasing destructive color.
 
 ## Product boundaries
 

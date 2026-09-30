@@ -12,6 +12,10 @@ export type FreshRecurringIdentity =
   | { identityKind: 'season'; seasonKey: number; specialEpisodeKey: -1 }
   | { identityKind: 'special'; seasonKey: 0; specialEpisodeKey: number };
 
+export type FreshAdmissionIdentity =
+  | FreshRecurringIdentity
+  | { identityKind: 'legacy_tv'; seasonKey: -1; specialEpisodeKey: -1 };
+
 export type FreshAdmissionDecision = {
   eligible: boolean;
   reason: string;
@@ -57,6 +61,19 @@ export const recurringIdentityForEvidence = (value: {
   }
   return undefined;
 };
+
+/** A typed TV series may be admitted explicitly without fabricated season data. */
+export const admissionIdentityForResolvedCandidate = (value: {
+  mediaType: 'movie' | 'tv';
+  seasonKey: number;
+  specialEpisodeKey: number;
+  explicitSeason: boolean;
+  explicitSpecial: boolean;
+}): FreshAdmissionIdentity | undefined =>
+  recurringIdentityForEvidence(value) ??
+  (value.mediaType === 'tv'
+    ? { identityKind: 'legacy_tv', seasonKey: -1, specialEpisodeKey: -1 }
+    : undefined);
 
 export const evaluateMovieAdmission = (
   media: FreshMedia,
