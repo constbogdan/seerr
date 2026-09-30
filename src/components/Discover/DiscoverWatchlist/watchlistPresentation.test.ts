@@ -118,6 +118,10 @@ describe('Watchlist page and navigation integration', () => {
     ),
     'utf8'
   );
+  const bulkEdit = readFileSync(
+    path.join(__dirname, '../../UserList/BulkEditModal.tsx'),
+    'utf8'
+  );
 
   it('keeps profile routes and applies local-only controls on the dedicated page', () => {
     assert.match(page, /router\.pathname === '\/discover\/watchlist'/);
@@ -158,8 +162,17 @@ describe('Watchlist page and navigation integration', () => {
   it('places the metrics inclusion control on the native permissions form', () => {
     assert.match(permissions, /includeInUserMetrics/);
     assert.match(permissions, /Include in user metrics/);
-    assert.match(permissions, /Include this account in user metrics\./);
+    assert.doesNotMatch(permissions, /Include this account in user metrics\./);
+    assert.match(permissions, /font-medium text-white/);
     assert.match(permissions, /type="checkbox"/);
+  });
+
+  it('supports unchanged, included, and excluded metrics state in Bulk Edit', () => {
+    assert.match(bulkEdit, /includeInUserMetrics/);
+    assert.match(bulkEdit, /value="unchanged"/);
+    assert.match(bulkEdit, /value="include"/);
+    assert.match(bulkEdit, /value="exclude"/);
+    assert.match(bulkEdit, /metricsUpdate !== 'unchanged'/);
   });
 
   it('never hides Watchlist membership because of availability or request state', () => {
@@ -203,6 +216,20 @@ describe('Watchlist page and navigation integration', () => {
     assert.ok(
       (titleCard.match(/aria-label=\{intl\.formatMessage\(/g) ?? []).length >= 4
     );
+  });
+
+  it('uses the existing Request modal flow from an accessible compact action', () => {
+    assert.match(
+      titleCard,
+      /Tooltip[\s\S]*?content=\{intl\.formatMessage\(globalMessages\.request\)\}/
+    );
+    assert.match(
+      titleCard,
+      /aria-label=\{intl\.formatMessage\(globalMessages\.request\)\}/
+    );
+    assert.match(titleCard, /setShowRequestModal\(true\)/);
+    assert.match(titleCard, /!h-8 !w-8 !p-1\.5/);
+    assert.doesNotMatch(titleCard, /className="h-7 w-full"/);
   });
 
   it('keeps card navigation on canonical typed TMDB routes', () => {

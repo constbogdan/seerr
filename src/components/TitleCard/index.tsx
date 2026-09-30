@@ -610,23 +610,27 @@ const TitleCard = ({
                 </div>
               </Link>
 
-              <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2 py-2">
+              <div className="absolute bottom-0 left-0 right-0 flex justify-end px-2 py-2">
                 {showRequestButton &&
                   (!currentStatus ||
                     currentStatus === MediaStatus.UNKNOWN ||
                     currentStatus === MediaStatus.DELETED) && (
-                    <Button
-                      buttonType="primary"
-                      buttonSize="sm"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setShowRequestModal(true);
-                      }}
-                      className="h-7 w-full"
+                    <Tooltip
+                      content={intl.formatMessage(globalMessages.request)}
                     >
-                      <ArrowDownTrayIcon />
-                      <span>{intl.formatMessage(globalMessages.request)}</span>
-                    </Button>
+                      <Button
+                        buttonType="primary"
+                        buttonSize="sm"
+                        aria-label={intl.formatMessage(globalMessages.request)}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          setShowRequestModal(true);
+                        }}
+                        className="z-40 !h-8 !w-8 !p-1.5"
+                      >
+                        <ArrowDownTrayIcon className="h-4 w-4" />
+                      </Button>
+                    </Tooltip>
                   )}
               </div>
             </div>

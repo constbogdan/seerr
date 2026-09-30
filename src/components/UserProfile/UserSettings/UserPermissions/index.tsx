@@ -23,7 +23,6 @@ const messages = defineMessages(
     permissions: 'Permissions',
     unauthorizedDescription: 'You cannot modify your own permissions.',
     includeInUserMetrics: 'Include in user metrics',
-    includeInUserMetricsTip: 'Include this account in user metrics.',
   }
 );
 
@@ -119,25 +118,22 @@ const UserPermissions = () => {
                     setFieldValue('currentPermissions', newPermission)
                   }
                 />
-                <div className="form-row mt-6">
-                  <label
-                    htmlFor="includeInUserMetrics"
-                    className="checkbox-label"
-                  >
+                <div className="relative mt-4 flex items-start">
+                  <div className="flex h-6 items-center">
                     <Field
                       type="checkbox"
                       id="includeInUserMetrics"
                       name="includeInUserMetrics"
                     />
-                    <span className="ml-2">
-                      <span className="block font-medium">
-                        {intl.formatMessage(messages.includeInUserMetrics)}
-                      </span>
-                      <span className="block text-sm text-gray-400">
-                        {intl.formatMessage(messages.includeInUserMetricsTip)}
-                      </span>
-                    </span>
-                  </label>
+                  </div>
+                  <div className="ml-3 text-sm leading-6">
+                    <label
+                      htmlFor="includeInUserMetrics"
+                      className="block font-medium text-white"
+                    >
+                      {intl.formatMessage(messages.includeInUserMetrics)}
+                    </label>
+                  </div>
                 </div>
               </div>
               <div className="actions">

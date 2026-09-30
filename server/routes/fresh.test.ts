@@ -673,6 +673,7 @@ describe('Fresh route authorization and safe responses', () => {
         candidateId: candidates[3].id,
         mediaType: 'movie',
         title: 'Legacy Evidence',
+        sourceTitle: 'Legacy.Evidence.2025.1080p.WEB-DL-GROUP',
         normalizedTitle: 'legacy evidence',
         year: 2025,
         availabilityType: 'unknown',
@@ -713,6 +714,7 @@ describe('Fresh route authorization and safe responses', () => {
     assert.equal(response.body.results[0].displayTitle, 'Needs Attention');
     assert.equal(response.body.results[0].displayStatus, 'no_match');
     assert.equal(response.body.results[0].actionable, true);
+    assert.deepEqual(response.body.results[0].sourceTitleSamples, []);
     assert.equal(response.body.summary.noMatch, 1);
     assert.equal(response.body.summary.ambiguous, 1);
     assert.equal(response.body.summary.needsAttention, 3);
@@ -739,6 +741,32 @@ describe('Fresh route authorization and safe responses', () => {
       .set('x-test-role', 'admin');
     assert.equal(attention.status, 200);
     assert.equal(attention.body.results.length, 3);
+    assert.equal(
+      attention.body.results.every(
+        (row: {
+          actionable: boolean;
+          actions: {
+            resolve: boolean;
+            resetResolution: boolean;
+            admit: boolean;
+            removeOverride: boolean;
+          };
+        }) =>
+          row.actionable &&
+          (row.actions.resolve ||
+            row.actions.resetResolution ||
+            row.actions.admit ||
+            row.actions.removeOverride)
+      ),
+      true
+    );
+    const technicalIdentity = attention.body.results.find(
+      (row: { displayTitle: string }) =>
+        row.displayTitle === 'Identity Collision'
+    );
+    assert.equal(technicalIdentity.displayStatus, 'needs_attention');
+    assert.equal(technicalIdentity.actions.resolve, true);
+    assert.equal(technicalIdentity.actions.admit, false);
 
     const unknown = await request(app)
       .get(
@@ -748,6 +776,9 @@ describe('Fresh route authorization and safe responses', () => {
     assert.equal(unknown.status, 200);
     assert.equal(unknown.body.results.length, 1);
     assert.equal(unknown.body.results[0].displayStatus, 'eligibility_unknown');
+    assert.deepEqual(unknown.body.results[0].sourceTitleSamples, [
+      'Legacy.Evidence.2025.1080p.WEB-DL-GROUP',
+    ]);
     assert.deepEqual(unknown.body.results[0].eligibility, {
       observationType: 'unknown',
       observationAt: '2026-09-20T00:00:00.000Z',

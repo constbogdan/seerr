@@ -57,10 +57,20 @@ for presentation.
 Each account has an explicit **Include in user metrics** flag, defaulting to
 enabled. The flag is independent of authentication provider, sign-in
 capability, role, permissions, requests, and Jellyfin identity. Administrators
-manage it on the existing User Permissions page. People-oriented Watchlist
-selectors and the **All** scope include only opted-in accounts; no username or
-email inference is used. Owner, media type, watch status, and sort preferences
-are browser-local and safely fall back when stored values become invalid.
+manage it on the existing User Permissions page through the single checkbox
+**Include in user metrics**, or for selected accounts through the existing
+Bulk Edit dialog. Bulk Edit preserves mixed values when left **Unchanged** and
+can explicitly include or exclude all selected accounts. People-oriented
+Watchlist selectors and the **All** scope include only opted-in accounts; no
+username or email inference is used. Owner, media type, watch status, and sort
+preferences are browser-local and safely fall back when stored values become
+invalid.
+
+An identically titled Jellyfin item is not completion evidence for another
+typed TMDB identity. For example, a Watchlist Movie with TMDB `1050035` remains
+`unknown` when the user's played Jellyfin Movie is TMDB `1203484`, even if both
+are titled “Monster.” This is an intentional fail-closed result, not a missing
+title fallback.
 
 ## Reconciliation and reusable Jellyfin boundary
 
@@ -88,6 +98,11 @@ Plex Watchlists remain upstream-owned remote projections. They report that
 Jellyfin completion filtering is unsupported rather than pretending a remote
 page was fully filtered locally.
 
+Watchlist, Blocklist, and Request are compact card actions with accessible
+hover/focus labels; Request still opens the existing request flow only on
+activation. Requested, Partially Available, and Available remain presentation
+states rather than being normalized into those actions.
+
 ## Product boundaries
 
 - This enrichment never creates Requests or drives acquisition. The existing,
@@ -95,6 +110,10 @@ page was fully filtered locally.
 - Watched is current completion, not immutable history or sentiment.
 - Likes, dislikes, favorites, recommendations, Historical Library, and Activity
   are separate future features.
+- A future Jellyfin Activity projection must own a universally visible
+  **Watched by N** aggregate (including all metrics-included users, not only
+  users or media materialized through Watchlist) and its hover/focus names.
+  Watchlist-derived current state is deliberately insufficient for that job.
 - Mosaic must eventually use user-scoped Seerr authorization and the canonical
   Seerr Watchlist; it must not create a parallel Watchlist database or rely on a
   broad service identity.

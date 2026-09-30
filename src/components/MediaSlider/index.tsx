@@ -191,7 +191,7 @@ const MediaSlider = ({
     <>
       <div className="slider-header">
         {linkUrl ? (
-          <Link href={linkUrl} className="slider-title min-w-0 pr-16">
+          <Link href={linkUrl} className="slider-title min-w-0">
             <span className="truncate">{title}</span>
             <ArrowRightCircleIcon />
           </Link>
@@ -201,7 +201,7 @@ const MediaSlider = ({
           </div>
         )}
         {headerAction && (
-          <div className="ml-auto flex items-center">{headerAction}</div>
+          <div className="ml-2 flex items-center">{headerAction}</div>
         )}
       </div>
       <Slider

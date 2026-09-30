@@ -16,6 +16,7 @@ import type { Express } from 'express';
 import express from 'express';
 import session from 'express-session';
 import request from 'supertest';
+import { In } from 'typeorm';
 import userRoutes from '.';
 
 const defaultAuthenticateResponse = {
@@ -259,6 +260,96 @@ describe('user metrics inclusion', () => {
     assert.deepEqual(
       names,
       [...names].sort((left, right) => left.localeCompare(right))
+    );
+  });
+
+  it('bulk-updates metrics inclusion or leaves it unchanged', async () => {
+    const { agent } = await loginAs('admin@seerr.dev', 'test1234');
+    const first = await getRepository(User).save(
+      new User({
+        email: 'bulk-metrics-a@example.test',
+        avatar: '',
+        permissions: 0,
+        includeInUserMetrics: true,
+      })
+    );
+    const second = await getRepository(User).save(
+      new User({
+        email: 'bulk-metrics-b@example.test',
+        avatar: '',
+        permissions: 0,
+        includeInUserMetrics: false,
+      })
+    );
+
+    const unchanged = await agent.put('/user').send({
+      ids: [String(first.id), String(second.id)],
+      permissions: 0,
+    });
+    assert.equal(unchanged.status, 200);
+    assert.equal(
+      (await getRepository(User).findOneByOrFail({ id: first.id }))
+        .includeInUserMetrics,
+      true
+    );
+    assert.equal(
+      (await getRepository(User).findOneByOrFail({ id: second.id }))
+        .includeInUserMetrics,
+      false
+    );
+
+    for (const value of [false, true]) {
+      const response = await agent.put('/user').send({
+        ids: [String(first.id), String(second.id)],
+        permissions: 0,
+        includeInUserMetrics: value,
+      });
+      assert.equal(response.status, 200);
+      const stored = await getRepository(User).findBy({
+        id: In([first.id, second.id]),
+      });
+      assert.equal(
+        stored.every((user) => user.includeInUserMetrics === value),
+        true
+      );
+    }
+  });
+
+  it('rejects malformed bulk metrics state atomically', async () => {
+    const { agent } = await loginAs('admin@seerr.dev', 'test1234');
+    const target = await getRepository(User).save(
+      new User({
+        email: 'bulk-metrics-invalid@example.test',
+        avatar: '',
+        permissions: 0,
+      })
+    );
+    const response = await agent.put('/user').send({
+      ids: [String(target.id)],
+      permissions: 0,
+      includeInUserMetrics: 'false',
+    });
+    assert.equal(response.status, 400);
+    assert.equal(
+      (await getRepository(User).findOneByOrFail({ id: target.id }))
+        .includeInUserMetrics,
+      true
+    );
+  });
+
+  it('does not let an ordinary user bulk-update metrics inclusion', async () => {
+    const { agent, userId } = await loginAs('demo@seerr.dev', 'test1234');
+    const before = await getRepository(User).findOneByOrFail({ id: userId });
+    const response = await agent.put('/user').send({
+      ids: [String(userId)],
+      permissions: before.permissions,
+      includeInUserMetrics: !before.includeInUserMetrics,
+    });
+    assert.equal(response.status, 403);
+    assert.equal(
+      (await getRepository(User).findOneByOrFail({ id: userId }))
+        .includeInUserMetrics,
+      before.includeInUserMetrics
     );
   });
 

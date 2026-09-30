@@ -59,6 +59,40 @@ All mutations are administrator-only, revision-bound, and serialized with sync,
 reconciliation, and rebuild operations. Candidate Diagnostics is the durable
 work queue; transient Pipeline decisions are operational telemetry.
 
+Candidate Diagnostics uses these operational categories:
+
+| Category | Meaning | Corrective actions |
+| --- | --- | --- |
+| Needs Attention | Identity cannot be used safely: No Match, Ambiguous, a technical identity conflict, or resolved TV evidence without a durable Season/Special identity. | Resolve to an exact typed TMDB identity (or reset an existing manual resolution where present). |
+| Reviewable | The typed identity is stable but automatic admission policy excluded it. | Admit to Fresh when the durable history and invariants permit an override; remove an existing override when present. |
+| Active Fresh | The durable identity is currently admitted and visible. | No admission correction is required. |
+| Historical | Retained evidence is transient, pending, still resolving, expired, or inactive for the current source generation. | Informational by default; exact typed correction remains available for safely recognized inactive evidence. |
+
+Dismiss is never considered a corrective action and therefore does not, by
+itself, place a row in **Needs Attention**. No Match and Ambiguous candidates
+must be resolved before they can be admitted. Stable typed policy exclusions,
+including movie eligibility and content-policy exclusions, may retain **Admit
+to Fresh**; an override cannot invent identity or reset expired discovery
+history.
+
+The **Source Samples** column is derived from bounded, sanitized
+`FreshObservation.sourceTitle` evidence. It remains distinct from the parsed
+candidate title and the canonical TMDB title. It may contain a release/event
+name useful for diagnosis, but never raw provider payloads, authenticated URLs,
+or credentials.
+
+Single and bulk Dismiss/Show update the loaded Candidate Diagnostics page and
+summary optimistically, preserving the current filters and page. If the last
+row is removed, the nearest valid page is loaded. A background revalidation
+then confirms the revision-bound server result without a disruptive full-table
+reload.
+
+Administrators can reach Candidate Diagnostics through an icon-only,
+keyboard-accessible shortcut beside the Fresh navigation control on Discover
+and inline with the filters on `/fresh`. Its accessible label and tooltip are
+**Candidate Diagnostics**, and it opens Fresh Settings at the stable
+`#candidates` target. Non-administrators do not receive the shortcut.
+
 ## Rebuild and continuity
 
 **Rebuild Fresh Data** clears and reconstructs only source-derived observations,

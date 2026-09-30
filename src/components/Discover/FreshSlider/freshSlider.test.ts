@@ -41,11 +41,14 @@ describe('Fresh native pagination integration', () => {
       admin,
       /href="\/settings\/discovery-sources\/fresh#candidates"/
     );
-    assert.match(admin, /Open Fresh Candidate Diagnostics/);
+    assert.match(admin, /aria-label="Candidate Diagnostics"/);
     assert.match(admin, /<svg/);
+    assert.doesNotMatch(admin, />Candidate Diagnostics<\/a>/);
     assert.equal(user, '');
     assert.match(page, /hasPermission\(Permission\.ADMIN\)/);
     assert.match(page, /CandidateDiagnosticsShortcut/);
+    assert.match(mediaSlider, /className="ml-2 flex items-center"/);
+    assert.doesNotMatch(mediaSlider, /className="ml-auto flex items-center"/);
   });
 
   it('uses useDiscover for the complete paginated Fresh page', () => {

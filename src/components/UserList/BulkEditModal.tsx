@@ -22,7 +22,13 @@ const messages = defineMessages('components.UserList', {
   userssaved: 'User permissions saved successfully!',
   userfail: 'Something went wrong while saving user permissions.',
   edituser: 'Edit User Permissions',
+  includeInUserMetrics: 'Include in user metrics',
+  metricsUnchanged: 'Unchanged',
+  metricsIncluded: 'Include',
+  metricsExcluded: 'Exclude',
 });
+
+type MetricsUpdate = 'unchanged' | 'include' | 'exclude';
 
 const BulkEditModal = ({
   selectedUserIds,
@@ -35,6 +41,8 @@ const BulkEditModal = ({
   const intl = useIntl();
   const { addToast } = useToasts();
   const [currentPermission, setCurrentPermission] = useState(0);
+  const [metricsUpdate, setMetricsUpdate] =
+    useState<MetricsUpdate>('unchanged');
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -49,6 +57,9 @@ const BulkEditModal = ({
       const { data: updated } = await axios.put<User[]>(`/api/v1/user`, {
         ids: selectedUserIds,
         permissions: currentPermission,
+        ...(metricsUpdate !== 'unchanged' && {
+          includeInUserMetrics: metricsUpdate === 'include',
+        }),
       });
       if (onComplete) {
         onComplete(updated);
@@ -69,6 +80,7 @@ const BulkEditModal = ({
 
   useEffect(() => {
     if (users) {
+      setMetricsUpdate('unchanged');
       const selectedUsers = users.filter((u) => selectedUserIds.includes(u.id));
       const { permissions: allPermissionsEqual } = selectedUsers.reduce(
         ({ permissions: aPerms }, { permissions: bPerms }) => {
@@ -103,6 +115,34 @@ const BulkEditModal = ({
           currentPermission={currentPermission}
           onUpdate={(newPermission) => setCurrentPermission(newPermission)}
         />
+        <div className="relative mt-4 flex items-start">
+          <div className="ml-9 flex-1 text-sm leading-6">
+            <label
+              htmlFor="bulkIncludeInUserMetrics"
+              className="block font-medium text-white"
+            >
+              {intl.formatMessage(messages.includeInUserMetrics)}
+            </label>
+            <select
+              id="bulkIncludeInUserMetrics"
+              className="mt-1"
+              value={metricsUpdate}
+              onChange={(event) =>
+                setMetricsUpdate(event.target.value as MetricsUpdate)
+              }
+            >
+              <option value="unchanged">
+                {intl.formatMessage(messages.metricsUnchanged)}
+              </option>
+              <option value="include">
+                {intl.formatMessage(messages.metricsIncluded)}
+              </option>
+              <option value="exclude">
+                {intl.formatMessage(messages.metricsExcluded)}
+              </option>
+            </select>
+          </div>
+        </div>
       </div>
     </Modal>
   );

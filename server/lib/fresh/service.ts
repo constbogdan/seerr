@@ -76,6 +76,11 @@ const diagnosticStatus = (
     history.visibleUntil.getTime() < now.getTime()
   )
     return 'historical';
+  if (
+    media?.membershipReason === 'visibility_expired' ||
+    media?.membershipReason === 'source_generation_inactive'
+  )
+    return 'historical';
   if (history && !history.admitted) return 'reviewable';
   if (media?.membershipReason === 'eligibility_unknown')
     return 'eligibility_unknown';
@@ -84,7 +89,6 @@ const diagnosticStatus = (
     (media && !media.admitted)
   )
     return 'outside_eligibility_window';
-  if (media?.membershipReason === 'visibility_expired') return 'historical';
   if (
     media?.membershipReason &&
     contentFilterReasons.includes(media.membershipReason)
@@ -154,9 +158,6 @@ const applyDiagnosticStatus = (
         attentionStatuses: [
           FreshCandidateStatus.NO_MATCH,
           FreshCandidateStatus.AMBIGUOUS,
-          FreshCandidateStatus.TRANSIENT_FAILURE,
-          FreshCandidateStatus.UNRESOLVED,
-          FreshCandidateStatus.RESOLVING,
         ],
         technicalIdentityReasons,
         attentionResolved: FreshCandidateStatus.RESOLVED,
@@ -191,19 +192,21 @@ const applyDiagnosticStatus = (
         }
       );
   else if (status === 'historical')
-    query
-      .andWhere('candidate.status = :resolvedStatus', {
+    query.andWhere(
+      `(candidate.status IN (:...informationalStatuses) OR
+        (candidate.status = :resolvedStatus AND
+          (history."visibleUntil" < :diagnosticNow OR
+            media.membershipReason IN (:...historicalReasons))))`,
+      {
+        informationalStatuses: [
+          FreshCandidateStatus.TRANSIENT_FAILURE,
+          FreshCandidateStatus.UNRESOLVED,
+          FreshCandidateStatus.RESOLVING,
+        ],
         resolvedStatus: FreshCandidateStatus.RESOLVED,
-      })
-      .andWhere(
-        `(history."visibleUntil" < :diagnosticNow OR media.membershipReason IN (:...historicalReasons))`,
-        {
-          historicalReasons: [
-            'visibility_expired',
-            'source_generation_inactive',
-          ],
-        }
-      );
+        historicalReasons: ['visibility_expired', 'source_generation_inactive'],
+      }
+    );
   else if (status === 'excluded_content_filter')
     query
       .andWhere('candidate.status = :resolvedStatus', {
@@ -1183,10 +1186,17 @@ export class FreshService {
         const automaticStatus = candidate.automaticStatus ?? candidate.status;
         const canResolve =
           !manual &&
-          [
+          !!candidate.sourceEvidenceKey &&
+          ([
             FreshCandidateStatus.NO_MATCH,
             FreshCandidateStatus.AMBIGUOUS,
-          ].includes(automaticStatus);
+          ].includes(automaticStatus) ||
+            !!(
+              candidate.lastFailureReason &&
+              technicalIdentityReasons.includes(candidate.lastFailureReason)
+            ) ||
+            (effectiveMediaType === 'tv' && !history) ||
+            media?.membershipReason === 'source_generation_inactive');
         const canAdmit =
           !override &&
           !!candidate.tmdbId &&

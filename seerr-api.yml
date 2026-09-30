@@ -5069,6 +5069,9 @@ paths:
                     type: integer
                 permissions:
                   type: integer
+                includeInUserMetrics:
+                  type: boolean
+                  description: Optional bulk update. Omit to leave metrics inclusion unchanged.
       responses:
         '200':
           description: Successfully updated user details

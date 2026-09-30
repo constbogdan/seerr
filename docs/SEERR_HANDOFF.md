@@ -70,8 +70,11 @@ per-user typed-media current-state projection, so removing and re-adding
 Watchlist intent does not erase known state. The explicit
 `includeInUserMetrics` flag is independent of authentication or permissions;
 people-oriented selectors exclude opted-out accounts without username
-inference. Ordinary cards show only the positive Watched signal while retaining
-not-watched and unknown as distinct operational states.
+inference. It is managed individually or through the existing Bulk Edit flow,
+whose Unchanged state preserves mixed selections. Ordinary cards show only the
+positive Watched signal while retaining not-watched and unknown as distinct
+operational states. Exact typed identity remains mandatory: same-title Jellyfin
+items with a different TMDB identity must remain unknown.
 The durable identity, privacy, Movie/TV semantics, failure behavior,
 reconciliation jobs, and Activity boundary are documented in
 [Watchlist intent and Jellyfin completion](WATCHLIST.md). Requests, playback,
