@@ -3,6 +3,7 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
   WatchlistPlayStateSync,
@@ -10,6 +11,7 @@ import {
   isRetryableWatchlistStartupError,
   normalizeExactJellyfinId,
 } from '@server/lib/watchlistPlayState';
+import logger from '@server/logger';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
@@ -67,8 +69,10 @@ const createRow = async ({
 } = {}): Promise<Watchlist> => {
   const user =
     requestedBy ?? (await getRepository(User).findOneByOrFail({ id: 1 }));
-  user.jellyfinUserId = USER_ID;
-  await getRepository(User).save(user);
+  if (!requestedBy) {
+    user.jellyfinUserId = USER_ID;
+    await getRepository(User).save(user);
+  }
   const media = await getRepository(Media).save(
     new Media({
       tmdbId,
@@ -77,7 +81,7 @@ const createRow = async ({
       jellyfinMediaId4k,
     })
   );
-  return getRepository(Watchlist).save(
+  const row = await getRepository(Watchlist).save(
     new Watchlist({
       ratingKey: '',
       tmdbId,
@@ -87,6 +91,24 @@ const createRow = async ({
       media,
     })
   );
+  await getRepository(UserMediaState).save(
+    new UserMediaState({ user, mediaType, tmdbId, media })
+  );
+  return row;
+};
+
+const stateFor = async (
+  row: Watchlist,
+  includeBinding = false
+): Promise<UserMediaState> => {
+  const query = getRepository(UserMediaState)
+    .createQueryBuilder('state')
+    .leftJoinAndSelect('state.media', 'media')
+    .where('state.userId = :userId', { userId: row.requestedBy.id })
+    .andWhere('state.mediaType = :mediaType', { mediaType: row.mediaType })
+    .andWhere('state.tmdbId = :tmdbId', { tmdbId: row.tmdbId });
+  if (includeBinding) query.addSelect('state.jellyfinPlayStateUserId');
+  return query.getOneOrFail();
 };
 
 describe('Watchlist play-state projection', () => {
@@ -187,13 +209,13 @@ describe('Watchlist play-state reconciliation', () => {
     }));
 
     assert.equal(await sync.run(), 1);
-    let stored = await getRepository(Watchlist).findOneByOrFail({ id: row.id });
+    let stored = await stateFor(row);
     assert.equal(stored.jellyfinPlayed, true);
     assert.ok(stored.jellyfinPlayStateSyncedAt);
 
     played = false;
     assert.equal(await sync.run(), 1);
-    stored = await getRepository(Watchlist).findOneByOrFail({ id: row.id });
+    stored = await stateFor(row);
     assert.equal(stored.jellyfinPlayed, false);
     assert.equal(stored.jellyfinLastPlayedAt, null);
     assert.equal(await getRepository(Watchlist).count(), 1);
@@ -212,9 +234,7 @@ describe('Watchlist play-state reconciliation', () => {
 
     await sync.run();
     assert.deepEqual(new Set(requestedIds), new Set([MOVIE_ID, fourKId]));
-    const stored = await getRepository(Watchlist).findOneByOrFail({
-      id: row.id,
-    });
+    const stored = await stateFor(row);
     assert.equal(stored.jellyfinPlayed, true);
   });
 
@@ -232,18 +252,10 @@ describe('Watchlist play-state reconciliation', () => {
     }));
 
     await sync.run();
-    assert.equal(
-      (await getRepository(Watchlist).findOneByOrFail({ id: row.id }))
-        .jellyfinPlayed,
-      true
-    );
+    assert.equal((await stateFor(row)).jellyfinPlayed, true);
     caughtUp = false;
     await sync.run();
-    assert.equal(
-      (await getRepository(Watchlist).findOneByOrFail({ id: row.id }))
-        .jellyfinPlayed,
-      false
-    );
+    assert.equal((await stateFor(row)).jellyfinPlayed, false);
     assert.equal(await getRepository(Watchlist).count(), 1);
   });
 
@@ -259,8 +271,34 @@ describe('Watchlist play-state reconciliation', () => {
     assert.equal(await getRepository(Watchlist).count(), 0);
   });
 
+  it('keeps a same-title movie unknown when no exact Jellyfin identity maps to its TMDB identity', async () => {
+    const row = await createRow({
+      tmdbId: 1050035,
+      jellyfinMediaId: null,
+    });
+    let providerCalls = 0;
+    const sync = new WatchlistPlayStateSync(async () => ({
+      getUserItems: async () => {
+        providerCalls += 1;
+        return [
+          {
+            ...item({ played: true }),
+            Name: 'Monster',
+            ProviderIds: { Tmdb: '1203484', Imdb: 'tt29941084' },
+          },
+        ];
+      },
+    }));
+
+    assert.equal(await sync.run(), 1);
+    assert.equal(providerCalls, 0);
+    assert.equal((await stateFor(row)).jellyfinPlayed, null);
+  });
+
   it('fails closed when more than one Seerr user maps to the same Jellyfin ID', async () => {
     const first = await getRepository(User).findOneByOrFail({ id: 1 });
+    first.jellyfinUserId = USER_ID;
+    await getRepository(User).save(first);
     await createRow({ requestedBy: first, tmdbId: 10 });
     const second = await getRepository(User).save(
       new User({ email: 'duplicate-jellyfin@example.test', avatar: '' })
@@ -278,7 +316,9 @@ describe('Watchlist play-state reconciliation', () => {
 
     assert.equal(await sync.run(), 2);
     assert.equal(providerCalls, 0);
-    const rows = await getRepository(Watchlist).find({ order: { id: 'ASC' } });
+    const rows = await getRepository(UserMediaState).find({
+      order: { id: 'ASC' },
+    });
     assert.deepEqual(
       rows.map((row) => row.jellyfinPlayed),
       [null, null]
@@ -287,10 +327,11 @@ describe('Watchlist play-state reconciliation', () => {
 
   it('preserves last-known state on provider failure', async () => {
     const row = await createRow();
-    row.jellyfinPlayed = true;
-    row.jellyfinLastPlayedAt = new Date('2026-08-01T00:00:00.000Z');
-    row.jellyfinPlayStateSyncedAt = new Date('2026-08-02T00:00:00.000Z');
-    await getRepository(Watchlist).save(row);
+    const state = await stateFor(row);
+    state.jellyfinPlayed = true;
+    state.jellyfinLastPlayedAt = new Date('2026-08-01T00:00:00.000Z');
+    state.jellyfinPlayStateSyncedAt = new Date('2026-08-02T00:00:00.000Z');
+    await getRepository(UserMediaState).save(state);
     const sync = new WatchlistPlayStateSync(async () => ({
       getUserItems: async () => {
         throw new Error('provider unavailable');
@@ -298,9 +339,7 @@ describe('Watchlist play-state reconciliation', () => {
     }));
 
     assert.equal(await sync.run(), 0);
-    const stored = await getRepository(Watchlist).findOneByOrFail({
-      id: row.id,
-    });
+    const stored = await stateFor(row);
     assert.equal(stored.jellyfinPlayed, true);
     assert.equal(
       stored.jellyfinPlayStateSyncedAt?.toISOString(),
@@ -310,11 +349,12 @@ describe('Watchlist play-state reconciliation', () => {
 
   it('invalidates cached state from a different Jellyfin account on failure', async () => {
     const row = await createRow();
-    row.jellyfinPlayed = true;
-    row.jellyfinLastPlayedAt = new Date('2026-08-01T00:00:00.000Z');
-    row.jellyfinPlayStateSyncedAt = new Date('2026-08-02T00:00:00.000Z');
-    row.jellyfinPlayStateUserId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
-    await getRepository(Watchlist).save(row);
+    const state = await stateFor(row, true);
+    state.jellyfinPlayed = true;
+    state.jellyfinLastPlayedAt = new Date('2026-08-01T00:00:00.000Z');
+    state.jellyfinPlayStateSyncedAt = new Date('2026-08-02T00:00:00.000Z');
+    state.jellyfinPlayStateUserId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    await getRepository(UserMediaState).save(state);
     const sync = new WatchlistPlayStateSync(async () => ({
       getUserItems: async () => {
         throw new Error('provider unavailable');
@@ -322,11 +362,7 @@ describe('Watchlist play-state reconciliation', () => {
     }));
 
     assert.equal(await sync.run(), 1);
-    const stored = await getRepository(Watchlist)
-      .createQueryBuilder('watchlist')
-      .addSelect('watchlist.jellyfinPlayStateUserId')
-      .where('watchlist.id = :id', { id: row.id })
-      .getOneOrFail();
+    const stored = await stateFor(row, true);
     assert.equal(stored.jellyfinPlayed, null);
     assert.equal(stored.jellyfinLastPlayedAt, null);
     assert.equal(stored.jellyfinPlayStateSyncedAt, null);
@@ -344,6 +380,175 @@ describe('Watchlist play-state reconciliation', () => {
 
     await sync.run();
     assert.equal(await getRepository(Watchlist).count(), 0);
+    assert.equal(await getRepository(UserMediaState).count(), 1);
+    assert.equal((await stateFor(row)).jellyfinPlayed, true);
+  });
+
+  it('preserves watched state across Watchlist removal and immediate re-add', async () => {
+    const row = await createRow();
+    const sync = new WatchlistPlayStateSync(async () => ({
+      getUserItems: async () => [item({ played: true })],
+    }));
+    await sync.run();
+
+    await getRepository(Watchlist).delete(row.id);
+    assert.equal(await getRepository(Watchlist).count(), 0);
+    assert.equal((await stateFor(row)).jellyfinPlayed, true);
+
+    await getRepository(Watchlist).save(
+      new Watchlist({
+        ratingKey: '',
+        tmdbId: row.tmdbId,
+        mediaType: row.mediaType,
+        title: row.title,
+        requestedBy: row.requestedBy,
+        media: row.media,
+      })
+    );
+    assert.equal((await stateFor(row)).jellyfinPlayed, true);
+  });
+
+  it('isolates the same typed media identity between users', async () => {
+    const first = await getRepository(User).findOneByOrFail({ id: 1 });
+    first.jellyfinUserId = USER_ID;
+    await getRepository(User).save(first);
+    const second = await getRepository(User).save(
+      new User({
+        email: 'isolated-state@example.test',
+        avatar: '',
+        jellyfinUserId: '33333333333333333333333333333333',
+      })
+    );
+    const firstRow = await createRow({ requestedBy: first, tmdbId: 44 });
+    const secondRow = await createRow({ requestedBy: second, tmdbId: 44 });
+    const sync = new WatchlistPlayStateSync(async () => ({
+      getUserItems: async ({ userId }) => [
+        item({ played: userId === USER_ID }),
+      ],
+    }));
+
+    await sync.run();
+    assert.equal((await stateFor(firstRow)).jellyfinPlayed, true);
+    assert.equal((await stateFor(secondRow)).jellyfinPlayed, false);
+  });
+
+  it('enriches shared media only with the authenticated user state', async () => {
+    const first = await getRepository(User).findOneByOrFail({ id: 1 });
+    const second = await getRepository(User).save(
+      new User({ email: 'private-state@example.test', avatar: '' })
+    );
+    const media = await getRepository(Media).save(
+      new Media({ tmdbId: 45, mediaType: MediaType.MOVIE })
+    );
+    await getRepository(UserMediaState).save([
+      new UserMediaState({
+        user: first,
+        media,
+        mediaType: MediaType.MOVIE,
+        tmdbId: 45,
+        jellyfinPlayed: true,
+      }),
+      new UserMediaState({
+        user: second,
+        media,
+        mediaType: MediaType.MOVIE,
+        tmdbId: 45,
+        jellyfinPlayed: false,
+      }),
+    ]);
+
+    assert.equal(
+      (await Media.getMedia(45, MediaType.MOVIE, first))?.watchState,
+      'watched'
+    );
+    assert.equal(
+      (await Media.getMedia(45, MediaType.MOVIE, second))?.watchState,
+      'not_watched'
+    );
+    assert.equal(
+      (await Media.getMedia(45, MediaType.MOVIE))?.watchState,
+      undefined
+    );
+  });
+
+  it('relinks preserved state when its Media row is reconstructed', async () => {
+    const row = await createRow();
+    const sync = new WatchlistPlayStateSync(async () => ({
+      getUserItems: async ({ ids }) =>
+        ids.map((id) => item({ id, played: true })),
+    }));
+    await sync.run();
+    await getRepository(Media).delete(row.media!.id);
+    const replacementId = '44444444444444444444444444444444';
+    const replacement = await getRepository(Media).save(
+      new Media({
+        tmdbId: row.tmdbId,
+        mediaType: row.mediaType,
+        jellyfinMediaId: replacementId,
+      })
+    );
+
+    await sync.run();
+    const state = await stateFor(row);
+    assert.equal(state.media?.id, replacement.id);
+    assert.equal(state.jellyfinPlayed, true);
+  });
+
+  it('logs bounded aggregate results without provider secrets or raw identities', async (t) => {
+    await createRow();
+    const info = t.mock.method(logger, 'info', () => logger);
+    const warn = t.mock.method(logger, 'warn', () => logger);
+    const sync = new WatchlistPlayStateSync(async () => ({
+      getUserItems: async () => {
+        throw new Error(
+          'request failed with token=super-secret at https://private.example.test'
+        );
+      },
+    }));
+
+    assert.equal(await sync.run(), 0);
+    const infoCalls = info.mock.calls as unknown as {
+      arguments: unknown[];
+    }[];
+    const warnCalls = warn.mock.calls as unknown as {
+      arguments: unknown[];
+    }[];
+    const completion = infoCalls.find(
+      (call) => call.arguments[0] === 'Watchlist play-state sync completed'
+    );
+    assert.ok(completion);
+    assert.equal(
+      (completion.arguments[1] as Record<string, unknown>).stateRecords,
+      1
+    );
+    assert.equal(
+      (completion.arguments[1] as Record<string, unknown>).unknown,
+      1
+    );
+    assert.deepEqual(
+      Object.keys(completion.arguments[1] as Record<string, unknown>).sort(),
+      [
+        'durationMs',
+        'failures',
+        'idsQueried',
+        'label',
+        'mappedMedia',
+        'notWatched',
+        'stateRecords',
+        'unknown',
+        'unmappedMedia',
+        'unmappedUsers',
+        'updated',
+        'usersConsidered',
+        'watched',
+      ]
+    );
+    const emitted = JSON.stringify({
+      info: infoCalls.map((call) => call.arguments),
+      warn: warnCalls.map((call) => call.arguments),
+    });
+    assert.doesNotMatch(emitted, /super-secret|private\.example|22222222/);
+    assert.match(emitted, /"failures":1/);
   });
 
   it('coalesces overlapping runs into one provider request', async () => {
@@ -428,5 +633,7 @@ describe('Watchlist play-state reconciliation', () => {
       [100, 1, 1, 1]
     );
     assert.equal(maximumActiveUsers, 2);
+    assert.equal(await sync.run(), 103);
+    assert.equal(await getRepository(UserMediaState).count(), 103);
   });
 });

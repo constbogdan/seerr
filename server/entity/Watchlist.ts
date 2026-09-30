@@ -3,6 +3,7 @@ import { MediaType } from '@server/constants/media';
 import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import logger from '@server/logger';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
@@ -38,11 +39,6 @@ const nullableNumberArray = {
 @Unique('UNIQUE_USER_DB', ['tmdbId', 'mediaType', 'requestedBy'])
 @Index('IDX_watchlist_user_created', ['requestedBy', 'createdAt'])
 @Index('IDX_watchlist_user_type_title', ['requestedBy', 'mediaType', 'title'])
-@Index('IDX_watchlist_user_played_created', [
-  'requestedBy',
-  'jellyfinPlayed',
-  'createdAt',
-])
 export class Watchlist implements WatchlistItem {
   @PrimaryGeneratedColumn()
   id: number;
@@ -78,17 +74,7 @@ export class Watchlist implements WatchlistItem {
   @Index()
   public media?: Media | null;
 
-  @Column({ type: 'boolean', nullable: true })
-  public jellyfinPlayed?: boolean | null;
-
-  @DbAwareColumn({ type: 'datetime', nullable: true })
-  public jellyfinLastPlayedAt?: Date | null;
-
-  @DbAwareColumn({ type: 'datetime', nullable: true })
-  public jellyfinPlayStateSyncedAt?: Date | null;
-
-  @Column({ type: 'varchar', length: 32, nullable: true, select: false })
-  public jellyfinPlayStateUserId?: string | null;
+  public userMediaState?: UserMediaState | null;
 
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;
@@ -149,6 +135,7 @@ export class Watchlist implements WatchlistItem {
     return dataSource.transaction(async (manager) => {
       const transactionalWatchlistRepository = manager.getRepository(this);
       const mediaRepository = manager.getRepository(Media);
+      const mediaStateRepository = manager.getRepository(UserMediaState);
       let media = await mediaRepository.findOne({
         where: {
           tmdbId: watchlistRequest.tmdbId,
@@ -173,6 +160,26 @@ export class Watchlist implements WatchlistItem {
 
       await mediaRepository.save(media);
       await transactionalWatchlistRepository.save(watchlist);
+      const existingState = await mediaStateRepository.findOne({
+        where: {
+          user: { id: user.id },
+          mediaType: watchlistRequest.mediaType,
+          tmdbId: watchlistRequest.tmdbId,
+        },
+      });
+      if (!existingState) {
+        await mediaStateRepository.save(
+          new UserMediaState({
+            user,
+            mediaType: watchlistRequest.mediaType,
+            tmdbId: watchlistRequest.tmdbId,
+            media,
+          })
+        );
+      } else if (!existingState.media) {
+        existingState.media = media;
+        await mediaStateRepository.save(existingState);
+      }
       return watchlist;
     });
   }

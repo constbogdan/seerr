@@ -1,5 +1,6 @@
 import Spinner from '@app/assets/spinner.svg';
 import BlocklistModal from '@app/components/BlocklistModal';
+import Badge from '@app/components/Common/Badge';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
 import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
@@ -14,13 +15,14 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { withProperties } from '@app/utils/typeHelpers';
 import { Transition } from '@headlessui/react';
+import { CheckCircleIcon } from '@heroicons/react/20/solid';
 import {
   ArrowDownTrayIcon,
   EyeIcon,
   EyeSlashIcon,
-  MinusCircleIcon,
   StarIcon,
 } from '@heroicons/react/24/outline';
+import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type { Watchlist } from '@server/entity/Watchlist';
 import type { MediaType } from '@server/models/Search';
@@ -43,16 +45,20 @@ interface TitleCardProps {
   inProgress?: boolean;
   isAddedToWatchlist?: number | boolean;
   mutateParent?: () => void;
+  watchState?: 'watched' | 'not_watched' | 'unknown';
+  watchlistOwnerName?: string;
 }
 
 const messages = defineMessages('components.TitleCard', {
   addToWatchList: 'Add to watchlist',
+  removeFromWatchList: 'Remove from watchlist',
   watchlistSuccess:
     '<strong>{title}</strong> added to watchlist  successfully!',
   watchlistDeleted:
     '<strong>{title}</strong> Removed from watchlist  successfully!',
   watchlistCancel: 'watchlist for <strong>{title}</strong> canceled.',
   watchlistError: 'Something went wrong. Please try again.',
+  watched: 'Watched',
 });
 
 const TitleCard = ({
@@ -67,6 +73,8 @@ const TitleCard = ({
   inProgress = false,
   canExpand = false,
   mutateParent,
+  watchState,
+  watchlistOwnerName,
 }: TitleCardProps) => {
   const isTouch = useIsTouch();
   const intl = useIntl();
@@ -385,7 +393,7 @@ const TitleCard = ({
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             fill
           />
-          <div className="absolute left-0 right-0 flex items-center justify-between p-2">
+          <div className="absolute left-0 right-0 z-30 flex items-start justify-between p-2">
             <div
               className={`pointer-events-none z-40 self-start rounded-full border shadow-md ${
                 mediaType === 'movie' || mediaType === 'collection'
@@ -401,73 +409,119 @@ const TitleCard = ({
                     : intl.formatMessage(globalMessages.tvshow)}
               </div>
             </div>
-            {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
-              <div className="flex flex-col gap-1">
-                {user?.userType !== UserType.PLEX &&
-                  (toggleWatchlist ? (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickWatchlistBtn}
-                    >
-                      <StarIcon className={'h-3 text-amber-300'} />
-                    </Button>
-                  ) : (
-                    <Button
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickDeleteWatchlistBtn}
-                    >
-                      <MinusCircleIcon className={'h-3'} />
-                    </Button>
-                  ))}
-                {showHideButton &&
-                  currentStatus !== MediaStatus.PROCESSING &&
-                  currentStatus !== MediaStatus.AVAILABLE &&
-                  currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
-                  currentStatus !== MediaStatus.PENDING && (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={() => setShowBlocklistModal(true)}
-                    >
-                      <EyeSlashIcon className={'h-3'} />
-                    </Button>
-                  )}
-              </div>
-            )}
-            {showDetail &&
-              showHideButton &&
-              currentStatus == MediaStatus.BLOCKLISTED && (
-                <Tooltip
-                  content={intl.formatMessage(
-                    globalMessages.removefromBlocklist
-                  )}
-                >
-                  <Button
-                    buttonType={'ghost'}
-                    className="z-40"
-                    buttonSize={'sm'}
-                    onClick={() => onClickShowBlocklistBtn()}
-                  >
-                    <EyeIcon className={'h-3'} />
-                  </Button>
-                </Tooltip>
-              )}
-            {currentStatus && currentStatus !== MediaStatus.UNKNOWN && (
-              <div className="flex flex-col items-center gap-1">
-                <div className="pointer-events-none z-40 flex">
-                  <StatusBadgeMini
-                    status={currentStatus}
-                    inProgress={inProgress}
-                    shrink
-                  />
+            <div className="flex flex-col items-end gap-1">
+              {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
+                <div className="flex flex-col items-end gap-1">
+                  {user?.userType !== UserType.PLEX &&
+                    (toggleWatchlist ? (
+                      <Tooltip
+                        content={intl.formatMessage(messages.addToWatchList)}
+                      >
+                        <Button
+                          buttonType={'ghost'}
+                          className="z-40 !border-transparent !bg-transparent !p-1.5 hover:!border-gray-300 hover:!bg-gray-900/60"
+                          buttonSize={'sm'}
+                          aria-label={intl.formatMessage(
+                            messages.addToWatchList
+                          )}
+                          onClick={onClickWatchlistBtn}
+                        >
+                          <StarIcon className={'h-3 text-amber-300'} />
+                        </Button>
+                      </Tooltip>
+                    ) : (
+                      <Tooltip
+                        content={intl.formatMessage(
+                          messages.removeFromWatchList
+                        )}
+                      >
+                        <Button
+                          buttonType="ghost"
+                          className="z-40 !border-transparent !bg-transparent !p-1.5 hover:!border-gray-300 hover:!bg-gray-900/60"
+                          buttonSize={'sm'}
+                          aria-label={intl.formatMessage(
+                            messages.removeFromWatchList
+                          )}
+                          onClick={onClickDeleteWatchlistBtn}
+                        >
+                          <StarIconSolid className={'h-3 text-amber-300'} />
+                        </Button>
+                      </Tooltip>
+                    ))}
+                  {showHideButton &&
+                    currentStatus !== MediaStatus.PROCESSING &&
+                    currentStatus !== MediaStatus.AVAILABLE &&
+                    currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
+                    currentStatus !== MediaStatus.PENDING && (
+                      <Tooltip
+                        content={intl.formatMessage(
+                          globalMessages.addToBlocklist
+                        )}
+                      >
+                        <Button
+                          buttonType={'ghost'}
+                          className="z-40 !border-transparent !bg-transparent !p-1.5 hover:!border-gray-300 hover:!bg-gray-900/60"
+                          buttonSize={'sm'}
+                          aria-label={intl.formatMessage(
+                            globalMessages.addToBlocklist
+                          )}
+                          onClick={() => setShowBlocklistModal(true)}
+                        >
+                          <EyeSlashIcon className={'h-3'} />
+                        </Button>
+                      </Tooltip>
+                    )}
                 </div>
-              </div>
-            )}
+              )}
+              {showDetail &&
+                showHideButton &&
+                currentStatus == MediaStatus.BLOCKLISTED && (
+                  <Tooltip
+                    content={intl.formatMessage(
+                      globalMessages.removefromBlocklist
+                    )}
+                  >
+                    <Button
+                      buttonType={'ghost'}
+                      className="z-40 !border-transparent !bg-transparent !p-1.5 hover:!border-gray-300 hover:!bg-gray-900/60"
+                      buttonSize={'sm'}
+                      aria-label={intl.formatMessage(
+                        globalMessages.removefromBlocklist
+                      )}
+                      onClick={() => onClickShowBlocklistBtn()}
+                    >
+                      <EyeIcon className={'h-3'} />
+                    </Button>
+                  </Tooltip>
+                )}
+              {currentStatus && currentStatus !== MediaStatus.UNKNOWN && (
+                <div className="flex flex-col items-center gap-1">
+                  <div className="pointer-events-none z-40 flex">
+                    <StatusBadgeMini
+                      status={currentStatus}
+                      inProgress={inProgress}
+                      shrink
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
+          {watchState === 'watched' && (
+            <div className="pointer-events-none absolute left-2 top-10 z-30">
+              <Badge badgeType="success">
+                <span className="flex items-center gap-1">
+                  <CheckCircleIcon className="h-4 w-4" />
+                  {intl.formatMessage(messages.watched)}
+                </span>
+              </Badge>
+            </div>
+          )}
+          {watchlistOwnerName && (
+            <div className="pointer-events-none absolute bottom-12 left-2 z-30 max-w-[calc(100%-1rem)]">
+              <Badge badgeType="default">{watchlistOwnerName}</Badge>
+            </div>
+          )}
           <Transition
             as={Fragment}
             show={isUpdating}

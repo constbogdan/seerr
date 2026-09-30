@@ -11,6 +11,7 @@ import {
 } from '@server/constants/watchlist';
 import { getRepository } from '@server/datasource';
 import type { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
 import type { SelectQueryBuilder } from 'typeorm';
@@ -88,21 +89,31 @@ export const getLocalWatchlist = async ({
     .createQueryBuilder('watchlist')
     .leftJoinAndSelect('watchlist.requestedBy', 'requestedBy')
     .leftJoinAndSelect('watchlist.media', 'media')
+    .leftJoinAndMapOne(
+      'watchlist.userMediaState',
+      UserMediaState,
+      'userMediaState',
+      `userMediaState.userId = watchlist.requestedById
+        AND userMediaState.mediaType = watchlist.mediaType
+        AND userMediaState.tmdbId = watchlist.tmdbId`
+    )
     .addSelect('LOWER(watchlist.title)', 'watchlist_sort_title');
 
   if (allUsers) {
-    queryBuilder.where('1 = 1');
+    queryBuilder.where('requestedBy.includeInUserMetrics = :included', {
+      included: true,
+    });
   } else {
     queryBuilder.where('watchlist.requestedById = :userId', { userId });
   }
 
   if (query.watched === 'watched') {
-    queryBuilder.andWhere('watchlist.jellyfinPlayed = :played', {
+    queryBuilder.andWhere('userMediaState.jellyfinPlayed = :played', {
       played: true,
     });
   } else if (query.watched === 'not_watched') {
     queryBuilder.andWhere(
-      '(watchlist.jellyfinPlayed IS NULL OR watchlist.jellyfinPlayed = :played)',
+      '(userMediaState.jellyfinPlayed IS NULL OR userMediaState.jellyfinPlayed = :played)',
       { played: false }
     );
   }
@@ -149,6 +160,13 @@ export const getLocalWatchlist = async ({
       userId,
     });
   }
+  if (allUsers) {
+    unclassifiedQuery
+      .leftJoin('watchlist.requestedBy', 'requestedBy')
+      .andWhere('requestedBy.includeInUserMetrics = :included', {
+        included: true,
+      });
+  }
   const unclassifiedItem = await unclassifiedQuery
     .limit(1)
     .getRawOne<{ id: number }>();
@@ -163,12 +181,13 @@ export const getLocalWatchlist = async ({
     media: row.media,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
-    watchState: toWatchState(row.jellyfinPlayed),
-    ...(row.jellyfinLastPlayedAt && {
-      lastPlayedAt: row.jellyfinLastPlayedAt.toISOString(),
+    watchState: toWatchState(row.userMediaState?.jellyfinPlayed),
+    ...(row.userMediaState?.jellyfinLastPlayedAt && {
+      lastPlayedAt: row.userMediaState.jellyfinLastPlayedAt.toISOString(),
     }),
-    ...(row.jellyfinPlayStateSyncedAt && {
-      watchStateSyncedAt: row.jellyfinPlayStateSyncedAt.toISOString(),
+    ...(row.userMediaState?.jellyfinPlayStateSyncedAt && {
+      watchStateSyncedAt:
+        row.userMediaState.jellyfinPlayStateSyncedAt.toISOString(),
     }),
     requestedBy: {
       id: row.requestedBy.id,

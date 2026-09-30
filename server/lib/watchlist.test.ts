@@ -3,6 +3,7 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
   getLocalWatchlist,
@@ -96,7 +97,7 @@ const addRow = async ({
   const media = await getRepository(Media).save(
     new Media({ tmdbId, mediaType })
   );
-  return getRepository(Watchlist).save(
+  const row = await getRepository(Watchlist).save(
     new Watchlist({
       ratingKey: `local-${tmdbId}`,
       tmdbId,
@@ -106,9 +107,18 @@ const addRow = async ({
       requestedBy: user,
       media,
       createdAt,
+    })
+  );
+  await getRepository(UserMediaState).save(
+    new UserMediaState({
+      user,
+      mediaType,
+      tmdbId,
+      media,
       jellyfinPlayed,
     })
   );
+  return row;
 };
 
 describe('local Watchlist query and ownership', () => {
@@ -445,8 +455,42 @@ describe('Watchlist metadata capture and backfill', () => {
         .createdAt instanceof Date,
       true
     );
+    const state = await getRepository(UserMediaState).findOneOrFail({
+      where: {
+        user: { id: user.id },
+        mediaType: MediaType.MOVIE,
+        tmdbId: 4000,
+      },
+    });
+    state.jellyfinPlayed = true;
+    await getRepository(UserMediaState).save(state);
     await Watchlist.deleteWatchlist(4000, MediaType.MOVIE, user);
     assert.equal(await getRepository(Watchlist).count(), 0);
+    assert.equal(await getRepository(UserMediaState).count(), 1);
+
+    const restored = await Watchlist.createWatchlist({
+      user,
+      tmdb,
+      watchlistRequest: {
+        tmdbId: 4000,
+        mediaType: MediaType.MOVIE,
+        title: 'Animated',
+      },
+    });
+    assert.equal(restored.id > 0, true);
+    assert.equal(await getRepository(UserMediaState).count(), 1);
+    assert.equal(
+      (
+        await getRepository(UserMediaState).findOneOrFail({
+          where: {
+            user: { id: user.id },
+            mediaType: MediaType.MOVIE,
+            tmdbId: 4000,
+          },
+        })
+      ).jellyfinPlayed,
+      true
+    );
   });
 
   it('does not create membership when the provider lookup fails', async () => {

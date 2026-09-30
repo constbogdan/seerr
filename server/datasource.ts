@@ -17,6 +17,7 @@ import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { Session } from '@server/entity/Session';
 import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { UserPushSubscription } from '@server/entity/UserPushSubscription';
 import { UserSettings } from '@server/entity/UserSettings';
 import { Watchlist } from '@server/entity/Watchlist';
@@ -52,6 +53,7 @@ const entities = [
   SeasonRequest,
   Session,
   User,
+  UserMediaState,
   UserPushSubscription,
   UserSettings,
   Watchlist,

@@ -892,7 +892,7 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
 
     const activeUser = await userRepository.findOne({
       where: { id: requestedOwnerId },
-      select: ['id', 'plexToken'],
+      select: ['id', 'plexToken', 'includeInUserMetrics'],
     });
 
     if (!activeUser) {
@@ -905,6 +905,13 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
         supportsPresentation: true,
         supportsWatchState: true,
         hasUnclassifiedItems: false,
+      });
+    }
+
+    if (!activeUser.includeInUserMetrics && activeUser.id !== req.user?.id) {
+      return next({
+        status: 400,
+        message: 'This account is not included in user metrics.',
       });
     }
 

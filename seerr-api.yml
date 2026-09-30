@@ -139,6 +139,10 @@ components:
           type: integer
           example: 1
           readOnly: true
+        includeInUserMetrics:
+          type: boolean
+          default: true
+          description: Whether this account participates in user-oriented metrics and selectors. This does not affect authentication or permissions.
         permissions:
           type: number
           example: 0
@@ -1971,6 +1975,21 @@ components:
         updatedAt:
           type: string
           example: '2020-09-12T10:00:27.000Z'
+          readOnly: true
+        watchState:
+          type: string
+          enum: [watched, not_watched, unknown]
+          description: Current watched state projected only for the authenticated user.
+          readOnly: true
+        watchStateLastPlayedAt:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+        watchStateSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
           readOnly: true
     Cast:
       type: object
@@ -4982,6 +5001,12 @@ paths:
           required: false
           schema:
             type: string
+        - in: query
+          name: includeInUserMetrics
+          required: false
+          description: Filter users by explicit metrics inclusion.
+          schema:
+            type: boolean
       responses:
         '200':
           description: A JSON array of all users
@@ -6129,6 +6154,9 @@ paths:
                   permissions:
                     type: number
                     example: 2
+                  includeInUserMetrics:
+                    type: boolean
+                    default: true
     post:
       summary: Update permission settings for a user
       description: Updates and returns permission settings for a specific user. Requires `MANAGE_USERS` permission if editing other users.
@@ -6149,6 +6177,8 @@ paths:
               properties:
                 permissions:
                   type: number
+                includeInUserMetrics:
+                  type: boolean
               required:
                 - permissions
       responses:
@@ -6162,6 +6192,9 @@ paths:
                   permissions:
                     type: number
                     example: 2
+                  includeInUserMetrics:
+                    type: boolean
+                    default: true
   /user/{userId}/watch_data:
     get:
       summary: Get watch data

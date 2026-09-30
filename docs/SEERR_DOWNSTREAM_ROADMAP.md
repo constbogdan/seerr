@@ -53,8 +53,9 @@ downstream home.
 - [x] Refine Fresh with irreversible Movie/Season/Special history, typed manual
   correction, admission overrides, and an administrator work queue.
 - [x] Add administrator shortcuts from Fresh/Discover to Candidate Diagnostics.
-- [x] Enrich explicit Watchlist intent with the same user's current Jellyfin
-  completion while preserving membership independence and privacy. See
+- [x] Enrich explicit Watchlist intent with a reusable per-user typed-media
+  Jellyfin current-state projection, an explicit user-metrics inclusion flag,
+  and privacy-preserving people selectors. See
   [Watchlist intent and Jellyfin completion](WATCHLIST.md).
 - [ ] Improve validation performance without weakening exact-tree evidence.
 - [ ] Evaluate direct/on-demand Download Sync refresh as a separate downstream feature.

@@ -28,6 +28,7 @@ import {
 import Issue from './Issue';
 import { MediaRequest } from './MediaRequest';
 import SeasonRequest from './SeasonRequest';
+import { UserMediaState } from './UserMediaState';
 import { UserPushSubscription } from './UserPushSubscription';
 import { UserSettings } from './UserSettings';
 
@@ -86,6 +87,9 @@ export class User {
   @Column({ type: 'integer', default: UserType.PLEX })
   public userType: UserType;
 
+  @Column({ type: 'boolean', default: true })
+  public includeInUserMetrics: boolean;
+
   @Column({ type: 'integer', nullable: true, select: true })
   public plexId?: number | null;
 
@@ -121,6 +125,9 @@ export class User {
 
   @OneToMany(() => Watchlist, (watchlist) => watchlist.requestedBy)
   public watchlists: Watchlist[];
+
+  @OneToMany(() => UserMediaState, (mediaState) => mediaState.user)
+  public mediaStates: UserMediaState[];
 
   @Column({ nullable: true })
   public movieQuotaLimit?: number;

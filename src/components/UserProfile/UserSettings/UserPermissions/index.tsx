@@ -10,7 +10,7 @@ import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
 import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import axios from 'axios';
-import { Form, Formik } from 'formik';
+import { Field, Form, Formik } from 'formik';
 import { useRouter } from 'next/router';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -22,6 +22,8 @@ const messages = defineMessages(
     toastSettingsFailure: 'Something went wrong while saving settings.',
     permissions: 'Permissions',
     unauthorizedDescription: 'You cannot modify your own permissions.',
+    includeInUserMetrics: 'Include in user metrics',
+    includeInUserMetricsTip: 'Include this account in user metrics.',
   }
 );
 
@@ -37,7 +39,7 @@ const UserPermissions = () => {
     data,
     error,
     mutate: revalidate,
-  } = useSWR<{ permissions?: number }>(
+  } = useSWR<{ permissions?: number; includeInUserMetrics: boolean }>(
     user ? `/api/v1/user/${user?.id}/settings/permissions` : null
   );
 
@@ -80,12 +82,14 @@ const UserPermissions = () => {
       <Formik
         initialValues={{
           currentPermissions: data?.permissions,
+          includeInUserMetrics: data.includeInUserMetrics,
         }}
         enableReinitialize
         onSubmit={async (values) => {
           try {
             await axios.post(`/api/v1/user/${user?.id}/settings/permissions`, {
               permissions: values.currentPermissions ?? 0,
+              includeInUserMetrics: values.includeInUserMetrics,
             });
 
             addToast(intl.formatMessage(messages.toastSettingsSuccess), {
@@ -115,6 +119,26 @@ const UserPermissions = () => {
                     setFieldValue('currentPermissions', newPermission)
                   }
                 />
+                <div className="form-row mt-6">
+                  <label
+                    htmlFor="includeInUserMetrics"
+                    className="checkbox-label"
+                  >
+                    <Field
+                      type="checkbox"
+                      id="includeInUserMetrics"
+                      name="includeInUserMetrics"
+                    />
+                    <span className="ml-2">
+                      <span className="block font-medium">
+                        {intl.formatMessage(messages.includeInUserMetrics)}
+                      </span>
+                      <span className="block text-sm text-gray-400">
+                        {intl.formatMessage(messages.includeInUserMetricsTip)}
+                      </span>
+                    </span>
+                  </label>
+                </div>
               </div>
               <div className="actions">
                 <div className="flex justify-end">

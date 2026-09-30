@@ -13,12 +13,14 @@ export const getWatchlistPreferenceKey = (userId: number): string =>
   `${WATCHLIST_PREFERENCE_KEY}:user-${userId}`;
 
 export interface WatchlistPreferences {
+  owner: string;
   category: WatchlistCategory;
   sort: WatchlistSort;
   watched: WatchlistWatchedFilter;
 }
 
 export const defaultWatchlistPreferences: WatchlistPreferences = {
+  owner: 'me',
   category: 'all',
   sort: 'added_desc',
   watched: 'not_watched',
@@ -34,6 +36,12 @@ export const readWatchlistPreferences = (
   try {
     const parsed = JSON.parse(value) as Partial<WatchlistPreferences>;
     return {
+      owner:
+        parsed.owner === 'me' ||
+        parsed.owner === 'all' ||
+        (typeof parsed.owner === 'string' && /^[1-9]\d*$/.test(parsed.owner))
+          ? parsed.owner
+          : defaultWatchlistPreferences.owner,
       category: watchlistCategories.includes(
         parsed.category as WatchlistCategory
       )
@@ -55,15 +63,23 @@ export const readWatchlistPreferences = (
 
 export const resolveWatchlistPreferences = ({
   queryCategory,
+  queryOwner,
   querySort,
   queryWatched,
   stored,
 }: {
   queryCategory?: string;
+  queryOwner?: string;
   querySort?: string;
   queryWatched?: string;
   stored: WatchlistPreferences;
 }): WatchlistPreferences => ({
+  owner:
+    queryOwner === 'me' ||
+    queryOwner === 'all' ||
+    (typeof queryOwner === 'string' && /^[1-9]\d*$/.test(queryOwner))
+      ? queryOwner
+      : stored.owner,
   category: watchlistCategories.includes(queryCategory as WatchlistCategory)
     ? (queryCategory as WatchlistCategory)
     : stored.category,
@@ -76,3 +92,11 @@ export const resolveWatchlistPreferences = ({
     ? (queryWatched as WatchlistWatchedFilter)
     : stored.watched,
 });
+
+export const resolveEligibleWatchlistOwner = (
+  owner: string,
+  eligibleOwners: string[]
+): string => {
+  if (eligibleOwners.includes(owner)) return owner;
+  return eligibleOwners.includes('me') ? 'me' : 'all';
+};

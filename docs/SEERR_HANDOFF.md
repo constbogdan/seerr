@@ -65,13 +65,19 @@ Visible/Hidden preferences affect that work queue only.
 ### Watchlist
 
 The downstream Watchlist remains explicit viewing intent and is enriched with
-the same user's current Jellyfin completion. The durable identity, privacy,
-Movie/TV semantics, failure behavior, reconciliation job, and Activity boundary
-are documented in [Watchlist intent and Jellyfin completion](WATCHLIST.md).
-Requests, playback, availability, and completion never create or remove
-membership. Cross-user enriched views require administrator authority or the
-purpose-built `WATCHLIST_VIEW` permission; `MANAGE_REQUESTS` alone is
-insufficient.
+the same user's current Jellyfin completion. Completion is owned by a reusable
+per-user typed-media current-state projection, so removing and re-adding
+Watchlist intent does not erase known state. The explicit
+`includeInUserMetrics` flag is independent of authentication or permissions;
+people-oriented selectors exclude opted-out accounts without username
+inference. Ordinary cards show only the positive Watched signal while retaining
+not-watched and unknown as distinct operational states.
+The durable identity, privacy, Movie/TV semantics, failure behavior,
+reconciliation jobs, and Activity boundary are documented in
+[Watchlist intent and Jellyfin completion](WATCHLIST.md). Requests, playback,
+availability, and completion never create or remove membership. Cross-user
+enriched views require administrator authority or the purpose-built
+`WATCHLIST_VIEW` permission; `MANAGE_REQUESTS` alone is insufficient.
 
 ### Local harness
 

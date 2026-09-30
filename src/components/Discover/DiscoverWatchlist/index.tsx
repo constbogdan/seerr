@@ -2,7 +2,6 @@ import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
 import PageTitle from '@app/components/Common/PageTitle';
-import { UserSelector } from '@app/components/Selector';
 import useDiscover from '@app/hooks/useDiscover';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -19,14 +18,17 @@ import type {
   WatchlistWatchedFilter,
 } from '@server/constants/watchlist';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
+import type { UserResultsResponse } from '@server/interfaces/api/userInterfaces';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
+import useSWR from 'swr';
 import {
   defaultWatchlistPreferences,
   getWatchlistPreferenceKey,
   readWatchlistPreferences,
+  resolveEligibleWatchlistOwner,
   resolveWatchlistPreferences,
 } from './preferences';
 
@@ -49,8 +51,7 @@ const messages = defineMessages('components.Discover.DiscoverWatchlist', {
   watched: 'Watched',
   watchedFilter: 'Watch status',
   me: 'Me',
-  allUsers: 'All Users',
-  specificUser: 'Specific User',
+  allUsers: 'All',
   ownerFilter: 'Watchlist owner',
 });
 
@@ -65,13 +66,27 @@ const DiscoverWatchlist = () => {
   });
   const { user: currentUser, hasPermission } = useUser();
   const canViewOthers = hasPermission(Permission.WATCHLIST_VIEW);
-  const owner =
-    dedicatedPage && typeof router.query.owner === 'string'
-      ? router.query.owner
-      : 'me';
-  const [ownerMode, setOwnerMode] = useState<'me' | 'all' | 'user'>(
-    owner === 'all' ? 'all' : owner === 'me' ? 'me' : 'user'
+  const owner = preferences.owner;
+  const { data: eligibleUsers } = useSWR<UserResultsResponse>(
+    dedicatedPage && canViewOthers
+      ? '/api/v1/user?includeInUserMetrics=true&sort=displayname&sortDirection=asc&take=100'
+      : null
   );
+  const ownerOptions = useMemo(() => {
+    const users = eligibleUsers?.results ?? [];
+    return [
+      { label: intl.formatMessage(messages.allUsers), value: 'all' },
+      ...(currentUser?.id
+        ? [{ label: intl.formatMessage(messages.me), value: 'me' }]
+        : []),
+      ...users
+        .filter(({ id }) => id !== currentUser?.id)
+        .map(({ id, displayName }) => ({
+          label: displayName,
+          value: id.toString(),
+        })),
+    ];
+  }, [currentUser?.id, eligibleUsers?.results, intl]);
   const preferenceKey = currentUser?.id
     ? getWatchlistPreferenceKey(currentUser.id)
     : undefined;
@@ -132,6 +147,8 @@ const DiscoverWatchlist = () => {
         typeof router.query.category === 'string'
           ? router.query.category
           : undefined,
+      queryOwner:
+        typeof router.query.owner === 'string' ? router.query.owner : undefined,
       querySort:
         typeof router.query.sort === 'string' ? router.query.sort : undefined,
       queryWatched:
@@ -147,34 +164,53 @@ const DiscoverWatchlist = () => {
     preferenceKey,
     router.isReady,
     router.query.category,
+    router.query.owner,
     router.query.sort,
     router.query.watched,
   ]);
 
-  useEffect(() => {
-    if (!router.isReady) return;
-    setOwnerMode(owner === 'all' ? 'all' : owner === 'me' ? 'me' : 'user');
-  }, [owner, router.isReady]);
+  const updatePreference = useCallback(
+    (
+      next: Partial<{
+        category: WatchlistCategory;
+        owner: string;
+        sort: WatchlistSort;
+        watched: WatchlistWatchedFilter;
+      }>
+    ) => {
+      const updated = { ...preferences, ...next };
+      setPreferences(updated);
+      if (preferenceKey) {
+        window.localStorage.setItem(preferenceKey, JSON.stringify(updated));
+      }
+      updateQuery({
+        category: updated.category === 'all' ? undefined : updated.category,
+        owner: updated.owner === 'me' ? undefined : updated.owner,
+        sort: updated.sort === 'added_desc' ? undefined : updated.sort,
+        watched:
+          updated.watched === 'not_watched' ? undefined : updated.watched,
+        page: undefined,
+      });
+    },
+    [preferenceKey, preferences, updateQuery]
+  );
 
-  const updatePreference = (
-    next: Partial<{
-      category: WatchlistCategory;
-      sort: WatchlistSort;
-      watched: WatchlistWatchedFilter;
-    }>
-  ) => {
-    const updated = { ...preferences, ...next };
-    setPreferences(updated);
-    if (preferenceKey) {
-      window.localStorage.setItem(preferenceKey, JSON.stringify(updated));
+  useEffect(() => {
+    if (!canViewOthers || !eligibleUsers || ownerOptions.length === 0) return;
+    if (!ownerOptions.some((option) => option.value === preferences.owner)) {
+      const fallback = resolveEligibleWatchlistOwner(
+        preferences.owner,
+        ownerOptions.map((option) => option.value)
+      );
+      updatePreference({ owner: fallback });
     }
-    updateQuery({
-      category: updated.category === 'all' ? undefined : updated.category,
-      sort: updated.sort === 'added_desc' ? undefined : updated.sort,
-      watched: updated.watched === 'not_watched' ? undefined : updated.watched,
-      page: undefined,
-    });
-  };
+  }, [
+    canViewOthers,
+    eligibleUsers,
+    ownerOptions,
+    preferences.owner,
+    updatePreference,
+  ]);
 
   if (error) {
     return <ErrorPage statusCode={500} />;
@@ -205,63 +241,30 @@ const DiscoverWatchlist = () => {
             {title}
           </Header>
           {dedicatedPage && firstResultData?.supportsPresentation && (
-            <div className="mt-2 flex flex-wrap gap-2">
+            <div className="relative z-50 mt-2 flex flex-wrap gap-2">
               {canViewOthers && (
-                <>
-                  <div className="flex">
-                    <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
-                      <UserGroupIcon className="h-6 w-6" />
-                      <span className="sr-only">
-                        {intl.formatMessage(messages.ownerFilter)}
-                      </span>
+                <div className="flex w-48 max-w-full">
+                  <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
+                    <UserGroupIcon className="h-6 w-6" />
+                    <span className="sr-only">
+                      {intl.formatMessage(messages.ownerFilter)}
                     </span>
-                    <select
-                      className="rounded-r-only"
-                      aria-label={intl.formatMessage(messages.ownerFilter)}
-                      value={ownerMode}
-                      onChange={(event) => {
-                        const mode = event.target.value as
-                          | 'me'
-                          | 'all'
-                          | 'user';
-                        setOwnerMode(mode);
-                        if (mode !== 'user') {
-                          updateQuery({
-                            owner: mode === 'all' ? 'all' : undefined,
-                            page: undefined,
-                          });
-                        }
-                      }}
-                    >
-                      <option value="me">
-                        {intl.formatMessage(messages.me)}
+                  </span>
+                  <select
+                    className="rounded-r-only min-w-0 flex-1"
+                    aria-label={intl.formatMessage(messages.ownerFilter)}
+                    value={owner}
+                    onChange={(event) =>
+                      updatePreference({ owner: event.target.value })
+                    }
+                  >
+                    {ownerOptions.map((option) => (
+                      <option key={option.value} value={option.value}>
+                        {option.label}
                       </option>
-                      <option value="all">
-                        {intl.formatMessage(messages.allUsers)}
-                      </option>
-                      <option value="user">
-                        {intl.formatMessage(messages.specificUser)}
-                      </option>
-                    </select>
-                  </div>
-                  {ownerMode === 'user' && (
-                    <div className="min-w-64">
-                      <UserSelector
-                        defaultValue={
-                          owner !== 'me' && owner !== 'all' ? owner : undefined
-                        }
-                        onChange={(selected) => {
-                          if (selected?.value) {
-                            updateQuery({
-                              owner: selected.value.toString(),
-                              page: undefined,
-                            });
-                          }
-                        }}
-                      />
-                    </div>
-                  )}
-                </>
+                    ))}
+                  </select>
+                </div>
               )}
               <MediaTypeFilter
                 value={preferences.category}
@@ -308,14 +311,14 @@ const DiscoverWatchlist = () => {
                       })
                     }
                   >
+                    <option value="all">
+                      {intl.formatMessage(messages.all)}
+                    </option>
                     <option value="not_watched">
                       {intl.formatMessage(messages.notWatched)}
                     </option>
                     <option value="watched">
                       {intl.formatMessage(messages.watched)}
-                    </option>
-                    <option value="all">
-                      {intl.formatMessage(messages.all)}
                     </option>
                   </select>
                 </div>

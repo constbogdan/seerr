@@ -41,14 +41,16 @@ import {
   DisclosurePanel,
   Transition,
 } from '@headlessui/react';
-import { ChevronDownIcon } from '@heroicons/react/24/outline';
+import {
+  ChevronDownIcon,
+  StarIcon as StarIconOutline,
+} from '@heroicons/react/24/outline';
 import {
   ArrowRightCircleIcon,
   CogIcon,
   ExclamationTriangleIcon,
   EyeSlashIcon,
   FilmIcon,
-  MinusCircleIcon,
   PlayIcon,
   StarIcon,
 } from '@heroicons/react/24/solid';
@@ -652,12 +654,13 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                       buttonType={'ghost'}
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(messages.addtowatchlist)}
                       onClick={onClickWatchlistBtn}
                     >
                       {isUpdating ? (
                         <Spinner />
                       ) : (
-                        <StarIcon className={'text-amber-300'} />
+                        <StarIconOutline className={'text-amber-300'} />
                       )}
                     </Button>
                   </Tooltip>
@@ -668,9 +671,16 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                     <Button
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(
+                        messages.removefromwatchlist
+                      )}
                       onClick={onClickDeleteWatchlistBtn}
                     >
-                      {isUpdating ? <Spinner /> : <MinusCircleIcon />}
+                      {isUpdating ? (
+                        <Spinner />
+                      ) : (
+                        <StarIcon className="text-amber-300" />
+                      )}
                     </Button>
                   </Tooltip>
                 )}

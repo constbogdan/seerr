@@ -7,6 +7,7 @@ import {
   defaultWatchlistPreferences,
   getWatchlistPreferenceKey,
   readWatchlistPreferences,
+  resolveEligibleWatchlistOwner,
   resolveWatchlistPreferences,
 } from './preferences';
 
@@ -38,29 +39,49 @@ describe('Watchlist presentation preferences', () => {
     assert.deepEqual(
       resolveWatchlistPreferences({
         queryCategory: 'animation',
+        queryOwner: 'all',
         querySort: 'title_desc',
         queryWatched: 'watched',
         stored: {
+          owner: 'me',
           category: 'movies',
           sort: 'added_asc',
           watched: 'not_watched',
         },
       }),
-      { category: 'animation', sort: 'title_desc', watched: 'watched' }
+      {
+        owner: 'all',
+        category: 'animation',
+        sort: 'title_desc',
+        watched: 'watched',
+      }
     );
     assert.deepEqual(
       resolveWatchlistPreferences({
         queryCategory: 'invalid',
+        queryOwner: 'invalid',
         querySort: 'invalid',
         queryWatched: 'invalid',
         stored: {
+          owner: '42',
           category: 'series',
           sort: 'added_asc',
           watched: 'all',
         },
       }),
-      { category: 'series', sort: 'added_asc', watched: 'all' }
+      {
+        owner: '42',
+        category: 'series',
+        sort: 'added_asc',
+        watched: 'all',
+      }
     );
+  });
+
+  it('falls back safely when a persisted owner is deleted or excluded', () => {
+    assert.equal(resolveEligibleWatchlistOwner('42', ['all', 'me', '7']), 'me');
+    assert.equal(resolveEligibleWatchlistOwner('42', ['all', '7']), 'all');
+    assert.equal(resolveEligibleWatchlistOwner('7', ['all', 'me', '7']), '7');
   });
 });
 
@@ -76,6 +97,25 @@ describe('Watchlist page and navigation integration', () => {
   );
   const listView = readFileSync(
     path.join(__dirname, '../../Common/ListView/index.tsx'),
+    'utf8'
+  );
+  const titleCard = readFileSync(
+    path.join(__dirname, '../../TitleCard/index.tsx'),
+    'utf8'
+  );
+  const movieDetails = readFileSync(
+    path.join(__dirname, '../../MovieDetails/index.tsx'),
+    'utf8'
+  );
+  const tvDetails = readFileSync(
+    path.join(__dirname, '../../TvDetails/index.tsx'),
+    'utf8'
+  );
+  const permissions = readFileSync(
+    path.join(
+      __dirname,
+      '../../UserProfile/UserSettings/UserPermissions/index.tsx'
+    ),
     'utf8'
   );
 
@@ -96,8 +136,30 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(page, /value="watched"/);
     assert.match(page, /firstResultData\.supportsWatchState/);
     assert.match(page, /Permission\.WATCHLIST_VIEW/);
-    assert.match(page, /<UserSelector/);
-    assert.match(page, /value="all"/);
+    assert.match(page, /includeInUserMetrics=true/);
+    assert.match(page, /value: 'all'/);
+    assert.match(page, /value: 'me'/);
+    assert.doesNotMatch(page, /<UserSelector/);
+    assert.doesNotMatch(page, /AsyncSelect/);
+    assert.doesNotMatch(page, /ownerMode|specificUser/);
+    assert.match(page, /sort=displayname&sortDirection=asc/);
+    assert.match(page, /localStorage\.setItem/);
+    assert.match(page, /w-48 max-w-full/);
+    assert.match(page, /relative z-50/);
+    assert.match(page, /filter\(\(\{ id \}\) => id !== currentUser\?\.id\)/);
+    assert.ok(
+      page.indexOf('value="all"') < page.indexOf('value="not_watched"')
+    );
+    assert.ok(
+      page.indexOf('value="not_watched"') < page.indexOf('value="watched"')
+    );
+  });
+
+  it('places the metrics inclusion control on the native permissions form', () => {
+    assert.match(permissions, /includeInUserMetrics/);
+    assert.match(permissions, /Include in user metrics/);
+    assert.match(permissions, /Include this account in user metrics\./);
+    assert.match(permissions, /type="checkbox"/);
   });
 
   it('never hides Watchlist membership because of availability or request state', () => {
@@ -109,10 +171,46 @@ describe('Watchlist page and navigation integration', () => {
   });
 
   it('renders completion and owner evidence without per-card provider reads', () => {
-    assert.match(listView, /title\.watchState === 'watched'/);
-    assert.match(listView, /title\.watchState === 'unknown'/);
-    assert.match(listView, /title\.requestedBy\.displayName/);
+    assert.match(listView, /watchState=\{title\.watchState\}/);
+    assert.match(titleCard, /watchState === 'watched'/);
+    assert.doesNotMatch(titleCard, /watchState === 'not_watched'/);
+    assert.doesNotMatch(titleCard, /watchState === 'unknown'/);
+    assert.match(titleCard, /absolute left-2 top-10/);
+    assert.match(titleCard, /absolute bottom-12 left-2/);
+    assert.match(listView, /title\.requestedBy\?\.displayName/);
     assert.doesNotMatch(listView, /api\/v1\/.*jellyfin/i);
+  });
+
+  it('uses accessible outline and filled stars for Watchlist membership', () => {
+    for (const source of [titleCard, movieDetails, tvDetails]) {
+      assert.match(source, /aria-label=\{intl\.formatMessage\(/);
+      assert.match(source, /StarIcon/);
+      assert.doesNotMatch(source, /MinusCircleIcon/);
+    }
+    assert.match(titleCard, /StarIcon as StarIconSolid/);
+    assert.match(titleCard, /messages\.addToWatchList/);
+    assert.match(titleCard, /messages\.removeFromWatchList/);
+    assert.match(movieDetails, /StarIcon as StarIconSolid/);
+    assert.match(tvDetails, /StarIcon as StarIconOutline/);
+  });
+
+  it('keeps Watchlist and Blocklist actions compact and accessible', () => {
+    assert.match(titleCard, /!border-transparent !bg-transparent !p-1\.5/);
+    assert.match(titleCard, /globalMessages\.addToBlocklist/);
+    assert.match(titleCard, /globalMessages\.removefromBlocklist/);
+    assert.match(titleCard, /<EyeSlashIcon/);
+    assert.match(titleCard, /<EyeIcon/);
+    assert.ok(
+      (titleCard.match(/aria-label=\{intl\.formatMessage\(/g) ?? []).length >= 4
+    );
+  });
+
+  it('keeps card navigation on canonical typed TMDB routes', () => {
+    assert.match(titleCard, /mediaType === 'movie'/);
+    assert.match(titleCard, /`\/movie\/\$\{id\}`/);
+    assert.match(titleCard, /`\/tv\/\$\{id\}`/);
+    assert.match(listView, /id=\{title\.tmdbId\}/);
+    assert.match(listView, /type=\{title\.mediaType\}/);
   });
 
   it('adds desktop and mobile Watchlist navigation while retaining Requests', () => {

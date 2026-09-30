@@ -13,6 +13,8 @@ export interface TmdbTitleCardProps {
   canExpand?: boolean;
   isAddedToWatchlist?: boolean;
   mutateParent?: () => void;
+  watchState?: 'watched' | 'not_watched' | 'unknown';
+  watchlistOwnerName?: string;
 }
 
 const isMovie = (movie: MovieDetails | TvDetails): movie is MovieDetails => {
@@ -27,6 +29,8 @@ const TmdbTitleCard = ({
   canExpand,
   isAddedToWatchlist = false,
   mutateParent,
+  watchState,
+  watchlistOwnerName,
 }: TmdbTitleCardProps) => {
   const { hasPermission } = useUser();
 
@@ -74,6 +78,8 @@ const TmdbTitleCard = ({
       mediaType={'movie'}
       canExpand={canExpand}
       mutateParent={mutateParent}
+      watchState={watchState}
+      watchlistOwnerName={watchlistOwnerName}
     />
   ) : (
     <TitleCard
@@ -91,6 +97,8 @@ const TmdbTitleCard = ({
       mediaType={'tv'}
       canExpand={canExpand}
       mutateParent={mutateParent}
+      watchState={watchState}
+      watchlistOwnerName={watchlistOwnerName}
     />
   );
 };

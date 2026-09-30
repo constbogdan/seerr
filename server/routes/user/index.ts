@@ -52,6 +52,17 @@ router.get('/', async (req, res, next) => {
     const sortDirectionQuery = req.query.sortDirection
       ? req.query.sortDirection.toString().toLowerCase()
       : undefined;
+    const includeInUserMetrics = req.query.includeInUserMetrics?.toString();
+    if (
+      includeInUserMetrics &&
+      includeInUserMetrics !== 'true' &&
+      includeInUserMetrics !== 'false'
+    ) {
+      return next({
+        status: 400,
+        message: 'Invalid includeInUserMetrics value.',
+      });
+    }
 
     let sortDirection: 'ASC' | 'DESC';
     if (sortDirectionQuery === 'asc') {
@@ -79,9 +90,18 @@ router.get('/', async (req, res, next) => {
 
     let query = getRepository(User).createQueryBuilder('user');
 
+    if (includeInUserMetrics) {
+      query = query.andWhere(
+        'user.includeInUserMetrics = :includeInUserMetrics',
+        {
+          includeInUserMetrics: includeInUserMetrics === 'true',
+        }
+      );
+    }
+
     if (q) {
-      query = query.where(
-        'LOWER(user.username) LIKE :q OR LOWER(user.email) LIKE :q OR LOWER(user.plexUsername) LIKE :q OR LOWER(user.jellyfinUsername) LIKE :q',
+      query = query.andWhere(
+        '(LOWER(user.username) LIKE :q OR LOWER(user.email) LIKE :q OR LOWER(user.plexUsername) LIKE :q OR LOWER(user.jellyfinUsername) LIKE :q)',
         { q: `%${q}%` }
       );
     }

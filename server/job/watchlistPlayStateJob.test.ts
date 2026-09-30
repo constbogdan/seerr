@@ -48,5 +48,22 @@ describe('Watchlist play-state native job', () => {
       jobsUi,
       /'watchlist-play-state-sync': 'Watchlist Play State Sync'/
     );
+    assert.match(
+      jobsUi,
+      /'watchlist-play-state-sync-description':[\s\S]*?Reconciles current per-user watched state/
+    );
+    assert.match(
+      jobsUi,
+      /'watchlist-metadata-backfill-description':[\s\S]*?Fills missing TMDB genre metadata/
+    );
+    assert.match(
+      jobsUi,
+      /jobMessages\['jellyfin-recently-added-scan'\][\s\S]*?jobMessages\['jellyfin-full-scan'\][\s\S]*?const orderedJobs/
+    );
+    assert.doesNotMatch(
+      jobsUi,
+      /messages\['jellyfin-(?:recently-added|full)-scan'\]\s*=/
+    );
+    assert.match(jobsUi, /\.sort\(\(left, right\) =>/);
   });
 });

@@ -2,6 +2,7 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import { Permission } from '@server/lib/permissions';
 import discoverRoutes from '@server/routes/discover';
@@ -68,6 +69,14 @@ describe('Watchlist privacy and admin scopes', () => {
         mediaType: MediaType.MOVIE,
         title: 'Private Watchlist Item',
         requestedBy: owner,
+        media,
+      })
+    );
+    await getRepository(UserMediaState).save(
+      new UserMediaState({
+        user: owner,
+        mediaType: MediaType.MOVIE,
+        tmdbId: 7001,
         media,
         jellyfinPlayed: true,
       })
@@ -155,5 +164,25 @@ describe('Watchlist privacy and admin scopes', () => {
       ).status,
       403
     );
+  });
+
+  it('excludes accounts explicitly omitted from user metrics scopes', async () => {
+    const service = await getRepository(User).findOneByOrFail({
+      id: otherUserId,
+    });
+    service.includeInUserMetrics = false;
+    await getRepository(User).save(service);
+
+    const all = await request(app)
+      .get('/discover/watchlist?owner=all&watched=all')
+      .set('x-test-role', 'admin');
+    assert.equal(all.status, 200);
+    assert.equal(all.body.totalResults, 1);
+    assert.equal(all.body.results[0].requestedBy.id, 1);
+
+    const specific = await request(app)
+      .get(`/discover/watchlist?owner=${otherUserId}&watched=all`)
+      .set('x-test-role', 'admin');
+    assert.equal(specific.status, 400);
   });
 });
