@@ -5,6 +5,34 @@ with deterministic TMDB identity and downstream discovery policy. It is not
 request, acquisition, download, Jellyfin availability, or permanent tracker
 state.
 
+## Metadata ownership
+
+Fresh durably owns release/source evidence, parsed and resolution evidence,
+typed TMDB identity, admission and visibility history, manual corrections,
+overrides, and policy decisions. Provider presentation is not a Fresh domain
+fact. `originalTitle`, artwork paths, overview, popularity, adult/video flags,
+and origin countries are resolved through Seerr's normal locale-aware TMDB
+client/cache only after database filtering, sorting, and pagination select a
+page.
+
+Fresh retains only the provider-derived caches required before pagination or
+for deterministic policy reevaluation: canonical display/sort title, media and
+home-availability dates, original language, genre IDs, content rating and
+region, vote average/count, and the cache refresh timestamp. These values are
+never identity or authoritative presentation. A selected-page provider failure
+keeps the Fresh item and uses that narrow query/policy cache as a truthful
+minimal fallback. Library and Fresh are sibling domains; neither supplies
+presentation metadata to the other.
+
+The query/policy cache is populated from TMDB details using Seerr's configured
+main locale and the configured certification region at refresh time. The same
+locale supplies `displayTitle` and therefore `sortTitle`; language-neutral
+dates, original language, genres, and votes come from that typed detail
+response. Cache refresh is bounded and preserves the last-good values when
+TMDB is unavailable. The public Fresh page independently resolves the selected
+page in the requesting user's locale through Seerr's normal TMDB cache, so the
+durable query cache never overrides current localized presentation.
+
 ## Identity and admission
 
 - A movie identity is `(movie, tmdbId)`. Its first selected-filter observation
@@ -132,3 +160,16 @@ download URLs, tracker/private URLs, passkeys, cookies, raw action payloads,
 Axios objects, raw provider errors, or full TMDB responses. Public `/fresh`
 returns the paginated effective media projection only; candidate evidence and
 mutation endpoints remain administrator-only.
+
+## Scheduling and startup
+
+**Fresh Sync** follows its Jobs & Cache schedule and also starts an immediate
+catch-up when jobs are registered if Fresh is enabled. **Fresh Reconciliation**
+has a separate daily schedule and is not a substitute for a missing source
+interval. Editing the Fresh Sync cron does not suppress its startup catch-up.
+For first-production migration, the supported `SEERR_SYNCHRONIZATION_MODE`
+contract suppresses catch-ups and schedules without changing Fresh settings.
+Fresh Sync is the optional final commissioning phase and is permitted only when
+Fresh is intentionally enabled. Follow the
+[deployment runbook](FIRST_PRODUCTION_DEPLOYMENT.md); do not use cron edits as a
+containment mechanism.

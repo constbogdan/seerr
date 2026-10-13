@@ -19,6 +19,20 @@ owners.
 Never force-update the maintained branch or silently replace downstream feature
 history with an upstream tree.
 
+## Pre-release schema authority
+
+Wholphin, Mosaic, and this downstream Seerr remain pre-release development
+products. Internal Stable builds, tags, images, releases, and household
+installations do not establish a public backward-compatibility or immutable
+migration-history boundary. During development, prefer the clean intended
+baseline over compatibility layers for superseded internal schemas.
+
+Treat schema compatibility separately from valuable data. Rebuild
+reconstructable projections and caches; preserve or deliberately transform
+non-reconstructable domain history; discard obsolete redundant state; and never
+fabricate history that earlier schemas already lost. SQLite and PostgreSQL must
+still converge on the same intended schema and semantics.
+
 ## Workflow authority — Strategy C
 
 The permanent model is a minimal downstream workflow surface:
@@ -144,3 +158,8 @@ backup operations. It is not a CI runner and must not expose its credentials.
 The intended delivery path is GHCR → Dockhand → NAS. Test a new image without
 silently replacing production state, retain a configuration backup, record the
 deployed digest, and keep the prior known-good digest available for rollback.
+The first Library-enabled deployment is governed by the
+[production runbook](FIRST_PRODUCTION_DEPLOYMENT.md). It upgrades the existing
+SQLite database, imports the approved October 4 history artifact once, and
+requires a matching database/config restore when rolling back across forward
+migrations.

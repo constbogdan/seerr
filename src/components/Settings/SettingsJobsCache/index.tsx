@@ -5,6 +5,7 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import Table from '@app/components/Common/Table';
+import SynchronizationContainmentStatus from '@app/components/Settings/SynchronizationContainmentStatus';
 import useLocale from '@app/hooks/useLocale';
 import useSettings from '@app/hooks/useSettings';
 
@@ -40,6 +41,8 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     jobtype: 'Type',
     nextexecution: 'Next Execution',
     runnow: 'Run Now',
+    disabled: 'Disabled',
+    suppressed: 'Suppressed by synchronization mode',
     canceljob: 'Cancel Job',
     jobstarted: '{jobname} started.',
     jobcancelled: '{jobname} canceled.',
@@ -92,12 +95,28 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'process-blocklisted-tags': 'Process Blocklisted Tags',
     'watchlist-metadata-backfill': 'Watchlist Metadata Backfill',
     'watchlist-metadata-backfill-description':
-      'Fills missing TMDB genre metadata used by Watchlist category filters.',
+      'Adds missing genre information to Watchlist items.',
     'watchlist-play-state-sync': 'Watchlist Play State Sync',
+    'current-jellyfin-viewing-sync': 'Jellyfin Activity Sync',
+    'library-history-hydration': 'Library Sync',
+    'removal-candidate-selection': 'Removal Scan',
+    'removal-candidate-selection-description':
+      'Finds media eligible for scheduled removal.',
+    'scheduled-removal-processing': 'Removal Processing',
+    'scheduled-removal-processing-description':
+      'Processes scheduled removals when their deadlines arrive.',
     'watchlist-play-state-sync-description':
-      'Reconciles current per-user watched state from exact Jellyfin media identities.',
+      "Updates watched status and progress for each user's Watchlist.",
+    'current-jellyfin-viewing-sync-description':
+      'Updates what each user has watched in Jellyfin.',
+    'library-history-hydration-description':
+      'Keeps your Library in sync with your local media files.',
     'fresh-sync': 'Fresh Sync',
+    'fresh-sync-description':
+      'Finds new releases matching your selected discovery sources.',
     'fresh-reconciliation': 'Fresh Reconciliation',
+    'fresh-reconciliation-description':
+      'Keeps Fresh results up to date as media becomes available or changes.',
     editJobSchedule: 'Modify Job',
     jobScheduleEditSaved: 'Job edited successfully!',
     jobScheduleEditFailed: 'Something went wrong while saving the job.',
@@ -126,8 +145,11 @@ interface Job {
   type: 'process' | 'command';
   interval: 'seconds' | 'minutes' | 'hours' | 'days' | 'fixed';
   cronSchedule: string;
-  nextExecutionTime: string;
+  nextExecutionTime: string | null;
   running: boolean;
+  enabled: boolean;
+  scheduledExecutionAllowed: boolean;
+  manualExecutionAllowed: boolean;
 }
 
 type JobModalState = {
@@ -223,16 +245,15 @@ const SettingsJobs = () => {
       defaultMessage: 'Emby Full Library Scan',
     };
   }
-  const orderedJobs = data
-    ?.slice()
-    .sort((left, right) =>
-      intl
-        .formatMessage(jobMessages[left.id] ?? messages.unknownJob)
-        .localeCompare(
-          intl.formatMessage(jobMessages[right.id] ?? messages.unknownJob),
-          locale
-        )
-    );
+  const orderedJobs = data?.slice().sort((left, right) => {
+    const displayedNameOrder = intl
+      .formatMessage(jobMessages[left.id] ?? messages.unknownJob)
+      .localeCompare(
+        intl.formatMessage(jobMessages[right.id] ?? messages.unknownJob),
+        locale
+      );
+    return displayedNameOrder || left.id.localeCompare(right.id, locale);
+  });
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -349,6 +370,7 @@ const SettingsJobs = () => {
           intl.formatMessage(globalMessages.settings),
         ]}
       />
+      <SynchronizationContainmentStatus />
       <Transition
         as={Fragment}
         enter="transition-opacity duration-300"
@@ -451,7 +473,7 @@ const SettingsJobs = () => {
                         })
                       }
                     >
-                      {[1, 2, 3, 4, 5, 6, 7, 10, 14, 21].map((v) => (
+                      {[1, 2, 3, 4, 5, 6, 7, 10, 14, 21, 30].map((v) => (
                         <option value={v} key={`jobScheduleDays-${v}`}>
                           {intl.formatMessage(
                             messages.editJobScheduleSelectorDays,
@@ -539,15 +561,23 @@ const SettingsJobs = () => {
                 </Table.TD>
                 <Table.TD>
                   <div className="text-sm leading-5 text-white">
-                    <FormattedRelativeTime
-                      value={Math.floor(
-                        (new Date(job.nextExecutionTime).getTime() -
-                          Date.now()) /
-                          1000
-                      )}
-                      updateIntervalInSeconds={1}
-                      numeric="auto"
-                    />
+                    {!job.enabled ? (
+                      intl.formatMessage(messages.disabled)
+                    ) : !job.scheduledExecutionAllowed ? (
+                      intl.formatMessage(messages.suppressed)
+                    ) : job.nextExecutionTime ? (
+                      <FormattedRelativeTime
+                        value={Math.floor(
+                          (new Date(job.nextExecutionTime).getTime() -
+                            Date.now()) /
+                            1000
+                        )}
+                        updateIntervalInSeconds={1}
+                        numeric="auto"
+                      />
+                    ) : (
+                      intl.formatMessage(messages.disabled)
+                    )}
                   </div>
                 </Table.TD>
                 <Table.TD alignText="right">
@@ -567,7 +597,11 @@ const SettingsJobs = () => {
                       <span>{intl.formatMessage(messages.canceljob)}</span>
                     </Button>
                   ) : (
-                    <Button buttonType="primary" onClick={() => runJob(job)}>
+                    <Button
+                      buttonType="primary"
+                      disabled={!job.enabled || !job.manualExecutionAllowed}
+                      onClick={() => runJob(job)}
+                    >
                       <PlayIcon />
                       <span>{intl.formatMessage(messages.runnow)}</span>
                     </Button>

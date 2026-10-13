@@ -15,6 +15,10 @@ import type {
   SettingsAboutResponse,
 } from '@server/interfaces/api/settingsInterfaces';
 import { scheduledJobs } from '@server/job/schedule';
+import {
+  SynchronizationExecutionBlockedError,
+  synchronizationPolicy,
+} from '@server/job/synchronizationPolicy';
 import type { AvailableCacheIds } from '@server/lib/cache';
 import cacheManager from '@server/lib/cache';
 import ImageProxy from '@server/lib/imageproxy';
@@ -27,6 +31,7 @@ import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import discoverSettingRoutes from '@server/routes/settings/discover';
 import freshSettingRoutes from '@server/routes/settings/fresh';
+import removalSettingRoutes from '@server/routes/settings/removal';
 import { ApiError } from '@server/types/error';
 import { appDataPath } from '@server/utils/appDataVolume';
 import {
@@ -58,6 +63,7 @@ settingsRoutes.use('/radarr', radarrRoutes);
 settingsRoutes.use('/sonarr', sonarrRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/fresh', freshSettingRoutes);
+settingsRoutes.use('/removal', removalSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
 
 const libraryUpdateSchema = z.object({
@@ -296,10 +302,18 @@ settingsRoutes.get('/plex/sync', (_req, res) => {
   return res.status(200).json(plexFullScanner.status());
 });
 
-settingsRoutes.post('/plex/sync', (req, res) => {
+settingsRoutes.post('/plex/sync', (req, res, next) => {
   if (req.body.cancel) {
     plexFullScanner.cancel();
   } else if (req.body.start) {
+    try {
+      synchronizationPolicy.assertDirectManualExecutionAllowed();
+    } catch (error) {
+      if (error instanceof SynchronizationExecutionBlockedError) {
+        return next({ status: error.status, message: error.message });
+      }
+      return next(error);
+    }
     plexFullScanner.run();
   }
   return res.status(200).json(plexFullScanner.status());
@@ -492,10 +506,18 @@ settingsRoutes.get('/jellyfin/sync', (_req, res) => {
   return res.status(200).json(jellyfinFullScanner.status());
 });
 
-settingsRoutes.post('/jellyfin/sync', (req, res) => {
+settingsRoutes.post('/jellyfin/sync', (req, res, next) => {
   if (req.body.cancel) {
     jellyfinFullScanner.cancel();
   } else if (req.body.start) {
+    try {
+      synchronizationPolicy.assertDirectManualExecutionAllowed();
+    } catch (error) {
+      if (error instanceof SynchronizationExecutionBlockedError) {
+        return next({ status: error.status, message: error.message });
+      }
+      return next(error);
+    }
     jellyfinFullScanner.run();
   }
   return res.status(200).json(jellyfinFullScanner.status());
@@ -722,18 +744,34 @@ settingsRoutes.get(
   }
 );
 
+const scheduledJobResponse = (job: (typeof scheduledJobs)[number]) => {
+  const enabled = job.enabled ? job.enabled() : true;
+  const freshSyncEnabled = getSettings().fresh.enabled;
+  return {
+    id: job.id,
+    name: job.name,
+    type: job.type,
+    interval: job.interval,
+    cronSchedule: job.cronSchedule,
+    nextExecutionTime: enabled ? job.job.nextInvocation() : null,
+    running: job.running ? job.running() : false,
+    enabled,
+    scheduledExecutionAllowed:
+      enabled && synchronizationPolicy.scheduledExecutionAllowed,
+    manualExecutionAllowed:
+      enabled &&
+      synchronizationPolicy.manualExecutionAllowed(job.id, freshSyncEnabled),
+  };
+};
+
+settingsRoutes.get('/synchronization-containment', (_req, res) => {
+  return res
+    .status(200)
+    .json(synchronizationPolicy.status(getSettings().fresh.enabled));
+});
+
 settingsRoutes.get('/jobs', (_req, res) => {
-  return res.status(200).json(
-    scheduledJobs.map((job) => ({
-      id: job.id,
-      name: job.name,
-      type: job.type,
-      interval: job.interval,
-      cronSchedule: job.cronSchedule,
-      nextExecutionTime: job.job.nextInvocation(),
-      running: job.running ? job.running() : false,
-    }))
-  );
+  return res.status(200).json(scheduledJobs.map(scheduledJobResponse));
 });
 
 settingsRoutes.post<{ jobId: string }>('/jobs/:jobId/run', (req, res, next) => {
@@ -743,17 +781,34 @@ settingsRoutes.post<{ jobId: string }>('/jobs/:jobId/run', (req, res, next) => {
     return next({ status: 404, message: 'Job not found.' });
   }
 
-  scheduledJob.job.invoke();
+  if (scheduledJob.enabled && !scheduledJob.enabled()) {
+    return next({ status: 409, message: 'Job is disabled.' });
+  }
 
-  return res.status(200).json({
-    id: scheduledJob.id,
-    name: scheduledJob.name,
-    type: scheduledJob.type,
-    interval: scheduledJob.interval,
-    cronSchedule: scheduledJob.cronSchedule,
-    nextExecutionTime: scheduledJob.job.nextInvocation(),
-    running: scheduledJob.running ? scheduledJob.running() : false,
-  });
+  try {
+    if (synchronizationPolicy.mode === 'commissioning') {
+      if (!scheduledJob.commissioningRun) {
+        throw new SynchronizationExecutionBlockedError(
+          `${scheduledJob.id} is not permitted during synchronization commissioning.`
+        );
+      }
+      synchronizationPolicy.startCommissioningJob(
+        scheduledJob.id,
+        getSettings().fresh.enabled,
+        scheduledJob.commissioningRun
+      );
+    } else {
+      synchronizationPolicy.assertDirectManualExecutionAllowed();
+      scheduledJob.job.invoke();
+    }
+  } catch (error) {
+    if (error instanceof SynchronizationExecutionBlockedError) {
+      return next({ status: error.status, message: error.message });
+    }
+    return next(error);
+  }
+
+  return res.status(200).json(scheduledJobResponse(scheduledJob));
 });
 
 settingsRoutes.post<{ jobId: JobId }>(
@@ -771,15 +826,7 @@ settingsRoutes.post<{ jobId: JobId }>(
       scheduledJob.cancelFn();
     }
 
-    return res.status(200).json({
-      id: scheduledJob.id,
-      name: scheduledJob.name,
-      type: scheduledJob.type,
-      interval: scheduledJob.interval,
-      cronSchedule: scheduledJob.cronSchedule,
-      nextExecutionTime: scheduledJob.job.nextInvocation(),
-      running: scheduledJob.running ? scheduledJob.running() : false,
-    });
+    return res.status(200).json(scheduledJobResponse(scheduledJob));
   }
 );
 
@@ -803,15 +850,7 @@ settingsRoutes.post<{ jobId: JobId }>(
 
       scheduledJob.cronSchedule = req.body.schedule;
 
-      return res.status(200).json({
-        id: scheduledJob.id,
-        name: scheduledJob.name,
-        type: scheduledJob.type,
-        interval: scheduledJob.interval,
-        cronSchedule: scheduledJob.cronSchedule,
-        nextExecutionTime: scheduledJob.job.nextInvocation(),
-        running: scheduledJob.running ? scheduledJob.running() : false,
-      });
+      return res.status(200).json(scheduledJobResponse(scheduledJob));
     } else {
       return next({ status: 400, message: 'Invalid job schedule.' });
     }

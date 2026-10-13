@@ -8,9 +8,26 @@ import {
   UpdateDateColumn,
 } from 'typeorm';
 
+const normalizedStringArray = (value?: string | string[]): string[] => {
+  const parsed = Array.isArray(value)
+    ? value
+    : value
+      ? (JSON.parse(value) as unknown)
+      : [];
+
+  if (
+    !Array.isArray(parsed) ||
+    parsed.some((reason) => typeof reason !== 'string')
+  ) {
+    throw new TypeError('Fresh discovery reasons must be an array of strings.');
+  }
+
+  return parsed;
+};
+
 const stringArray = {
-  to: (value?: string[]) => JSON.stringify(value ?? []),
-  from: (value?: string) => (value ? (JSON.parse(value) as string[]) : []),
+  to: (value?: string[]) => JSON.stringify(normalizedStringArray(value)),
+  from: (value?: string | string[]) => normalizedStringArray(value),
 };
 
 export type FreshHistoryIdentityKind =
@@ -55,7 +72,11 @@ export default class FreshDiscoveryHistory {
   public activitySource = 'unavailable';
   @Column({ type: 'varchar', length: 64, default: 'not_evaluated' })
   public admissionReason = 'not_evaluated';
-  @Column({ type: 'text', transformer: stringArray })
+  @Column({
+    type: 'text',
+    default: () => "'[]'",
+    transformer: stringArray,
+  })
   public automaticReasons: string[] = [];
   @Column({ type: 'int', default: 0 }) public firstSeenGeneration = 0;
   @Column({ type: 'int', default: 0 }) public lastSeenGeneration = 0;

@@ -26,6 +26,7 @@ import {
   candidatePageSelectionState,
   candidateSelectionScopeKey,
   nearestCandidatePage,
+  retainAvailableCandidateSelection,
   toggleCandidatePageSelection,
   toggleCandidateSelection,
 } from './candidateSelection';
@@ -107,7 +108,7 @@ const ManualResolution = ({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   return (
-    <div className="flex flex-wrap items-center justify-end gap-2">
+    <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
       <select
         aria-label={`TMDB media type for ${candidate.displayTitle}`}
         value={mediaType}
@@ -325,9 +326,9 @@ const EligibilityDetails = ({
       className="mt-3 grid gap-x-6 gap-y-1 border-t border-gray-700 pt-3 text-sm text-gray-300 sm:grid-cols-2"
     >
       {rows.map(([label, value]) => (
-        <div className="flex justify-between gap-3" key={label}>
+        <div className="flex min-w-0 justify-between gap-3" key={label}>
           <dt className="text-gray-400">{label}</dt>
-          <dd className="text-right">{value}</dd>
+          <dd className="min-w-0 break-words text-right">{value}</dd>
         </div>
       ))}
     </dl>
@@ -375,7 +376,7 @@ const CandidateRow = ({
             onClick={() => setExpanded((value) => !value)}
           >
             <ChevronRightIcon
-              className={`h-4 w-4 transition-transform ${expanded ? 'rotate-90' : ''}`}
+              className={`h-4 w-4 transition-transform motion-reduce:transition-none ${expanded ? 'rotate-90' : ''}`}
             />
           </button>
           <div className="flex min-w-0 flex-wrap items-baseline gap-x-2">
@@ -418,7 +419,7 @@ const CandidateRow = ({
             )}
           </div>
         </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-2 md:justify-end">
+        <div className="flex min-w-0 flex-wrap items-center gap-2 md:w-auto md:shrink-0 md:justify-end">
           <span>{statusLabels[candidate.displayStatus]}</span>
           {!candidate.active && candidate.automaticReasons[0] && (
             <span className="text-sm text-gray-400">
@@ -568,6 +569,12 @@ const CandidateDiagnostics = ({
   const { data, error, mutate } = useSWR<FreshCandidateDiagnosticResponse>(
     `/api/v1/settings/fresh/candidates?${params}`
   );
+  useEffect(() => {
+    if (!data) return;
+    setSelectedIds((current) =>
+      retainAvailableCandidateSelection(current, data.results)
+    );
+  }, [data]);
   const change = (callback: () => void) => {
     setSelectedIds([]);
     setPage(1);
@@ -680,8 +687,8 @@ const CandidateDiagnostics = ({
           ))}
         </div>
       )}
-      <div className="mb-4 grid gap-3 md:grid-cols-4">
-        <div className="form-input-field">
+      <div className="mb-4 grid min-w-0 gap-3 md:grid-cols-4">
+        <div className="form-input-field min-w-0">
           <input
             type="text"
             aria-label="Search title"
@@ -692,6 +699,7 @@ const CandidateDiagnostics = ({
         </div>
         <MediaTypeFilter
           id="freshCandidateMediaType"
+          ariaLabel="Candidate media type"
           value={mediaType}
           options={[
             { value: 'all', label: 'All' },
@@ -703,7 +711,8 @@ const CandidateDiagnostics = ({
           }
         />
         <Select
-          className="react-select-container"
+          aria-label="Candidate status"
+          className="react-select-container min-w-0"
           classNamePrefix="react-select"
           value={{ value: status, label: statusLabels[status] }}
           options={(
@@ -712,7 +721,8 @@ const CandidateDiagnostics = ({
           onChange={(option) => change(() => setStatus(option?.value ?? 'all'))}
         />
         <Select
-          className="react-select-container"
+          aria-label="Candidate sort order"
+          className="react-select-container min-w-0"
           classNamePrefix="react-select"
           value={{ value: sort, label: sortLabels[sort] }}
           options={(
@@ -723,10 +733,10 @@ const CandidateDiagnostics = ({
           }
         />
       </div>
-      <div className="mb-4 grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+      <div className="mb-4 grid min-w-0 gap-3 md:grid-cols-2 xl:grid-cols-5">
         <Select
           aria-label="Candidate visibility"
-          className="react-select-container"
+          className="react-select-container min-w-0"
           classNamePrefix="react-select"
           value={{ value: visibility, label: visibilityLabels[visibility] }}
           options={(
@@ -738,7 +748,7 @@ const CandidateDiagnostics = ({
         />
         <Select
           aria-label="Reason family"
-          className="react-select-container"
+          className="react-select-container min-w-0"
           classNamePrefix="react-select"
           value={{
             value: reasonFamily,
@@ -753,7 +763,7 @@ const CandidateDiagnostics = ({
         />
         <Select
           aria-label="Season evidence"
-          className="react-select-container"
+          className="react-select-container min-w-0"
           classNamePrefix="react-select"
           value={{
             value: seasonEvidence,
@@ -768,7 +778,7 @@ const CandidateDiagnostics = ({
         />
         <Select
           aria-label="Manual resolution"
-          className="react-select-container"
+          className="react-select-container min-w-0"
           classNamePrefix="react-select"
           value={{
             value: manualResolution,
@@ -786,7 +796,7 @@ const CandidateDiagnostics = ({
         />
         <Select
           aria-label="Admission override"
-          className="react-select-container"
+          className="react-select-container min-w-0"
           classNamePrefix="react-select"
           value={{
             value: admissionOverride,
@@ -803,11 +813,21 @@ const CandidateDiagnostics = ({
           }
         />
       </div>
-      {!data && !error && <LoadingSpinner />}
+      {!data && !error && (
+        <div role="status" aria-live="polite" aria-label="Loading candidates">
+          <LoadingSpinner />
+        </div>
+      )}
       {error && (
-        <p className="text-red-400">
-          Candidate diagnostics could not be loaded.
-        </p>
+        <div
+          className="mb-4 flex flex-wrap items-center gap-3 text-red-400"
+          role="alert"
+        >
+          <span>Candidate diagnostics could not be loaded.</span>
+          <Button buttonSize="sm" onClick={() => void mutate()}>
+            Retry
+          </Button>
+        </div>
       )}
       {data && (
         <>
@@ -878,7 +898,7 @@ const CandidateDiagnostics = ({
               </p>
             )}
           </div>
-          <div className="mt-4 flex items-center justify-end gap-3">
+          <div className="mt-4 flex flex-wrap items-center justify-end gap-3">
             <Button
               disabled={page <= 1}
               onClick={() => {

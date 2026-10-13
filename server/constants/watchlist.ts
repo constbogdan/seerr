@@ -22,3 +22,18 @@ export const watchlistWatchedFilters = [
 export type WatchlistWatchedFilter = (typeof watchlistWatchedFilters)[number];
 
 export type WatchState = 'watched' | 'not_watched' | 'unknown';
+
+export enum UserMediaIntentType {
+  WATCHLIST = 'WATCHLIST',
+}
+
+export enum UserMediaIntentState {
+  ACTIVE = 'ACTIVE',
+  SATISFIED = 'SATISFIED',
+  REMOVED = 'REMOVED',
+}
+
+export enum UserMediaIntentEndReason {
+  USER_REMOVED = 'user_removed',
+  CONFIRMED_COMPLETION = 'confirmed_completion',
+}

@@ -2,29 +2,27 @@
 
 ## Current checkpoint
 
-Validate the first downstream-owned image publication and then prove the
-Dockhand/NAS deployment and rollback path.
+R0–R11 of the Library-enabled production-readiness program are accepted for the
+supported SQLite, single-process topology. R12 owns documentation, i18n, backup,
+and operational readiness; R13 remains the full validation and immutable release
+candidate gate.
 
-- Repository: `constbogdan/seerr`.
-- Upstream: `seerr-team/seerr`, branch `develop`.
-- Audited live upstream tip: `794743a45f17e3d6aba06d68e1716e8b15146673`.
-- `origin/downstream-main`: `f74657aa501e1fc28bf314673a0cedde167d47e6`.
-- Current branch: `chore/downstream-image-publication`; its published workflow
-  commit `60276f62` is the second parent of that downstream merge.
-- The inherited workflow files are source-identical to `upstream/develop`.
-- Unsafe inherited workflows remain disabled externally in the fork; restoring
-  their source does not re-enable them.
-- `.github/workflows/downstream-validation.yml` defines the read-only required
-  `Downstream validation` job and checks the expected workflow inventory.
-- `.github/workflows/downstream-image.yml` publishes `linux/amd64` to
-  `ghcr.io/constbogdan/seerr` only after a push to authenticated
-  `downstream-main`. It uses `custom-v1.0.N`, full-SHA, and rolling `custom`
-  tags and reports the authoritative digest in the workflow summary.
-- `N` advances only for a required image. Exact-range classification begins at
-  the rolling image's authenticated source/version annotations; docs/tooling-only
-  merges leave the image and version unchanged.
-- GHCR metadata and [package documentation](SEERR_DOWNSTREAM_PACKAGE.md) identify
-  the image as a personal downstream build, not an official Seerr release.
+- Repository: `constbogdan/seerr`; upstream remains `seerr-team/seerr:develop`.
+- The intended production path is immutable GHCR digest → Dockhand → one Seerr
+  container on the UGREEN NAS with persistent `/app/config`.
+- The first deployment upgrades the existing production SQLite database and
+  preserves users, requests, settings, and Watchlist data while adding the
+  Foundation schema through migrations.
+- The approved October 4 `wholphin-history-v1` artifact is the default one-time
+  historical input. Jellystat is not a continuing synchronization source.
+- Removal automation remains disabled and requires separate explicit approval.
+- PostgreSQL runtime/concurrency acceptance and multi-replica support remain
+  outside the claimed deployment topology.
+- Startup synchronization is controlled by the strict process-start
+  `SEERR_SYNCHRONIZATION_MODE` contract. Contained mode blocks automatic and
+  manual synchronization; commissioning mode enforces Library, Jellyfin
+  Activity, Watchlist, then optional Fresh ordering. See the
+  [first-production deployment runbook](FIRST_PRODUCTION_DEPLOYMENT.md).
 
 ## Decisions that must survive
 
@@ -91,13 +89,16 @@ Keep it outside the Seerr source repository and outside hosted CI.
 
 ## Immediate next actions
 
-1. Review and merge the image-publication workflow through a PR targeting
-   `downstream-main`.
-2. Authenticate the first versioned GHCR package tags, manifest annotations, and
-   digest.
-3. Verify Dockhand detection of a changed `custom` digest and inspect which OCI
-   metadata/release links it actually presents.
-4. Prove NAS deployment and rollback using recorded immutable digests.
+1. Verify startup-synchronization containment and ordered commissioning during
+   R13 clean-candidate validation.
+2. Complete R13 full validation from a clean immutable candidate containing all
+   intended WIP.
+3. Publish and authenticate the versioned GHCR image, source tag, rolling tag,
+   OCI metadata, and immutable digest through the protected workflow.
+4. Execute the runbook's backup/restore rehearsal before approving the
+   UGREEN/Dockhand deployment window.
+5. Deploy by immutable digest, import the verified artifact once, and preserve
+   Removal-disabled evidence through acceptance.
 
 ## Deferred
 

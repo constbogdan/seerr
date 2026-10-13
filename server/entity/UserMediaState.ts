@@ -4,6 +4,7 @@ import {
   Column,
   Entity,
   Index,
+  JoinColumn,
   ManyToOne,
   PrimaryGeneratedColumn,
   Unique,
@@ -21,16 +22,21 @@ export class UserMediaState {
 
   @ManyToOne(() => User, (user) => user.mediaStates, {
     eager: true,
+    nullable: false,
     onDelete: 'CASCADE',
   })
-  @Index()
+  @JoinColumn({
+    name: 'userId',
+    foreignKeyConstraintName: 'FK_user_media_state_user',
+  })
+  @Index('IDX_user_media_state_userId')
   public user: User;
 
   @Column({ type: 'varchar' })
   public mediaType: MediaType;
 
   @Column()
-  @Index()
+  @Index('IDX_user_media_state_tmdbId')
   public tmdbId: number;
 
   @ManyToOne(() => Media, {
@@ -38,7 +44,11 @@ export class UserMediaState {
     nullable: true,
     onDelete: 'SET NULL',
   })
-  @Index()
+  @JoinColumn({
+    name: 'mediaId',
+    foreignKeyConstraintName: 'FK_user_media_state_media',
+  })
+  @Index('IDX_user_media_state_mediaId')
   public media?: Media | null;
 
   @Column({ type: 'boolean', nullable: true })

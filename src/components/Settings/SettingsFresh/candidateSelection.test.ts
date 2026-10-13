@@ -7,6 +7,7 @@ import {
   candidatePageSelectionState,
   candidateSelectionScopeKey,
   nearestCandidatePage,
+  retainAvailableCandidateSelection,
   toggleCandidatePageSelection,
   toggleCandidateSelection,
   type CandidateSelectionScope,
@@ -69,6 +70,12 @@ describe('Fresh Candidate Diagnostics page selection', () => {
       { candidateId: 3, expectedRevision: 2 },
     ]);
     assert.equal(selected.includes(99), false);
+  });
+
+  it('retains only selections that still exist after authoritative refresh', () => {
+    const unchanged = [1, 2];
+    assert.equal(retainAvailableCandidateSelection(unchanged, rows), unchanged);
+    assert.deepEqual(retainAvailableCandidateSelection([1, 9], rows), [1]);
   });
 
   it('changes selection scope for page, search, every filter, and visibility', () => {

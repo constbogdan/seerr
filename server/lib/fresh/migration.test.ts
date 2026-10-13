@@ -12,6 +12,7 @@ import { AddFreshAvailabilityDates1790000000004 } from '@server/migration/sqlite
 import { AddFreshEligibilitySchemaVersion1790000000006 } from '@server/migration/sqlite/1790000000006-AddFreshEligibilitySchemaVersion';
 import { RefineFreshDiscovery1790000000010 } from '@server/migration/sqlite/1790000000010-RefineFreshDiscovery';
 import { AddFreshCandidateVisibility1790000000012 } from '@server/migration/sqlite/1790000000012-AddFreshCandidateVisibility';
+import { NormalizeWatchlistAndFresh1790000000022 } from '@server/migration/sqlite/1790000000022-NormalizeWatchlistAndFresh';
 import assert from 'node:assert/strict';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -148,6 +149,7 @@ describe('Fresh persistence migration', () => {
         AddFreshEligibilitySchemaVersion1790000000006,
         RefineFreshDiscovery1790000000010,
         AddFreshCandidateVisibility1790000000012,
+        NormalizeWatchlistAndFresh1790000000022,
       ],
       synchronize: false,
     });
@@ -176,6 +178,54 @@ describe('Fresh persistence migration', () => {
         1
       );
       const now = new Date('2026-09-26T10:00:00Z');
+      const historyRepository = database.getRepository(FreshDiscoveryHistory);
+      const history = await historyRepository.save(
+        new FreshDiscoveryHistory({
+          mediaType: 'movie',
+          tmdbId: 100,
+          identityKind: 'movie',
+          firstObservedAt: now,
+          lastObservedAt: now,
+          automaticReasons: ['eligible_movie', 'released_recently'],
+        })
+      );
+      assert.deepEqual(history.automaticReasons, [
+        'eligible_movie',
+        'released_recently',
+      ]);
+      history.automaticReasons = ['manual_admission'];
+      assert.deepEqual(
+        (await historyRepository.save(history)).automaticReasons,
+        ['manual_admission']
+      );
+      assert.deepEqual(
+        (await historyRepository.findOneByOrFail({ id: history.id }))
+          .automaticReasons,
+        ['manual_admission']
+      );
+      const defaultHistory = await historyRepository.save(
+        new FreshDiscoveryHistory({
+          mediaType: 'movie',
+          tmdbId: 102,
+          identityKind: 'movie',
+          firstObservedAt: now,
+          lastObservedAt: now,
+        })
+      );
+      assert.deepEqual(defaultHistory.automaticReasons, []);
+      assert.deepEqual(
+        (await historyRepository.findOneByOrFail({ id: defaultHistory.id }))
+          .automaticReasons,
+        []
+      );
+      await database.query(
+        `UPDATE "fresh_discovery_history" SET "automaticReasons" = '"invalid"' WHERE "id" = ?`,
+        [history.id]
+      );
+      await assert.rejects(
+        () => historyRepository.findOneByOrFail({ id: history.id }),
+        /array of strings/
+      );
       const media = await database.getRepository(FreshMedia).save(
         new FreshMedia({
           mediaType: 'movie',
@@ -186,7 +236,6 @@ describe('Fresh persistence migration', () => {
           metadataRefreshedAt: now,
           displayTitle: 'Movie',
           sortTitle: 'movie',
-          originalTitle: 'Movie',
         })
       );
       const candidate = await database.getRepository(FreshCandidate).save(

@@ -6,11 +6,50 @@ import {
 import logger from '@server/logger';
 import { Router } from 'express';
 import { QueryFailedError } from 'typeorm';
+import { ZodError } from 'zod';
 
 import { MediaType } from '@server/constants/media';
+import { UserMediaIntentState } from '@server/constants/watchlist';
 import { watchlistCreate } from '@server/interfaces/api/watchlistCreate';
+import { Permission } from '@server/lib/permissions';
+import {
+  getWatchlistHistory,
+  type WatchlistHistoryResponse,
+} from '@server/lib/watchlistLifecycle';
 
 const watchlistRoutes = Router();
+
+watchlistRoutes.get<never, WatchlistHistoryResponse>(
+  '/history',
+  async (req, res, next) => {
+    const requestedUserId = Number(req.query.userId ?? req.user?.id);
+    if (!Number.isSafeInteger(requestedUserId) || requestedUserId < 1) {
+      return next({ status: 400, message: 'Invalid Watchlist history user.' });
+    }
+    if (
+      requestedUserId !== req.user?.id &&
+      !req.user?.hasPermission(Permission.WATCHLIST_VIEW)
+    ) {
+      return next({
+        status: 403,
+        message: 'You do not have permission to view this Watchlist history.',
+      });
+    }
+    const requestedPage = Number(req.query.page ?? 1);
+    const page =
+      Number.isSafeInteger(requestedPage) && requestedPage > 0
+        ? requestedPage
+        : 1;
+    const state = Object.values(UserMediaIntentState).includes(
+      req.query.state as UserMediaIntentState
+    )
+      ? (req.query.state as UserMediaIntentState)
+      : undefined;
+    return res.json(
+      await getWatchlistHistory({ userId: requestedUserId, page, state })
+    );
+  }
+);
 
 watchlistRoutes.post<never, Watchlist, Watchlist>(
   '/',
@@ -32,6 +71,9 @@ watchlistRoutes.post<never, Watchlist, Watchlist>(
     } catch (error) {
       if (!(error instanceof Error)) {
         return;
+      }
+      if (error instanceof ZodError) {
+        return next({ status: 400, message: 'Invalid Watchlist item.' });
       }
       switch (error.constructor) {
         case QueryFailedError:
@@ -58,6 +100,14 @@ watchlistRoutes.delete('/:tmdbId', async (req, res, next) => {
     });
   }
   try {
+    const tmdbId = Number(req.params.tmdbId);
+    if (
+      !Number.isSafeInteger(tmdbId) ||
+      tmdbId <= 0 ||
+      !/^\d+$/.test(req.params.tmdbId)
+    ) {
+      return next({ status: 400, message: 'Invalid TMDB identifier.' });
+    }
     const mediaType = req.query.mediaType;
     if (mediaType !== MediaType.MOVIE && mediaType !== MediaType.TV) {
       return next({
@@ -66,11 +116,7 @@ watchlistRoutes.delete('/:tmdbId', async (req, res, next) => {
       });
     }
 
-    await Watchlist.deleteWatchlist(
-      Number(req.params.tmdbId),
-      mediaType,
-      req.user
-    );
+    await Watchlist.deleteWatchlist(tmdbId, mediaType, req.user);
     return res.status(204).send();
   } catch (e) {
     if (e instanceof NotFoundError) {

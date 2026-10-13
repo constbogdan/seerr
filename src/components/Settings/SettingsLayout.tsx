@@ -20,6 +20,8 @@ const messages = defineMessages('components.Settings', {
   menuAbout: 'About',
   menuMetadataProviders: 'Metadata Providers',
   menuDiscoverySources: 'Discovery Sources',
+  menuHistoryImport: 'History Import',
+  menuRemoval: 'Removal',
 });
 
 type SettingsLayoutProps = {
@@ -72,6 +74,11 @@ const SettingsLayout = ({ children }: SettingsLayoutProps) => {
       regex: /^\/settings\/discovery-sources/,
     },
     {
+      text: intl.formatMessage(messages.menuRemoval),
+      route: '/settings/removal',
+      regex: /^\/settings\/removal/,
+    },
+    {
       text: intl.formatMessage(messages.menuNotifications),
       route: '/settings/notifications/email',
       regex: /^\/settings\/notifications/,
@@ -85,6 +92,11 @@ const SettingsLayout = ({ children }: SettingsLayoutProps) => {
       text: intl.formatMessage(messages.menuJobs),
       route: '/settings/jobs',
       regex: /^\/settings\/jobs/,
+    },
+    {
+      text: intl.formatMessage(messages.menuHistoryImport),
+      route: '/settings/history-import',
+      regex: /^\/settings\/history-import/,
     },
     {
       text: intl.formatMessage(messages.menuAbout),

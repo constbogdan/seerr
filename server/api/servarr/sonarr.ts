@@ -14,7 +14,7 @@ export interface SonarrSeason {
     percentOfEpisodes: number;
   };
 }
-interface EpisodeResult {
+export interface SonarrEpisode {
   seriesId: number;
   episodeFileId: number;
   seasonNumber: number;
@@ -26,8 +26,24 @@ interface EpisodeResult {
   hasFile: boolean;
   monitored: boolean;
   absoluteEpisodeNumber: number;
+  tvdbId?: number;
   unverifiedSceneNumbering: boolean;
   id: number;
+}
+
+export interface SonarrEpisodeFile {
+  id: number;
+  seriesId: number;
+  seasonNumber: number;
+  relativePath?: string;
+  path?: string;
+  size: number;
+  dateAdded: string;
+  quality?: {
+    quality?: {
+      resolution?: number | null;
+    } | null;
+  } | null;
 }
 
 export interface SonarrSeries {
@@ -112,7 +128,7 @@ export interface LanguageProfile {
 class SonarrAPI extends ServarrBase<{
   seriesId: number;
   episodeId: number;
-  episode: EpisodeResult;
+  episode: SonarrEpisode;
 }> {
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super({ url, apiKey, apiName: 'Sonarr', cacheName: 'sonarr' });
@@ -133,18 +149,10 @@ class SonarrAPI extends ServarrBase<{
   public async getLibrarySeriesByTvdbId(
     tvdbId: number
   ): Promise<SonarrSeries[]> {
-    try {
-      const response = await this.axios.get<SonarrSeries[]>('/series', {
-        params: { tvdbId },
-      });
-
-      return response.data;
-    } catch (e) {
-      throw new Error(
-        `[Sonarr] Failed to retrieve series by TVDB ID: ${e.message}`,
-        { cause: e }
-      );
-    }
+    const response = await this.axios.get<SonarrSeries[]>('/series', {
+      params: { tvdbId },
+    });
+    return response.data;
   }
 
   public async getSeriesById(id: number): Promise<SonarrSeries> {
@@ -373,9 +381,9 @@ class SonarrAPI extends ServarrBase<{
     }
   }
 
-  public async getEpisodes(seriesId: number): Promise<EpisodeResult[]> {
+  public async getEpisodes(seriesId: number): Promise<SonarrEpisode[]> {
     try {
-      const response = await this.axios.get<EpisodeResult[]>('/episode', {
+      const response = await this.axios.get<SonarrEpisode[]>('/episode', {
         params: { seriesId },
       });
       return response.data;
@@ -386,6 +394,23 @@ class SonarrAPI extends ServarrBase<{
         seriesId,
       });
       throw new Error('Failed to get episodes', { cause: e });
+    }
+  }
+
+  public async getEpisodeFiles(seriesId: number): Promise<SonarrEpisodeFile[]> {
+    try {
+      const response = await this.axios.get<SonarrEpisodeFile[]>(
+        '/episodefile',
+        { params: { seriesId } }
+      );
+      return response.data;
+    } catch (e) {
+      logger.error('Failed to retrieve episode files', {
+        label: 'Sonarr API',
+        errorMessage: e.message,
+        seriesId,
+      });
+      throw new Error('Failed to get episode files', { cause: e });
     }
   }
 
@@ -402,6 +427,44 @@ class SonarrAPI extends ServarrBase<{
         episodeIds,
       });
       throw new Error('Failed to monitor episodes', { cause: e });
+    }
+  }
+
+  public async setEpisodesMonitored(
+    episodeIds: number[],
+    monitored: boolean
+  ): Promise<void> {
+    if (!episodeIds.length) return;
+    await this.axios.put('/episode/monitor', { episodeIds, monitored });
+  }
+
+  public async setSeasonMonitored(
+    series: SonarrSeries,
+    seasonNumber: number,
+    monitored: boolean
+  ): Promise<SonarrSeries> {
+    const season = series.seasons.find(
+      (candidate) => candidate.seasonNumber === seasonNumber
+    );
+    if (!season) throw new Error('Season not found in Sonarr series');
+    const response = await this.axios.put<SonarrSeries>('/series', {
+      ...series,
+      seasons: series.seasons.map((candidate) =>
+        candidate.seasonNumber === seasonNumber
+          ? { ...candidate, monitored }
+          : candidate
+      ),
+    });
+    return response.data;
+  }
+
+  public async deleteEpisodeFiles(fileIds: number[]): Promise<void> {
+    for (const fileId of [...new Set(fileIds)]) {
+      try {
+        await this.axios.delete(`/episodefile/${fileId}`);
+      } catch (e) {
+        if (e?.response?.status !== 404) throw e;
+      }
     }
   }
 
@@ -429,30 +492,40 @@ class SonarrAPI extends ServarrBase<{
 
     return newSeasons;
   }
-  public removeSeries = async (tvdbId: number): Promise<void> => {
-    const { id, title } = await this.getSeriesByTvdbId(tvdbId);
-
-    if (!id) {
+  public removeSeries = async (
+    tvdbId: number,
+    beforeDelete?: () => Promise<void>
+  ): Promise<'removed' | 'absent'> => {
+    const matches = (await this.getLibrarySeriesByTvdbId(tvdbId)).filter(
+      (series) => series.tvdbId === tvdbId
+    );
+    if (matches.length > 1) {
+      throw new Error('Multiple exact Sonarr series matched the TVDB ID');
+    }
+    const series = matches[0];
+    if (!series?.id) {
       logger.info(`[Sonarr] Series not in library, nothing to remove`, {
         tvdbId,
       });
-      return;
+      return 'absent';
     }
 
     try {
-      await this.axios.delete(`/series/${id}`, {
+      await beforeDelete?.();
+      await this.axios.delete(`/series/${series.id}`, {
         params: {
           deleteFiles: true,
-          addImportExclusion: false,
+          addImportListExclusion: false,
         },
       });
-      logger.info(`[Sonarr] Removed series ${title}`);
+      logger.info(`[Sonarr] Removed series ${series.title}`);
+      return 'removed';
     } catch (e) {
       if (e?.response?.status === 404) {
         logger.info(`[Sonarr] Series already removed from Sonarr`, {
           tvdbId,
         });
-        return;
+        return 'absent';
       }
       throw e;
     }

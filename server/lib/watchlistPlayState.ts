@@ -1,5 +1,4 @@
 import JellyfinAPI, {
-  MAX_JELLYFIN_ITEM_IDS,
   type JellyfinLibraryItemExtended,
 } from '@server/api/jellyfin';
 import { MediaType } from '@server/constants/media';
@@ -9,12 +8,20 @@ import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
 import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
+import backgroundDatabaseWriteCoordinator from '@server/lib/backgroundDatabaseWriteCoordinator';
+import {
+  chunkValues,
+  getBatchedUserItems,
+  JELLYFIN_VIEWING_USER_CONCURRENCY,
+  normalizeExactJellyfinId,
+  runBounded,
+  type JellyfinViewingClient,
+} from '@server/lib/jellyfinViewingSource';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { getHostname } from '@server/utils/getHostname';
 import { In } from 'typeorm';
 
-const USER_CONCURRENCY = 2;
 const STARTUP_RETRY_DELAY_MS = 5_000;
 const STARTUP_RETRY_LIMIT = 12;
 
@@ -29,12 +36,7 @@ export interface WatchlistPlayStateProjection {
   lastPlayedAt: Date | null;
 }
 
-export const normalizeExactJellyfinId = (
-  value?: string | null
-): string | null => {
-  const normalized = value?.replaceAll('-', '').trim().toLowerCase();
-  return normalized && /^[0-9a-f]{32}$/.test(normalized) ? normalized : null;
-};
+export { normalizeExactJellyfinId } from '@server/lib/jellyfinViewingSource';
 
 export const deriveWatchlistPlayState = ({
   mediaType,
@@ -72,33 +74,7 @@ export const deriveWatchlistPlayState = ({
   return { played, lastPlayedAt };
 };
 
-const chunks = <T>(values: T[], size: number): T[][] => {
-  const result: T[][] = [];
-  for (let offset = 0; offset < values.length; offset += size) {
-    result.push(values.slice(offset, offset + size));
-  }
-  return result;
-};
-
-const runBounded = async <T>(
-  values: T[],
-  concurrency: number,
-  worker: (value: T) => Promise<void>
-): Promise<void> => {
-  let index = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, values.length) }, async () => {
-      while (index < values.length) {
-        const current = values[index++];
-        await worker(current);
-      }
-    })
-  );
-};
-
-interface WatchlistPlayStateClient {
-  getUserItems: JellyfinAPI['getUserItems'];
-}
+type WatchlistPlayStateClient = JellyfinViewingClient;
 
 interface PendingUpdate extends WatchlistPlayStateProjection {
   id: number;
@@ -139,15 +115,17 @@ export class WatchlistPlayStateSync {
     this.cancelled = true;
   }
 
-  public async run(): Promise<number> {
+  public async run(requireComplete = false): Promise<number> {
     if (this.inFlight) {
       return this.inFlight;
     }
     this.cancelled = false;
-    this.inFlight = this.reconcile().finally(() => {
-      this.inFlight = undefined;
-      this.cancelled = false;
-    });
+    this.inFlight = backgroundDatabaseWriteCoordinator
+      .runExclusive(() => this.reconcile(requireComplete))
+      .finally(() => {
+        this.inFlight = undefined;
+        this.cancelled = false;
+      });
     return this.inFlight;
   }
 
@@ -192,7 +170,7 @@ export class WatchlistPlayStateSync {
 
     if (watchlistRows.length > 0) {
       await dataSource.transaction(async (manager) => {
-        for (const batch of chunks(watchlistRows, 200)) {
+        for (const batch of chunkValues(watchlistRows, 200)) {
           await manager
             .createQueryBuilder()
             .insert()
@@ -262,7 +240,7 @@ export class WatchlistPlayStateSync {
     return states;
   }
 
-  private async reconcile(): Promise<number> {
+  private async reconcile(requireComplete: boolean): Promise<number> {
     const startedAt = Date.now();
     const rows = await this.ensureStateRecords();
     const summary = {
@@ -317,119 +295,125 @@ export class WatchlistPlayStateSync {
     const updates = [...unknownUpdates];
     const groups = [...byUser.entries()];
     const client = groups.length > 0 ? await this.clientFactory() : undefined;
-    await runBounded(groups, USER_CONCURRENCY, async ([userId, group]) => {
-      if (this.cancelled) return;
-      if (group.userIds.size !== 1) {
-        summary.failures += 1;
-        logger.error('Ambiguous Jellyfin user mapping blocks Watchlist sync', {
-          label: 'Watchlist Play State',
-          mappedSeerrUsers: group.userIds.size,
-        });
-        updates.push(
-          ...group.rows.map((row) => ({
-            id: row.id,
-            played: null,
-            lastPlayedAt: null,
-            syncedAt: null,
-            userId: null,
-          }))
-        );
-        return;
-      }
-
-      const rowsWithIds = group.rows.map((row) => ({
-        row,
-        ids: [
-          ...new Set(
-            [row.media?.jellyfinMediaId, row.media?.jellyfinMediaId4k]
-              .map(normalizeExactJellyfinId)
-              .filter((id): id is string => Boolean(id))
-          ),
-        ],
-      }));
-      summary.mappedMedia += rowsWithIds.filter(
-        ({ ids }) => ids.length > 0
-      ).length;
-      summary.unmappedMedia += rowsWithIds.filter(
-        ({ ids }) => ids.length === 0
-      ).length;
-      const allIds = [...new Set(rowsWithIds.flatMap(({ ids }) => ids))];
-      summary.idsQueried += allIds.length;
-      const itemsById = new Map<string, JellyfinLibraryItemExtended>();
-      try {
-        for (const batch of chunks(allIds, MAX_JELLYFIN_ITEM_IDS)) {
-          if (this.cancelled) return;
-          if (batch.length === 0) continue;
-          const items = await client!.getUserItems({
-            ids: batch,
-            userId,
-            fields: ['ProviderIds', 'RecursiveItemCount'],
-          });
-          for (const item of items) {
-            const id = normalizeExactJellyfinId(item.Id);
-            if (id) itemsById.set(id, item);
-          }
-        }
-      } catch (error) {
-        summary.failures += 1;
-        logger.warn('Unable to reconcile Watchlist play state for a user', {
-          label: 'Watchlist Play State',
-          errorType:
-            error instanceof Error ? error.name : 'UnknownProviderError',
-        });
-        updates.push(
-          ...group.rows
-            .filter(
-              (row) =>
-                row.jellyfinPlayStateUserId !== null &&
-                row.jellyfinPlayStateUserId !== undefined &&
-                row.jellyfinPlayStateUserId !== userId
-            )
-            .map((row) => ({
+    await runBounded(
+      groups,
+      JELLYFIN_VIEWING_USER_CONCURRENCY,
+      async ([userId, group]) => {
+        if (this.cancelled) return;
+        if (group.userIds.size !== 1) {
+          summary.failures += 1;
+          logger.error(
+            'Ambiguous Jellyfin user mapping blocks Watchlist sync',
+            {
+              label: 'Watchlist Play State',
+              mappedSeerrUsers: group.userIds.size,
+            }
+          );
+          updates.push(
+            ...group.rows.map((row) => ({
               id: row.id,
               played: null,
               lastPlayedAt: null,
               syncedAt: null,
               userId: null,
             }))
-        );
-        return;
-      }
+          );
+          return;
+        }
 
-      const syncedAt = new Date();
-      for (const { row, ids } of rowsWithIds) {
-        if (ids.length === 0) {
-          updates.push({
-            id: row.id,
-            played: null,
-            lastPlayedAt: null,
-            syncedAt,
+        const rowsWithIds = group.rows.map((row) => ({
+          row,
+          ids: [
+            ...new Set(
+              [row.media?.jellyfinMediaId, row.media?.jellyfinMediaId4k]
+                .map(normalizeExactJellyfinId)
+                .filter((id): id is string => Boolean(id))
+            ),
+          ],
+        }));
+        summary.mappedMedia += rowsWithIds.filter(
+          ({ ids }) => ids.length > 0
+        ).length;
+        summary.unmappedMedia += rowsWithIds.filter(
+          ({ ids }) => ids.length === 0
+        ).length;
+        const allIds = [...new Set(rowsWithIds.flatMap(({ ids }) => ids))];
+        summary.idsQueried += allIds.length;
+        const itemsById = new Map<string, JellyfinLibraryItemExtended>();
+        try {
+          const fetched = await getBatchedUserItems({
+            client: client!,
+            ids: allIds,
             userId,
+            fields: ['ProviderIds', 'RecursiveItemCount'],
           });
-          continue;
-        }
-        const matched = ids
-          .map((id) => itemsById.get(id))
-          .filter((item): item is JellyfinLibraryItemExtended => Boolean(item));
-        const projection = deriveWatchlistPlayState({
-          mediaType: row.mediaType,
-          items: matched,
-        });
-        if (
-          matched.some((item) => item.UserData?.Played === true) &&
-          matched.some((item) => item.UserData?.Played === false)
-        ) {
-          logger.info('Jellyfin versions disagree on Watchlist play state', {
+          for (const [id, item] of fetched) itemsById.set(id, item);
+        } catch (error) {
+          summary.failures += 1;
+          logger.warn('Unable to reconcile Watchlist play state for a user', {
             label: 'Watchlist Play State',
-            mediaType: row.mediaType,
-            tmdbId: row.tmdbId,
+            errorType:
+              error instanceof Error ? error.name : 'UnknownProviderError',
           });
+          updates.push(
+            ...group.rows
+              .filter(
+                (row) =>
+                  row.jellyfinPlayStateUserId !== null &&
+                  row.jellyfinPlayStateUserId !== undefined &&
+                  row.jellyfinPlayStateUserId !== userId
+              )
+              .map((row) => ({
+                id: row.id,
+                played: null,
+                lastPlayedAt: null,
+                syncedAt: null,
+                userId: null,
+              }))
+          );
+          return;
         }
-        updates.push({ id: row.id, ...projection, syncedAt, userId });
+
+        const syncedAt = new Date();
+        for (const { row, ids } of rowsWithIds) {
+          if (ids.length === 0) {
+            updates.push({
+              id: row.id,
+              played: null,
+              lastPlayedAt: null,
+              syncedAt,
+              userId,
+            });
+            continue;
+          }
+          const matched = ids
+            .map((id) => itemsById.get(id))
+            .filter((item): item is JellyfinLibraryItemExtended =>
+              Boolean(item)
+            );
+          const projection = deriveWatchlistPlayState({
+            mediaType: row.mediaType,
+            items: matched,
+          });
+          if (
+            matched.some((item) => item.UserData?.Played === true) &&
+            matched.some((item) => item.UserData?.Played === false)
+          ) {
+            logger.info('Jellyfin versions disagree on Watchlist play state', {
+              label: 'Watchlist Play State',
+              mediaType: row.mediaType,
+              tmdbId: row.tmdbId,
+            });
+          }
+          updates.push({ id: row.id, ...projection, syncedAt, userId });
+        }
       }
-    });
+    );
 
     if (this.cancelled) {
+      if (requireComplete) {
+        throw new Error('watchlist_play_state_cancelled');
+      }
       return 0;
     }
     if (updates.length > 0) {
@@ -469,6 +453,9 @@ export class WatchlistPlayStateSync {
       ...summary,
       durationMs: Date.now() - startedAt,
     });
+    if (requireComplete && summary.failures > 0) {
+      throw new Error('watchlist_play_state_incomplete');
+    }
     return updates.length;
   }
 }

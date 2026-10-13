@@ -91,8 +91,8 @@ describe('Watchlist presentation preferences', () => {
 
 describe('Watchlist page and navigation integration', () => {
   const page = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
-  const sidebar = readFileSync(
-    path.join(__dirname, '../../Layout/Sidebar/index.tsx'),
+  const navigation = readFileSync(
+    path.join(__dirname, '../../Layout/navigationConfig.ts'),
     'utf8'
   );
   const mobile = readFileSync(
@@ -117,6 +117,10 @@ describe('Watchlist page and navigation integration', () => {
   );
   const cornerBadge = readFileSync(
     path.join(__dirname, '../../TitleCard/CornerBadge.tsx'),
+    'utf8'
+  );
+  const libraryEngagement = readFileSync(
+    path.join(__dirname, '../../Library/LibraryEngagement.tsx'),
     'utf8'
   );
   const movieDetails = readFileSync(
@@ -167,6 +171,13 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(page, /w-48 max-w-full/);
     assert.match(page, /relative z-50/);
     assert.match(page, /filter\(\(\{ id \}\) => id !== currentUser\?\.id\)/);
+    assert.match(page, /const preferencesReady =/);
+    assert.match(page, /preferencesReady[\s\S]*?\/watchlist`[\s\S]*?: null/);
+    assert.match(
+      page,
+      /canViewOthers && !eligibleUsers && !eligibleUsersError/
+    );
+    assert.match(page, /const eligibleOwner = canViewOthers/);
     assert.ok(
       page.indexOf('value="all"') < page.indexOf('value="not_watched"')
     );
@@ -207,14 +218,45 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(page, /plexItems=\{titles\}/);
   });
 
-  it('renders completion and owner evidence without per-card provider reads', () => {
+  it('renders completion and the shared owner avatar without provider reads', () => {
     assert.match(listView, /watchState=\{title\.watchState\}/);
     assert.match(titleCard, /buildTitleCardStateIndicators/);
     assert.match(titleCard, /data-testid="title-card-classification-state"/);
     assert.match(titleCard, /data-testid="title-card-owner-region"/);
-    assert.match(titleCard, /tone="owner"/);
+    assert.match(titleCard, /<UserAvatar user=\{watchlistOwner\} \/>/);
+    assert.match(
+      titleCard,
+      /pointer-events-auto[\s\S]*?data-testid="title-card-owner-region"/
+    );
+    assert.match(
+      titleCard,
+      /className="pointer-events-auto col-start-1 row-start-3 flex min-w-0 items-center self-end justify-self-start leading-none"[\s\S]*?data-testid="title-card-owner-region"/
+    );
+    assert.match(
+      titleCard,
+      /className="pointer-events-none absolute inset-0 z-30 p-2"[\s\S]*?data-testid="title-card-corner-frame"/
+    );
+    assert.match(
+      libraryEngagement,
+      /<Tooltip[\s\S]*?content=\{user\.displayName\}/
+    );
+    assert.match(
+      libraryEngagement,
+      /tooltipConfig=\{\{ trigger: \['hover', 'focus'\] \}\}/
+    );
+    assert.match(libraryEngagement, /type="avatar"/);
+    assert.match(libraryEngagement, /<UserCircleIcon/);
+    assert.match(
+      libraryEngagement,
+      /tabIndex=\{showTooltip \? 0 : undefined\}/
+    );
+    assert.match(libraryEngagement, /focus-visible:ring-indigo-400/);
     assert.doesNotMatch(titleCard, /CheckCircleIcon/);
-    assert.match(listView, /title\.requestedBy\?\.displayName/);
+    assert.match(
+      listView,
+      /watchlistOwner=\{[\s\S]*?showWatchlistOwner \? title\.requestedBy : undefined/
+    );
+    assert.doesNotMatch(titleCard, /tone="owner"|watchlistOwnerName/);
     assert.doesNotMatch(listView, /api\/v1\/.*jellyfin/i);
   });
 
@@ -301,7 +343,7 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(actionStateGrid, /data-state-slot=\{state\.id\}/);
     assert.match(actionStateGrid, /grid-cols-\[1\.75rem_1\.75rem\]/);
     assert.match(actionStateGrid, /auto-rows-\[1\.75rem\]/);
-    assert.match(titleCard, /watchlistOwnerName/);
+    assert.match(titleCard, /watchlistOwner/);
     assert.match(titleCard, /data-testid="title-card-corner-frame"/);
     assert.match(
       titleCard,
@@ -310,9 +352,20 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(titleCard, /data-testid="title-card-action-state-region"/);
     assert.match(titleCard, /data-testid="title-card-owner-region"/);
     assert.match(titleCard, /data-testid="title-card-request-region"/);
-    assert.match(cornerBadge, /h-7 max-w-full items-center rounded-md/);
-    assert.match(cornerBadge, /leading-5/);
-    assert.doesNotMatch(cornerBadge, /rounded-md border/);
+    assert.match(
+      cornerBadge,
+      /inline-flex max-w-full items-center self-start rounded-md bg-gray-900\/90 px-2 py-1 text-center text-xs font-medium shadow-md/
+    );
+    assert.match(cornerBadge, /movie: 'text-blue-400'/);
+    assert.match(cornerBadge, /series: 'text-purple-400'/);
+    assert.doesNotMatch(
+      cornerBadge,
+      /owner|bg-(?:blue|purple)|border-(?:blue|purple)|rounded-(?:full|tl-|tr-|bl-|br-)/
+    );
+    assert.match(
+      titleCard,
+      /className="col-start-1 row-start-1 flex min-w-0 self-start justify-self-start"[\s\S]*?data-testid="title-card-classification-state"/
+    );
     assert.match(
       titleCard,
       /data-testid="title-card-corner-frame"[\s\S]*?data-testid="title-card-classification-state"[\s\S]*?data-testid="title-card-action-state-region"[\s\S]*?data-testid="title-card-owner-region"[\s\S]*?data-testid="title-card-request-region"/
@@ -408,13 +461,9 @@ describe('Watchlist page and navigation integration', () => {
     );
     assert.match(titleCard, /setShowRequestModal\(true\)/);
     assert.match(titleCard, /data-testid="title-card-request-region"/);
-    assert.match(titleCard, /buttonType="primary"/);
-    assert.match(titleCard, /!h-8 !w-8 !rounded-md !border-transparent/);
-    assert.match(titleCard, /!bg-orange-500\/90/);
-    assert.match(titleCard, /!text-white/);
-    assert.match(titleCard, /hover:!bg-orange-400/);
-    assert.match(titleCard, /active:!bg-orange-600/);
-    assert.match(titleCard, /focus:!ring-orange-300/);
+    assert.match(titleCard, /<RequestIconButton/);
+    assert.match(titleCard, /className="z-40 !h-8 !w-8 !p-1\.5"/);
+    assert.doesNotMatch(titleCard, /!bg-orange-500\/90/);
     assert.doesNotMatch(titleCard, /className="h-7 w-full"/);
   });
 
@@ -427,13 +476,9 @@ describe('Watchlist page and navigation integration', () => {
   });
 
   it('adds desktop and mobile Watchlist navigation while retaining Requests', () => {
-    assert.match(sidebar, /href: '\/discover\/watchlist'/);
-    assert.match(sidebar, /dataTestId: 'sidebar-menu-watchlist'/);
-    assert.match(mobile, /href: '\/discover\/watchlist'/);
-    assert.match(mobile, /dataTestId: 'mobile-menu-watchlist'/);
-    assert.match(
-      mobile,
-      /\['\/', '\/discover\/movies', '\/discover\/tv', '\/requests'\]/
-    );
+    assert.match(navigation, /href: '\/discover\/watchlist'/);
+    assert.match(navigation, /href: '\/requests'/);
+    assert.match(mobile, /data-testid=\{`mobile-menu-\$\{link\.id\}`\}/);
+    assert.match(mobile, /getBottomNavigationDestinations/);
   });
 });

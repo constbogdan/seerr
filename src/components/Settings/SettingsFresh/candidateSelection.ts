@@ -56,6 +56,17 @@ export const toggleCandidatePageSelection = (
   selected: boolean
 ): number[] => (selected ? rows.map((row) => row.candidateId) : []);
 
+export const retainAvailableCandidateSelection = (
+  selectedIds: number[],
+  rows: CandidateSelectionRow[]
+): number[] => {
+  const available = new Set(rows.map((row) => row.candidateId));
+  const retained = selectedIds.filter((candidateId) =>
+    available.has(candidateId)
+  );
+  return retained.length === selectedIds.length ? selectedIds : retained;
+};
+
 export const bulkCandidateVisibilityTargets = (
   rows: CandidateSelectionRow[],
   selectedIds: number[],

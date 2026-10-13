@@ -1,8 +1,15 @@
 import SonarrAPI from '@server/api/servarr/sonarr';
+import {
+  parseServarrSettingsUpdate,
+  persistServarrSettingsUpdate,
+  ServarrSettingsPersistenceError,
+} from '@server/lib/servarrSettingsPersistence';
 import type { SonarrSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import { storageRootConfigurations } from '@server/lib/storageRootDisplayNames';
 import logger from '@server/logger';
 import { Router } from 'express';
+import { ZodError } from 'zod';
 
 const sonarrRoutes = Router();
 
@@ -12,28 +19,45 @@ sonarrRoutes.get('/', (_req, res) => {
   res.status(200).json(settings.sonarr);
 });
 
-sonarrRoutes.post('/', async (req, res) => {
-  const settings = getSettings();
-
-  const newSonarr = req.body as SonarrSettings;
-  const lastItem = settings.sonarr[settings.sonarr.length - 1];
-  newSonarr.id = lastItem ? lastItem.id + 1 : 0;
-
-  // If we are setting this as the default, clear any previous defaults for the same type first
-  // ex: if is4k is true, it will only remove defaults for other servers that have is4k set to true
-  // and are the default
-  if (req.body.isDefault) {
-    settings.sonarr
-      .filter((sonarrInstance) => sonarrInstance.is4k === req.body.is4k)
-      .forEach((sonarrInstance) => {
-        sonarrInstance.isDefault = false;
+sonarrRoutes.post('/', async (req, res, next) => {
+  try {
+    const settings = getSettings();
+    const currentSonarr = settings.sonarr.map((instance) => ({ ...instance }));
+    const parsed = parseServarrSettingsUpdate('sonarr', req.body);
+    const nextId =
+      currentSonarr.reduce((maximum, item) => Math.max(maximum, item.id), -1) +
+      1;
+    const newSonarr = { ...parsed.settings, id: nextId } as SonarrSettings;
+    const nextSonarr = currentSonarr.map((instance) => ({
+      ...instance,
+      isDefault:
+        newSonarr.isDefault && instance.is4k === newSonarr.is4k
+          ? false
+          : instance.isDefault,
+    }));
+    nextSonarr.push(newSonarr);
+    await persistServarrSettingsUpdate({
+      servarrType: 'sonarr',
+      nextSettings: nextSonarr,
+      expectedSettings: currentSonarr,
+      serviceId: nextId,
+      rootFolderNames: parsed.rootFolderNames,
+      settings,
+    });
+    return res.status(201).json(newSonarr);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return next({ status: 400, message: 'Invalid Sonarr settings.' });
+    }
+    if (error instanceof ServarrSettingsPersistenceError) {
+      return res.status(error.persistenceState === 'partial' ? 500 : 503).json({
+        message: error.message,
+        persistenceState: error.persistenceState,
+        retryable: true,
       });
+    }
+    return next(error);
   }
-
-  settings.sonarr = [...settings.sonarr, newSonarr];
-  await settings.save();
-
-  return res.status(201).json(newSonarr);
 });
 
 sonarrRoutes.post('/test', async (req, res, next) => {
@@ -52,12 +76,22 @@ sonarrRoutes.post('/test', async (req, res, next) => {
     const languageProfiles =
       sonarrMajorVersion <= 3 ? await sonarr.getLanguageProfiles() : null;
     const tags = await sonarr.getTags();
+    const rootConfigurations = await storageRootConfigurations(
+      'sonarr',
+      Number.isSafeInteger(req.body.serviceId)
+        ? Number(req.body.serviceId)
+        : Number.NaN,
+      folders.map((folder) => folder.id)
+    );
 
     return res.status(200).json({
       profiles,
       rootFolders: folders.map((folder) => ({
         id: folder.id,
         path: folder.path,
+        displayName: rootConfigurations.get(folder.id)?.displayName ?? null,
+        isAnimation: rootConfigurations.get(folder.id)?.isAnimation ?? false,
+        color: rootConfigurations.get(folder.id)?.color ?? null,
       })),
       languageProfiles,
       tags,
@@ -73,56 +107,87 @@ sonarrRoutes.post('/test', async (req, res, next) => {
   }
 });
 
-sonarrRoutes.put<{ id: string }>('/:id', async (req, res) => {
-  const settings = getSettings();
-
-  const sonarrIndex = settings.sonarr.findIndex(
-    (r) => r.id === Number(req.params.id)
-  );
-
-  if (sonarrIndex === -1) {
-    return res
-      .status(404)
-      .json({ status: '404', message: 'Settings instance not found' });
-  }
-
-  // If we are setting this as the default, clear any previous defaults for the same type first
-  // ex: if is4k is true, it will only remove defaults for other servers that have is4k set to true
-  // and are the default
-  if (req.body.isDefault) {
-    settings.sonarr
-      .filter((sonarrInstance) => sonarrInstance.is4k === req.body.is4k)
-      .forEach((sonarrInstance) => {
-        sonarrInstance.isDefault = false;
+sonarrRoutes.put<{ id: string }>('/:id', async (req, res, next) => {
+  try {
+    const settings = getSettings();
+    const currentSonarr = settings.sonarr.map((instance) => ({ ...instance }));
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 0) {
+      return next({ status: 400, message: 'Invalid Sonarr identifier.' });
+    }
+    const sonarrIndex = currentSonarr.findIndex((r) => r.id === id);
+    if (sonarrIndex === -1) {
+      return next({ status: 404, message: 'Settings instance not found' });
+    }
+    const parsed = parseServarrSettingsUpdate('sonarr', req.body);
+    const updatedSonarr = { ...parsed.settings, id } as SonarrSettings;
+    const nextSonarr = currentSonarr.map((instance, index) => ({
+      ...(index === sonarrIndex ? updatedSonarr : instance),
+      isDefault:
+        updatedSonarr.isDefault &&
+        index !== sonarrIndex &&
+        instance.is4k === updatedSonarr.is4k
+          ? false
+          : index === sonarrIndex
+            ? updatedSonarr.isDefault
+            : instance.isDefault,
+    }));
+    await persistServarrSettingsUpdate({
+      servarrType: 'sonarr',
+      nextSettings: nextSonarr,
+      expectedSettings: currentSonarr,
+      serviceId: id,
+      rootFolderNames: parsed.rootFolderNames,
+      settings,
+    });
+    return res.status(200).json(nextSonarr[sonarrIndex]);
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return next({ status: 400, message: 'Invalid Sonarr settings.' });
+    }
+    if (error instanceof ServarrSettingsPersistenceError) {
+      return res.status(error.persistenceState === 'partial' ? 500 : 503).json({
+        message: error.message,
+        persistenceState: error.persistenceState,
+        retryable: true,
       });
+    }
+    return next(error);
   }
-
-  settings.sonarr[sonarrIndex] = {
-    ...req.body,
-    id: Number(req.params.id),
-  } as SonarrSettings;
-  await settings.save();
-
-  return res.status(200).json(settings.sonarr[sonarrIndex]);
 });
 
-sonarrRoutes.delete<{ id: string }>('/:id', async (req, res) => {
-  const settings = getSettings();
-
-  const sonarrIndex = settings.sonarr.findIndex(
-    (r) => r.id === Number(req.params.id)
-  );
-
-  if (sonarrIndex === -1) {
-    return res
-      .status(404)
-      .json({ status: '404', message: 'Settings instance not found' });
+sonarrRoutes.delete<{ id: string }>('/:id', async (req, res, next) => {
+  try {
+    const settings = getSettings();
+    const currentSonarr = settings.sonarr.map((instance) => ({ ...instance }));
+    const id = Number(req.params.id);
+    if (!Number.isSafeInteger(id) || id < 0) {
+      return next({ status: 400, message: 'Invalid Sonarr identifier.' });
+    }
+    const sonarrIndex = currentSonarr.findIndex((r) => r.id === id);
+    if (sonarrIndex === -1) {
+      return next({ status: 404, message: 'Settings instance not found' });
+    }
+    const removed = currentSonarr[sonarrIndex];
+    await persistServarrSettingsUpdate({
+      servarrType: 'sonarr',
+      nextSettings: currentSonarr.filter((_, index) => index !== sonarrIndex),
+      expectedSettings: currentSonarr,
+      serviceId: id,
+      rootFolderNames: [],
+      settings,
+    });
+    return res.status(200).json(removed);
+  } catch (error) {
+    if (error instanceof ServarrSettingsPersistenceError) {
+      return res.status(error.persistenceState === 'partial' ? 500 : 503).json({
+        message: error.message,
+        persistenceState: error.persistenceState,
+        retryable: true,
+      });
+    }
+    return next(error);
   }
-
-  const removed = settings.sonarr.splice(sonarrIndex, 1);
-  await settings.save();
-
-  return res.status(200).json(removed[0]);
 });
 
 export default sonarrRoutes;

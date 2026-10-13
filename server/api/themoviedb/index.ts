@@ -1,5 +1,6 @@
 import ExternalAPI from '@server/api/externalapi';
 import type { TvShowProvider } from '@server/api/provider';
+import { BoundedRequestCoordinator } from '@server/lib/boundedRequestCoordinator';
 import type { CacheStore } from '@server/lib/cache';
 import cacheManager from '@server/lib/cache';
 import { getSettings } from '@server/lib/settings';
@@ -14,6 +15,7 @@ import type {
   TmdbKeywordSearchResponse,
   TmdbLanguage,
   TmdbMovieDetails,
+  TmdbMovieResult,
   TmdbNetwork,
   TmdbPersonCombinedCredits,
   TmdbPersonDetails,
@@ -139,6 +141,18 @@ interface DiscoverTvOptions {
 }
 
 const TV_DETAILS_TTL = 43200;
+const DEFAULT_TMDB_TIMEOUT_MS = 10_000;
+const TMDB_MAX_CONCURRENCY = 4;
+const TMDB_MAX_PENDING_REQUESTS = 200;
+const TMDB_MAX_REQUEST_STARTS_PER_SECOND = 50;
+
+const tmdbInFlight = new Map<string, Promise<unknown>>();
+export const tmdbRequestCoordinator = new BoundedRequestCoordinator({
+  maxConcurrency: TMDB_MAX_CONCURRENCY,
+  maxPending: TMDB_MAX_PENDING_REQUESTS,
+  maxStartsPerInterval: TMDB_MAX_REQUEST_STARTS_PER_SECOND,
+  intervalMs: 1000,
+});
 
 // Scan lookups read an entry once and never again.
 const SCAN_TTL = 900;
@@ -182,6 +196,11 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     discoverRegion,
     originalLanguage,
   }: { discoverRegion?: string; originalLanguage?: string } = {}) {
+    const configuredTimeout = getSettings().network.apiRequestTimeout;
+    const timeout =
+      Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : DEFAULT_TMDB_TIMEOUT_MS;
     super(
       'https://api.themoviedb.org/3',
       {
@@ -189,10 +208,13 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
       },
       {
         nodeCache: cacheManager.getCache('tmdb').data,
+        timeout,
         rateLimit: {
           maxRequests: 20,
           maxRPS: 50,
         },
+        inFlight: tmdbInFlight,
+        requestCoordinator: tmdbRequestCoordinator,
       }
     );
     this.locale = getSettings().main?.locale || 'en';
@@ -425,6 +447,28 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
       throw new Error(`[TMDB] Failed to fetch movie details: ${e.message}`, {
         cause: e,
       });
+    }
+  };
+
+  public getMovieForScan = async ({
+    movieId,
+    language = this.locale,
+  }: {
+    movieId: number;
+    language?: string;
+  }): Promise<TmdbMovieResult> => {
+    try {
+      return await this.get<TmdbMovieResult>(
+        `/movie/${movieId}`,
+        { params: { language } },
+        SCAN_TTL,
+        { cache: this.scanCache }
+      );
+    } catch (e) {
+      throw new Error(
+        `[TMDB] Failed to fetch movie scan details: ${e.message}`,
+        { cause: e }
+      );
     }
   };
 

@@ -1,8 +1,14 @@
 import TheMovieDb from '@server/api/themoviedb';
 import { MediaType } from '@server/constants/media';
+import {
+  UserMediaIntentEndReason,
+  UserMediaIntentState,
+  UserMediaIntentType,
+} from '@server/constants/watchlist';
 import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
 import { UserMediaState } from '@server/entity/UserMediaState';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import logger from '@server/logger';
@@ -151,11 +157,26 @@ export class Watchlist implements WatchlistItem {
         });
       }
 
+      const startedAt = new Date();
+      const occurrence = await manager
+        .getRepository(UserMediaIntentOccurrence)
+        .save(
+          new UserMediaIntentOccurrence({
+            userId: user.id,
+            user,
+            intentType: UserMediaIntentType.WATCHLIST,
+            mediaType: watchlistRequest.mediaType,
+            tmdbId: watchlistRequest.tmdbId,
+            state: UserMediaIntentState.ACTIVE,
+            startedAt,
+          })
+        );
       const watchlist = new this({
         ...watchlistRequest,
         genreIds: tmdbMedia.genres.map((genre) => genre.id),
         requestedBy: user,
         media,
+        createdAt: occurrence.startedAt,
       });
 
       await mediaRepository.save(media);
@@ -189,20 +210,36 @@ export class Watchlist implements WatchlistItem {
     mediaType: MediaType,
     user: User
   ): Promise<Watchlist | null> {
-    const watchlistRepository = getRepository(this);
-    const watchlist = await watchlistRepository.findOneBy({
-      tmdbId,
-      mediaType,
-      requestedBy: { id: user.id },
-    });
-    if (!watchlist) {
-      throw new NotFoundError('not Found');
-    }
+    return dataSource.transaction(async (manager) => {
+      const watchlistRepository = manager.getRepository(this);
+      const watchlist = await watchlistRepository.findOneBy({
+        tmdbId,
+        mediaType,
+        requestedBy: { id: user.id },
+      });
+      if (!watchlist) {
+        throw new NotFoundError('not Found');
+      }
 
-    if (watchlist) {
+      const occurrenceRepository = manager.getRepository(
+        UserMediaIntentOccurrence
+      );
+      const occurrence = await occurrenceRepository.findOneBy({
+        userId: user.id,
+        intentType: UserMediaIntentType.WATCHLIST,
+        mediaType,
+        tmdbId,
+        state: UserMediaIntentState.ACTIVE,
+      });
+      if (!occurrence) {
+        throw new Error('Active Watchlist intent occurrence is missing.');
+      }
+      occurrence.state = UserMediaIntentState.REMOVED;
+      occurrence.endedAt = new Date();
+      occurrence.endReason = UserMediaIntentEndReason.USER_REMOVED;
+      await occurrenceRepository.save(occurrence);
       await watchlistRepository.delete(watchlist.id);
-    }
-
-    return watchlist;
+      return watchlist;
+    });
   }
 }

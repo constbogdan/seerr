@@ -70,7 +70,14 @@ import { countries } from 'country-flag-icons';
 import 'country-flag-icons/3x2/flags.css';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
@@ -131,6 +138,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
   const [toggleWatchlist, setToggleWatchlist] = useState<boolean>(
     !tv?.onUserWatchlist
   );
+  const watchlistMutationRef = useRef(false);
   const [isBlocklistUpdating, setIsBlocklistUpdating] =
     useState<boolean>(false);
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
@@ -372,6 +380,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
   }
 
   const onClickWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
 
     try {
@@ -390,19 +400,22 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         { appearance: 'success', autoDismiss: true }
       );
 
-      setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
+      setToggleWatchlist(false);
+      void revalidate();
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
         appearance: 'error',
         autoDismiss: true,
       });
-
+    } finally {
+      watchlistMutationRef.current = false;
       setIsUpdating(false);
     }
   };
 
   const onClickDeleteWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
 
     try {
@@ -420,14 +433,15 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
         { appearance: 'info', autoDismiss: true }
       );
 
-      setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
+      setToggleWatchlist(true);
+      void revalidate();
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
         appearance: 'error',
         autoDismiss: true,
       });
-
+    } finally {
+      watchlistMutationRef.current = false;
       setIsUpdating(false);
     }
   };
@@ -656,6 +670,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                       buttonSize={'md'}
                       aria-label={intl.formatMessage(messages.addtowatchlist)}
                       onClick={onClickWatchlistBtn}
+                      disabled={isUpdating}
                     >
                       {isUpdating ? (
                         <Spinner />
@@ -675,6 +690,7 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                         messages.removefromwatchlist
                       )}
                       onClick={onClickDeleteWatchlistBtn}
+                      disabled={isUpdating}
                     >
                       {isUpdating ? (
                         <Spinner />

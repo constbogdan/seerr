@@ -2,8 +2,10 @@ import Spinner from '@app/assets/spinner.svg';
 import BlocklistModal from '@app/components/BlocklistModal';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
+import RequestIconButton from '@app/components/Common/RequestIconButton';
 import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
+import { UserAvatar } from '@app/components/Library/LibraryEngagement';
 import RequestModal from '@app/components/RequestModal';
 import ActionStateGrid from '@app/components/TitleCard/ActionStateGrid';
 import TitleCardCornerBadge from '@app/components/TitleCard/CornerBadge';
@@ -17,15 +19,11 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { withProperties } from '@app/utils/typeHelpers';
 import { Transition } from '@headlessui/react';
-import {
-  ArrowDownTrayIcon,
-  EyeIcon,
-  NoSymbolIcon,
-  StarIcon,
-} from '@heroicons/react/24/outline';
+import { EyeIcon, NoSymbolIcon, StarIcon } from '@heroicons/react/24/outline';
 import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type { Watchlist } from '@server/entity/Watchlist';
+import type { LibraryUser } from '@server/interfaces/api/libraryInterfaces';
 import type { MediaType } from '@server/models/Search';
 import axios from 'axios';
 import Link from 'next/link';
@@ -47,7 +45,11 @@ interface TitleCardProps {
   isAddedToWatchlist?: number | boolean;
   mutateParent?: () => void;
   watchState?: 'watched' | 'not_watched' | 'unknown';
-  watchlistOwnerName?: string;
+  watchlistOwner?: LibraryUser;
+  persistentMetadata?: React.ReactNode;
+  navigationHref?: string | null;
+  actionsDisabled?: boolean;
+  cornerAction?: React.ReactNode;
 }
 
 const messages = defineMessages('components.TitleCard', {
@@ -60,6 +62,7 @@ const messages = defineMessages('components.TitleCard', {
   watchlistCancel: 'watchlist for <strong>{title}</strong> canceled.',
   watchlistError: 'Something went wrong. Please try again.',
   watched: 'Watched',
+  viewTitle: 'View {title}',
 });
 
 const watchlistIconClassName = '!h-[1.4375rem] !w-[1.4375rem] text-amber-300';
@@ -77,7 +80,11 @@ const TitleCard = ({
   canExpand = false,
   mutateParent,
   watchState,
-  watchlistOwnerName,
+  watchlistOwner,
+  persistentMetadata,
+  navigationHref,
+  actionsDisabled = false,
+  cornerAction,
 }: TitleCardProps) => {
   const isTouch = useIsTouch();
   const intl = useIntl();
@@ -91,6 +98,10 @@ const TitleCard = ({
     useState<boolean>(!isAddedToWatchlist);
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const watchlistMutationRef = useRef(false);
+  const targetIdentityRef = useRef(`${mediaType}:${id}`);
+  const confirmedWatchlistStateRef = useRef<boolean | null>(null);
 
   // Just to get the year from the date
   if (year) {
@@ -100,6 +111,33 @@ const TitleCard = ({
   useEffect(() => {
     setCurrentStatus(status);
   }, [status]);
+
+  useEffect(() => {
+    const nextTargetIdentity = `${mediaType}:${id}`;
+    if (targetIdentityRef.current !== nextTargetIdentity) {
+      confirmedWatchlistStateRef.current = null;
+      watchlistMutationRef.current = false;
+      setIsUpdating(false);
+    }
+    targetIdentityRef.current = nextTargetIdentity;
+    const authoritativeMembership = Boolean(isAddedToWatchlist);
+    if (watchlistMutationRef.current) return;
+    if (confirmedWatchlistStateRef.current !== null) {
+      if (confirmedWatchlistStateRef.current !== authoritativeMembership) {
+        return;
+      }
+      confirmedWatchlistStateRef.current = null;
+    }
+    setToggleWatchlist(!authoritativeMembership);
+  }, [id, isAddedToWatchlist, mediaType]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      watchlistMutationRef.current = false;
+    };
+  }, []);
 
   const requestComplete = useCallback((newStatus: MediaStatus) => {
     setCurrentStatus(newStatus);
@@ -117,6 +155,9 @@ const TitleCard = ({
   );
 
   const onClickWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    const targetIdentity = `${mediaType}:${id}`;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
     try {
       const response = await axios.post<Watchlist>('/api/v1/watchlist', {
@@ -124,8 +165,13 @@ const TitleCard = ({
         mediaType,
         title,
       });
-      mutate('/api/v1/discover/watchlist');
-      if (response.data) {
+      if (
+        response.data &&
+        mountedRef.current &&
+        targetIdentityRef.current === targetIdentity
+      ) {
+        confirmedWatchlistStateRef.current = true;
+        setToggleWatchlist(false);
         addToast(
           <span>
             {intl.formatMessage(messages.watchlistSuccess, {
@@ -135,6 +181,8 @@ const TitleCard = ({
           </span>,
           { appearance: 'success', autoDismiss: true }
         );
+        void mutate('/api/v1/discover/watchlist');
+        mutateParent?.();
       }
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
@@ -142,12 +190,17 @@ const TitleCard = ({
         autoDismiss: true,
       });
     } finally {
-      setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
+      watchlistMutationRef.current = false;
+      if (mountedRef.current && targetIdentityRef.current === targetIdentity) {
+        setIsUpdating(false);
+      }
     }
   };
 
   const onClickDeleteWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    const targetIdentity = `${mediaType}:${id}`;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
     try {
       const response = await axios.delete<Watchlist>(
@@ -155,6 +208,14 @@ const TitleCard = ({
       );
 
       if (response.status === 204) {
+        if (
+          !mountedRef.current ||
+          targetIdentityRef.current !== targetIdentity
+        ) {
+          return;
+        }
+        confirmedWatchlistStateRef.current = false;
+        setToggleWatchlist(true);
         addToast(
           <span>
             {intl.formatMessage(messages.watchlistDeleted, {
@@ -164,6 +225,8 @@ const TitleCard = ({
           </span>,
           { appearance: 'info', autoDismiss: true }
         );
+        void mutate('/api/v1/discover/watchlist');
+        mutateParent?.();
       }
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
@@ -171,12 +234,10 @@ const TitleCard = ({
         autoDismiss: true,
       });
     } finally {
-      setIsUpdating(false);
-      mutate('/api/v1/discover/watchlist');
-      if (mutateParent) {
-        mutateParent();
+      watchlistMutationRef.current = false;
+      if (mountedRef.current && targetIdentityRef.current === targetIdentity) {
+        setIsUpdating(false);
       }
-      setToggleWatchlist((prevState) => !prevState);
     }
   };
 
@@ -361,51 +422,62 @@ const TitleCard = ({
             icon: <NoSymbolIcon className="h-4 w-4 sm:h-5 sm:w-5" />,
           }
         : undefined;
-  const rightSideActions = showDetail
-    ? [
-        ...(currentStatus !== MediaStatus.BLOCKLISTED &&
-        user?.userType !== UserType.PLEX
-          ? [
-              {
-                id: 'watchlist',
-                content: (
-                  <Tooltip content={watchlistAction.label}>
-                    <Button
-                      buttonType="ghost"
-                      className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
-                      buttonSize="sm"
-                      aria-label={watchlistAction.label}
-                      onClick={watchlistAction.onClick}
-                    >
-                      {watchlistAction.icon}
-                    </Button>
-                  </Tooltip>
-                ),
-              },
-            ]
-          : []),
-        ...(showHideButton && blocklistAction
-          ? [
-              {
-                id: 'blocklist',
-                content: (
-                  <Tooltip content={blocklistAction.label}>
-                    <Button
-                      buttonType="ghost"
-                      className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
-                      buttonSize="sm"
-                      aria-label={blocklistAction.label}
-                      onClick={blocklistAction.onClick}
-                    >
-                      {blocklistAction.icon}
-                    </Button>
-                  </Tooltip>
-                ),
-              },
-            ]
-          : []),
-      ]
-    : [];
+  const rightSideActions = [
+    ...(cornerAction
+      ? [
+          {
+            id: 'custom-corner-action',
+            content: cornerAction,
+          },
+        ]
+      : []),
+    ...(showDetail && !actionsDisabled
+      ? [
+          ...(currentStatus !== MediaStatus.BLOCKLISTED &&
+          user?.userType !== UserType.PLEX
+            ? [
+                {
+                  id: 'watchlist',
+                  content: (
+                    <Tooltip content={watchlistAction.label}>
+                      <Button
+                        buttonType="ghost"
+                        className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
+                        buttonSize="sm"
+                        aria-label={watchlistAction.label}
+                        onClick={watchlistAction.onClick}
+                        disabled={isUpdating}
+                      >
+                        {watchlistAction.icon}
+                      </Button>
+                    </Tooltip>
+                  ),
+                },
+              ]
+            : []),
+          ...(showHideButton && blocklistAction
+            ? [
+                {
+                  id: 'blocklist',
+                  content: (
+                    <Tooltip content={blocklistAction.label}>
+                      <Button
+                        buttonType="ghost"
+                        className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
+                        buttonSize="sm"
+                        aria-label={blocklistAction.label}
+                        onClick={blocklistAction.onClick}
+                      >
+                        {blocklistAction.icon}
+                      </Button>
+                    </Tooltip>
+                  ),
+                },
+              ]
+            : []),
+        ]
+      : []),
+  ];
   const rightSideStates = stateIndicators.map((indicator) => ({
     id: indicator.id,
     content: (
@@ -428,10 +500,72 @@ const TitleCard = ({
     ),
   }));
   const canRequestTitle =
+    !actionsDisabled &&
     showRequestButton &&
     (!currentStatus ||
       currentStatus === MediaStatus.UNKNOWN ||
       currentStatus === MediaStatus.DELETED);
+  const cardHref =
+    navigationHref === undefined
+      ? mediaType === 'movie'
+        ? `/movie/${id}`
+        : mediaType === 'collection'
+          ? `/collection/${id}`
+          : `/tv/${id}`
+      : navigationHref;
+  const renderDetails = () => (
+    <div
+      className={
+        persistentMetadata
+          ? 'grid h-full w-full grid-rows-[1fr_auto] p-2'
+          : 'flex h-full w-full items-end'
+      }
+    >
+      <div
+        className={`text-white ${
+          persistentMetadata
+            ? 'self-end'
+            : `px-2 ${canRequestTitle ? 'pb-11' : 'pb-2'}`
+        }`}
+      >
+        {year && <div className="text-sm font-medium">{year}</div>}
+
+        <h1
+          className="whitespace-normal text-xl font-bold leading-tight"
+          style={{
+            WebkitLineClamp: 3,
+            display: '-webkit-box',
+            overflow: 'hidden',
+            WebkitBoxOrient: 'vertical',
+            wordBreak: 'break-word',
+          }}
+          data-testid="title-card-title"
+        >
+          {title}
+        </h1>
+        <div
+          className="whitespace-normal text-xs"
+          style={{
+            WebkitLineClamp: canRequestTitle ? 3 : 5,
+            display: '-webkit-box',
+            overflow: 'hidden',
+            WebkitBoxOrient: 'vertical',
+            wordBreak: 'break-word',
+          }}
+        >
+          {summary}
+        </div>
+      </div>
+      {persistentMetadata && (
+        <div
+          aria-hidden="true"
+          className="invisible mb-1 mt-2 max-w-full justify-self-center break-words rounded-md px-2 py-1 text-center text-xs font-medium"
+        >
+          {persistentMetadata}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div
@@ -481,15 +615,20 @@ const TitleCard = ({
             setShowDetail(true);
           }
         }}
-        onMouseLeave={() => setShowDetail(false)}
-        onClick={() => setShowDetail(true)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            setShowDetail(true);
+        onMouseLeave={() => {
+          if (!cardRef.current?.contains(document.activeElement)) {
+            setShowDetail(false);
           }
         }}
-        role="link"
-        tabIndex={0}
+        onTouchStart={() => {
+          if (!cardHref) setShowDetail(true);
+        }}
+        onFocusCapture={() => setShowDetail(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setShowDetail(false);
+          }
+        }}
       >
         <div className="absolute inset-0 h-full w-full overflow-hidden">
           <CachedImage
@@ -504,13 +643,28 @@ const TitleCard = ({
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             fill
           />
+          {cardHref && (
+            <Link
+              href={cardHref}
+              aria-label={intl.formatMessage(messages.viewTitle, { title })}
+              className="absolute inset-0 z-20 h-full w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
+              onClick={(event) => {
+                if (isTouch && !showDetail) {
+                  event.preventDefault();
+                  setShowDetail(true);
+                }
+              }}
+            >
+              <span className="sr-only">{title}</span>
+            </Link>
+          )}
           <div
             className="pointer-events-none absolute inset-0 z-30 p-2"
             data-testid="title-card-corner-frame"
           >
             <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_1fr_auto] gap-x-2">
               <div
-                className="col-start-1 row-start-1 min-w-0 self-start justify-self-start"
+                className="col-start-1 row-start-1 flex min-w-0 self-start justify-self-start"
                 data-testid="title-card-classification-state"
               >
                 <TitleCardCornerBadge
@@ -536,14 +690,20 @@ const TitleCard = ({
                   states={rightSideStates}
                 />
               </div>
-              {watchlistOwnerName && (
+              {watchlistOwner && (
                 <div
-                  className="col-start-1 row-start-3 min-w-0 self-end justify-self-start"
+                  className="pointer-events-auto col-start-1 row-start-3 flex min-w-0 items-center self-end justify-self-start leading-none"
                   data-testid="title-card-owner-region"
                 >
-                  <TitleCardCornerBadge className="max-w-full" tone="owner">
-                    {watchlistOwnerName}
-                  </TitleCardCornerBadge>
+                  <UserAvatar user={watchlistOwner} />
+                </div>
+              )}
+              {persistentMetadata && (
+                <div
+                  className="col-span-2 col-start-1 row-start-3 mb-1 max-w-full self-end justify-self-center break-words rounded-md bg-gray-900/90 px-2 py-1 text-center text-xs font-medium text-yellow-200 shadow-md"
+                  data-testid="title-card-persistent-metadata"
+                >
+                  {persistentMetadata}
                 </div>
               )}
               {canRequestTitle && (
@@ -564,18 +724,14 @@ const TitleCard = ({
                     <Tooltip
                       content={intl.formatMessage(globalMessages.request)}
                     >
-                      <Button
-                        buttonType="primary"
-                        buttonSize="sm"
+                      <RequestIconButton
                         aria-label={intl.formatMessage(globalMessages.request)}
                         onClick={(e) => {
                           e.preventDefault();
                           setShowRequestModal(true);
                         }}
-                        className="z-40 !h-8 !w-8 !rounded-md !border-transparent !bg-orange-500/90 !p-1.5 !text-white shadow-md hover:!border-transparent hover:!bg-orange-400 focus:!border-transparent focus:!ring-orange-300 active:!bg-orange-600"
-                      >
-                        <ArrowDownTrayIcon className="h-4 w-4" />
-                      </Button>
+                        className="z-40 !h-8 !w-8 !p-1.5"
+                      />
                     </Tooltip>
                   </div>
                 </Transition>
@@ -607,57 +763,16 @@ const TitleCard = ({
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <div className="absolute inset-0 overflow-hidden rounded-xl">
-              <Link
-                href={
-                  mediaType === 'movie'
-                    ? `/movie/${id}`
-                    : mediaType === 'collection'
-                      ? `/collection/${id}`
-                      : `/tv/${id}`
-                }
-                className="absolute inset-0 h-full w-full cursor-pointer overflow-hidden text-left"
+            <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-xl">
+              <div
+                className="absolute inset-0 h-full w-full overflow-hidden text-left"
                 style={{
                   background:
                     'linear-gradient(180deg, rgba(45, 55, 72, 0.4) 0%, rgba(45, 55, 72, 0.9) 100%)',
                 }}
               >
-                <div className="flex h-full w-full items-end">
-                  <div
-                    className={`px-2 text-white ${
-                      canRequestTitle ? 'pb-11' : 'pb-2'
-                    }`}
-                  >
-                    {year && <div className="text-sm font-medium">{year}</div>}
-
-                    <h1
-                      className="whitespace-normal text-xl font-bold leading-tight"
-                      style={{
-                        WebkitLineClamp: 3,
-                        display: '-webkit-box',
-                        overflow: 'hidden',
-                        WebkitBoxOrient: 'vertical',
-                        wordBreak: 'break-word',
-                      }}
-                      data-testid="title-card-title"
-                    >
-                      {title}
-                    </h1>
-                    <div
-                      className="whitespace-normal text-xs"
-                      style={{
-                        WebkitLineClamp: canRequestTitle ? 3 : 5,
-                        display: '-webkit-box',
-                        overflow: 'hidden',
-                        WebkitBoxOrient: 'vertical',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {summary}
-                    </div>
-                  </div>
-                </div>
-              </Link>
+                {renderDetails()}
+              </div>
             </div>
           </Transition>
         </div>

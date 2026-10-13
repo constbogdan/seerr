@@ -7,7 +7,7 @@ import { Column, Entity, PrimaryColumn, UpdateDateColumn } from 'typeorm';
 
 @Entity()
 export class FreshSyncState {
-  @PrimaryColumn({ type: 'int', default: FRESH_SYNC_STATE_ID })
+  @PrimaryColumn({ type: 'int' })
   public id = FRESH_SYNC_STATE_ID;
   @Column({ type: 'varchar', length: 64, default: '' })
   public sourceFingerprint = '';

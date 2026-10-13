@@ -209,12 +209,14 @@ export interface JellyfinItemsOptions {
   searchTerm?: string;
   parentId?: string;
   recursive?: boolean;
-  includeItemTypes?: ('Movie' | 'Series')[];
+  includeItemTypes?: ('Movie' | 'Series' | 'Episode')[];
+  startIndex?: number;
   limit?: number;
   userId?: string;
   enableUserData?: boolean;
   fields?: JellyfinItemField[];
   timeoutMs?: number;
+  allowEmptyOnAvailabilitySyncError?: boolean;
 }
 
 export const MAX_JELLYFIN_ITEM_IDS = 100;
@@ -588,6 +590,14 @@ class JellyfinAPI extends ExternalAPI {
   public async getItems(
     options: JellyfinItemsOptions
   ): Promise<JellyfinLibraryItemExtended[]> {
+    return (await this.getItemsPage(options)).Items.filter(
+      (item) => item.LocationType !== 'Virtual'
+    );
+  }
+
+  public async getItemsPage(
+    options: JellyfinItemsOptions
+  ): Promise<JellyfinItemsReponse> {
     try {
       const itemResponse = await this.get<JellyfinItemsReponse>(`/Items`, {
         params: {
@@ -599,6 +609,9 @@ class JellyfinAPI extends ExternalAPI {
           }),
           ...(options.includeItemTypes?.length && {
             includeItemTypes: options.includeItemTypes.join(','),
+          }),
+          ...(options.startIndex !== undefined && {
+            startIndex: options.startIndex,
           }),
           ...(options.limit !== undefined && { limit: options.limit }),
           ...(options.userId && { userId: options.userId }),
@@ -619,13 +632,14 @@ class JellyfinAPI extends ExternalAPI {
         ...(options.timeoutMs !== undefined && { timeout: options.timeoutMs }),
       });
 
-      return (itemResponse.Items ?? []).filter(
-        (item) => item.LocationType !== 'Virtual'
-      );
+      return { ...itemResponse, Items: itemResponse.Items ?? [] };
     } catch (e) {
-      if (availabilitySync.running) {
+      if (
+        options.allowEmptyOnAvailabilitySyncError !== false &&
+        availabilitySync.running
+      ) {
         if (e.response?.status === 500) {
-          return [];
+          return { Items: [], StartIndex: 0, TotalRecordCount: 0 };
         }
       }
 
@@ -639,6 +653,49 @@ class JellyfinAPI extends ExternalAPI {
 
       throw new ApiError(e.response.status, ApiErrorCode.InvalidAuthToken);
     }
+  }
+
+  public async getAllItems(
+    options: Omit<JellyfinItemsOptions, 'startIndex' | 'limit'>,
+    pageSize = 200,
+    onPage?: () => void
+  ): Promise<JellyfinLibraryItemExtended[]> {
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) {
+      throw new Error('Jellyfin page size must be between 1 and 1000.');
+    }
+
+    const items: JellyfinLibraryItemExtended[] = [];
+    let total: number | undefined;
+    for (let startIndex = 0; ; startIndex += pageSize) {
+      const page = await this.getItemsPage({
+        ...options,
+        startIndex,
+        limit: pageSize,
+        allowEmptyOnAvailabilitySyncError: false,
+      });
+      onPage?.();
+      if (
+        page.StartIndex !== startIndex ||
+        !Number.isSafeInteger(page.TotalRecordCount) ||
+        page.TotalRecordCount < 0 ||
+        (total !== undefined && total !== page.TotalRecordCount)
+      ) {
+        throw new Error('Jellyfin pagination changed during retrieval.');
+      }
+      total = page.TotalRecordCount;
+      const expected = Math.min(pageSize, Math.max(0, total - startIndex));
+      if (
+        page.Items.length < expected &&
+        startIndex + page.Items.length < total
+      ) {
+        throw new Error('Jellyfin returned an incomplete item page.');
+      }
+      items.push(
+        ...page.Items.filter((item) => item.LocationType !== 'Virtual')
+      );
+      if (startIndex + pageSize >= total) break;
+    }
+    return items;
   }
 
   public async getUserItems({

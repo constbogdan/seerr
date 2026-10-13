@@ -1,3 +1,4 @@
+import TheMovieDb from '@server/api/themoviedb';
 import { FreshCandidateStatus } from '@server/constants/fresh';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import dataSource from '@server/datasource';
@@ -21,6 +22,19 @@ import express from 'express';
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import request from 'supertest';
+
+Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
+  value: async () => {
+    throw new Error('provider unavailable');
+  },
+  configurable: true,
+});
+Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
+  value: async () => {
+    throw new Error('provider unavailable');
+  },
+  configurable: true,
+});
 
 const app = express();
 app.use(express.json());
@@ -422,12 +436,9 @@ describe('Fresh route authorization and safe responses', () => {
             metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
             displayTitle: `Movie ${index}`,
             sortTitle: `movie ${index.toString().padStart(2, '0')}`,
-            originalTitle: `Movie ${index}`,
             mediaDate: '2026-09-01',
-            overview: '',
             originalLanguage: 'en',
             genreIds: [],
-            originCountries: [],
           })
       )
     );
@@ -485,12 +496,9 @@ describe('Fresh route authorization and safe responses', () => {
             metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
             displayTitle: `Series ${index}`,
             sortTitle: `series ${index.toString().padStart(2, '0')}`,
-            originalTitle: `Series ${index}`,
             mediaDate: index === 0 ? null : '2026-09-02',
-            overview: '',
             originalLanguage: 'en',
             genreIds: [],
-            originCountries: ['US'],
           })
       )
     );
@@ -612,7 +620,6 @@ describe('Fresh route authorization and safe responses', () => {
           metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
           displayTitle: 'Legacy Evidence',
           sortTitle: 'legacy evidence',
-          originalTitle: 'Legacy Evidence',
           mediaDate: '2025-01-01',
         })
       );
@@ -631,7 +638,6 @@ describe('Fresh route authorization and safe responses', () => {
         metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
         displayTitle: 'FIA WEC',
         sortTitle: 'fia wec',
-        originalTitle: 'FIA WEC',
         mediaDate: '2012-01-01',
       })
     );
@@ -1070,7 +1076,6 @@ describe('Fresh route authorization and safe responses', () => {
         metadataRefreshedAt: new Date('2026-09-29T00:00:00Z'),
         displayTitle: 'undertone',
         sortTitle: 'undertone',
-        originalTitle: 'undertone',
         mediaDate: '2026-01-01',
       })
     );

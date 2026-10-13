@@ -47,21 +47,14 @@ export default class FreshMedia {
   @DbAwareColumn({ type: 'datetime' }) public metadataRefreshedAt: Date;
   @Column({ type: 'varchar', length: 300 }) public displayTitle: string;
   @Column({ type: 'varchar', length: 300 }) public sortTitle: string;
-  @Column({ type: 'varchar', length: 300 }) public originalTitle: string;
   @Column({ type: 'varchar', length: 10, nullable: true })
   public mediaDate?: string | null;
   @Column({ type: 'varchar', length: 10, nullable: true })
   public digitalReleaseDate?: string | null;
   @Column({ type: 'varchar', length: 10, nullable: true })
   public physicalReleaseDate?: string | null;
-  @Column({ type: 'varchar', length: 500, nullable: true })
-  public posterPath?: string | null;
-  @Column({ type: 'varchar', length: 500, nullable: true })
-  public backdropPath?: string | null;
-  @Column({ type: 'text', default: '' }) public overview = '';
   @Column({ type: 'varchar', length: 20, default: '' })
   public originalLanguage = '';
-  @Column({ type: 'float', default: 0 }) public popularity = 0;
   @Column({ type: 'float', default: 0 }) public voteAverage = 0;
   @Column({ type: 'int', default: 0 }) public voteCount = 0;
   @Column({ type: 'text', transformer: numberArray })
@@ -70,10 +63,6 @@ export default class FreshMedia {
   public contentRating = '';
   @Column({ type: 'varchar', length: 8, default: '' })
   public contentRatingRegion = '';
-  @Column({ type: 'boolean', nullable: true }) public adult?: boolean | null;
-  @Column({ type: 'boolean', nullable: true }) public video?: boolean | null;
-  @Column({ type: 'text', transformer: stringArray })
-  public originCountries: string[] = [];
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;
   @UpdateDateColumn({

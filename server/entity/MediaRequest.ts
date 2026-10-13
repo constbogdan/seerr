@@ -9,6 +9,10 @@ import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces'
 import notificationManager, { Notification } from '@server/lib/notifications';
 import overrideRules from '@server/lib/overrideRules';
 import { Permission } from '@server/lib/permissions';
+import {
+  assertCompleteSeriesRequest,
+  resolveRequestedSeasons,
+} from '@server/lib/requestSeasonValidation';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
@@ -40,6 +44,7 @@ export class QuotaRestrictedError extends Error {}
 export class DuplicateMediaRequestError extends Error {}
 export class NoSeasonsAvailableError extends Error {}
 export class BlocklistedMediaError extends Error {}
+export class InvalidMediaRequestError extends Error {}
 
 type MediaRequestOptions = {
   isAutoRequest?: boolean;
@@ -52,6 +57,15 @@ export class MediaRequest {
     user: User,
     options: MediaRequestOptions = {}
   ): Promise<MediaRequest> {
+    if (
+      ![MediaType.MOVIE, MediaType.TV].includes(requestBody.mediaType) ||
+      !Number.isSafeInteger(requestBody.mediaId) ||
+      requestBody.mediaId <= 0 ||
+      (requestBody.tvdbId !== undefined &&
+        (!Number.isSafeInteger(requestBody.tvdbId) || requestBody.tvdbId <= 0))
+    ) {
+      throw new InvalidMediaRequestError('Invalid media identity.');
+    }
     // is4k is optional, and an undefined one binds as null in the duplicate query
     const body = { ...requestBody, is4k: !!requestBody.is4k };
 
@@ -170,6 +184,11 @@ export class MediaRequest {
       requestBody.mediaType === MediaType.MOVIE
         ? await tmdb.getMovie({ movieId: requestBody.mediaId })
         : await tmdb.getTvShow({ tvId: requestBody.mediaId });
+    if (tmdbMedia.id !== requestBody.mediaId) {
+      throw new InvalidMediaRequestError(
+        'The metadata provider returned a different media identity.'
+      );
+    }
 
     let media = await mediaRepository.findOne({
       where: {
@@ -356,18 +375,11 @@ export class MediaRequest {
       const tmdbMediaShow = tmdbMedia as Awaited<
         ReturnType<typeof tmdb.getTvShow>
       >;
-      let requestedSeasons =
-        requestBody.seasons === 'all'
-          ? tmdbMediaShow.seasons
-              .filter(
-                (season) =>
-                  season.season_number !== 0 && season.episode_count > 0
-              )
-              .map((season) => season.season_number)
-          : (requestBody.seasons as number[]);
-      if (!settings.main.enableSpecialEpisodes) {
-        requestedSeasons = requestedSeasons.filter((sn) => sn > 0);
-      }
+      const requestedSeasons = resolveRequestedSeasons({
+        requestedSeasons: requestBody.seasons,
+        tmdbSeasons: tmdbMediaShow.seasons,
+        enableSpecialEpisodes: settings.main.enableSpecialEpisodes,
+      });
 
       let existingSeasons: number[] = [];
 
@@ -410,6 +422,21 @@ export class MediaRequest {
       const finalSeasons = requestedSeasons.filter(
         (rs) => !existingSeasons.includes(rs)
       );
+
+      const requestableSeasons = tmdbMediaShow.seasons
+        .filter(
+          (season) =>
+            Number.isSafeInteger(season.season_number) &&
+            season.season_number > 0 &&
+            season.episode_count > 0 &&
+            !existingSeasons.includes(season.season_number)
+        )
+        .map((season) => season.season_number);
+      assertCompleteSeriesRequest({
+        requestedSeasons: requestBody.seasons === 'all' ? 'all' : finalSeasons,
+        requestableSeasons,
+        partialRequestsEnabled: settings.main.partialRequestsEnabled,
+      });
 
       if (finalSeasons.length === 0) {
         throw new NoSeasonsAvailableError('No seasons available to request');

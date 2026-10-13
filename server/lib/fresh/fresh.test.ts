@@ -521,7 +521,6 @@ describe('persistent Fresh engine', () => {
         metadataRefreshedAt: staleAt,
         displayTitle: 'Old Snapshot',
         sortTitle: 'old snapshot',
-        originalTitle: 'Old Snapshot',
         mediaDate: '2026-09-01',
       }),
       new FreshMedia({
@@ -536,7 +535,6 @@ describe('persistent Fresh engine', () => {
         metadataRefreshedAt: staleAt,
         displayTitle: 'Last Good Snapshot',
         sortTitle: 'last good snapshot',
-        originalTitle: 'Last Good Snapshot',
         mediaDate: '2026-09-01',
       }),
     ]);
@@ -698,7 +696,6 @@ describe('persistent Fresh engine', () => {
         metadataRefreshedAt: observedAt,
         displayTitle: 'Legacy Movie',
         sortTitle: 'legacy movie',
-        originalTitle: 'Legacy Movie',
         mediaDate: '2025-01-01',
       })
     );
@@ -714,7 +711,6 @@ describe('persistent Fresh engine', () => {
         metadataRefreshedAt: observedAt,
         displayTitle: 'Recent Series',
         sortTitle: 'recent series',
-        originalTitle: 'Recent Series',
         mediaDate: '2026-09-20',
       })
     );

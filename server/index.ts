@@ -6,6 +6,10 @@ import { Session } from '@server/entity/Session';
 import { User } from '@server/entity/User';
 import { initI18n } from '@server/i18n';
 import { startJobs } from '@server/job/schedule';
+import {
+  logSynchronizationMode,
+  synchronizationPolicy,
+} from '@server/job/synchronizationPolicy';
 import freshService from '@server/lib/fresh/service';
 import notificationManager from '@server/lib/notifications';
 import DiscordAgent from '@server/lib/notifications/agents/discord';
@@ -20,6 +24,7 @@ import WebhookAgent from '@server/lib/notifications/agents/webhook';
 import WebPushAgent from '@server/lib/notifications/agents/webpush';
 import checkOverseerrMerge from '@server/lib/overseerrMerge';
 import { getSettings } from '@server/lib/settings';
+import { ensureActiveWatchlistIntentOccurrences } from '@server/lib/watchlistLifecycle';
 import logger from '@server/logger';
 import clearCookies from '@server/middleware/clearcookies';
 import routes from '@server/routes';
@@ -83,10 +88,20 @@ app
       }
     }
 
+    const backfilledWatchlistIntents =
+      await ensureActiveWatchlistIntentOccurrences();
+    if (backfilledWatchlistIntents > 0) {
+      logger.info('Backfilled active Watchlist intent occurrences', {
+        label: 'Watchlist',
+        count: backfilledWatchlistIntents,
+      });
+    }
+
     // Load Settings
     const settings = await getSettings().load();
     freshService.configure(settings.fresh);
     restartFlag.initializeSettings(settings);
+    logSynchronizationMode();
 
     initI18n();
 
@@ -113,28 +128,38 @@ app
       settings.plex.libraries.length > 1 &&
       !settings.plex.libraries[0].type
     ) {
-      const userRepository = getRepository(User);
-      const admin = await userRepository.findOne({
-        select: { id: true, plexToken: true },
-        where: { id: 1 },
-      });
-
-      if (admin) {
-        logger.info('Migrating Plex libraries to include media type', {
-          label: 'Settings',
+      if (!synchronizationPolicy.startupCatchUpsAllowed) {
+        logger.info(
+          'Deferred automatic Plex library metadata migration due to synchronization mode',
+          {
+            label: 'Synchronization Containment',
+            mode: synchronizationPolicy.mode,
+          }
+        );
+      } else {
+        const userRepository = getRepository(User);
+        const admin = await userRepository.findOne({
+          select: { id: true, plexToken: true },
+          where: { id: 1 },
         });
 
-        const plexapi = new PlexAPI({ plexToken: admin.plexToken });
+        if (admin) {
+          logger.info('Migrating Plex libraries to include media type', {
+            label: 'Settings',
+          });
 
-        try {
-          await plexapi.syncLibraries();
-        } catch {
-          // Leave the existing libraries untouched so the migration retries on
-          // the next startup instead of discarding the user's configuration
-          logger.warn(
-            'Failed to migrate Plex libraries; will retry on next startup',
-            { label: 'Settings' }
-          );
+          const plexapi = new PlexAPI({ plexToken: admin.plexToken });
+
+          try {
+            await plexapi.syncLibraries();
+          } catch {
+            // Leave the existing libraries untouched so the migration retries on
+            // the next startup instead of discarding the user's configuration
+            logger.warn(
+              'Failed to migrate Plex libraries; will retry on next startup',
+              { label: 'Settings' }
+            );
+          }
         }
       }
     }
@@ -156,7 +181,7 @@ app
     const userRepository = getRepository(User);
     const totalUsers = await userRepository.count();
     if (totalUsers > 0) {
-      startJobs();
+      await startJobs();
     } else {
       logger.info(
         `Skipping starting the scheduled jobs as we have no Plex/Jellyfin/Emby servers setup yet`,

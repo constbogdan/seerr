@@ -32,15 +32,21 @@ const messages = defineMessages('components.Settings.SettingsFresh.Filters', {
 });
 
 const MultiSelect = ({
+  id,
+  ariaLabel,
   options,
   value,
   onChange,
 }: {
+  id: string;
+  ariaLabel: string;
   options: Option[];
   value: OptionValue[];
   onChange: (value: OptionValue[]) => void;
 }) => (
   <Select<Option, true>
+    inputId={id}
+    aria-label={ariaLabel}
     className="react-select-container"
     classNamePrefix="react-select"
     isMulti
@@ -144,8 +150,12 @@ const FreshContentFilters = () => {
       <div className="grid gap-x-6 md:grid-cols-2">
         {rows.map(([field, label, options]) => (
           <div className="mb-4 min-w-0" key={field}>
-            <label className="text-label mb-2 block">{label}</label>
+            <label htmlFor={field} className="text-label mb-2 block">
+              {label}
+            </label>
             <MultiSelect
+              id={field}
+              ariaLabel={label}
               options={options}
               value={values[field]}
               onChange={(selected) => setFieldValue(field, selected)}

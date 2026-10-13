@@ -30,10 +30,11 @@ import {
   readWatchlistPreferences,
   resolveEligibleWatchlistOwner,
   resolveWatchlistPreferences,
+  type WatchlistPreferences,
 } from './preferences';
 
 const messages = defineMessages('components.Discover.DiscoverWatchlist', {
-  discoverwatchlist: 'Your Watchlist',
+  discoverwatchlist: 'Watchlist',
   watchlist: 'Plex Watchlist',
   all: 'All',
   movies: 'Movies',
@@ -60,18 +61,21 @@ const DiscoverWatchlist = () => {
   const router = useRouter();
   const dedicatedPage = router.pathname === '/discover/watchlist';
   const updateQuery = useBatchUpdateQueryParams({});
-  const [preferences, setPreferences] = useState(defaultWatchlistPreferences);
+  const [preferences, setPreferences] = useState<WatchlistPreferences | null>(
+    dedicatedPage ? null : defaultWatchlistPreferences
+  );
   const { user } = useUser({
     id: Number(router.query.userId),
   });
   const { user: currentUser, hasPermission } = useUser();
   const canViewOthers = hasPermission(Permission.WATCHLIST_VIEW);
-  const owner = preferences.owner;
-  const { data: eligibleUsers } = useSWR<UserResultsResponse>(
-    dedicatedPage && canViewOthers
-      ? '/api/v1/user?includeInUserMetrics=true&sort=displayname&sortDirection=asc&take=100'
-      : null
-  );
+  const owner = preferences?.owner ?? defaultWatchlistPreferences.owner;
+  const { data: eligibleUsers, error: eligibleUsersError } =
+    useSWR<UserResultsResponse>(
+      dedicatedPage && canViewOthers
+        ? '/api/v1/user?includeInUserMetrics=true&sort=displayname&sortDirection=asc&take=100'
+        : null
+    );
   const ownerOptions = useMemo(() => {
     const users = eligibleUsers?.results ?? [];
     return [
@@ -90,6 +94,11 @@ const DiscoverWatchlist = () => {
   const preferenceKey = currentUser?.id
     ? getWatchlistPreferenceKey(currentUser.id)
     : undefined;
+  const preferencesReady =
+    !dedicatedPage ||
+    Boolean(
+      preferences && (!canViewOthers || eligibleUsers || eligibleUsersError)
+    );
 
   const {
     isLoadingInitialData,
@@ -116,14 +125,16 @@ const DiscoverWatchlist = () => {
       owner?: string;
     }
   >(
-    `/api/v1/${
-      router.pathname.startsWith('/profile')
-        ? `user/${currentUser?.id}`
-        : router.query.userId
-          ? `user/${router.query.userId}`
-          : 'discover'
-    }/watchlist`,
-    dedicatedPage
+    preferencesReady
+      ? `/api/v1/${
+          router.pathname.startsWith('/profile')
+            ? `user/${currentUser?.id}`
+            : router.query.userId
+              ? `user/${router.query.userId}`
+              : 'discover'
+        }/watchlist`
+      : null,
+    dedicatedPage && preferences
       ? {
           category: preferences.category,
           sort: preferences.sort,
@@ -135,7 +146,12 @@ const DiscoverWatchlist = () => {
   );
 
   useEffect(() => {
-    if (!dedicatedPage || !router.isReady || !preferenceKey) {
+    if (
+      !dedicatedPage ||
+      !router.isReady ||
+      !preferenceKey ||
+      (canViewOthers && !eligibleUsers && !eligibleUsersError)
+    ) {
       return;
     }
 
@@ -157,10 +173,21 @@ const DiscoverWatchlist = () => {
           : undefined,
       stored,
     });
-    setPreferences(resolved);
-    window.localStorage.setItem(preferenceKey, JSON.stringify(resolved));
+    const eligibleOwner = canViewOthers
+      ? resolveEligibleWatchlistOwner(
+          resolved.owner,
+          ownerOptions.map((option) => option.value)
+        )
+      : 'me';
+    const initialized = { ...resolved, owner: eligibleOwner };
+    setPreferences(initialized);
+    window.localStorage.setItem(preferenceKey, JSON.stringify(initialized));
   }, [
+    canViewOthers,
     dedicatedPage,
+    eligibleUsers,
+    eligibleUsersError,
+    ownerOptions,
     preferenceKey,
     router.isReady,
     router.query.category,
@@ -178,6 +205,7 @@ const DiscoverWatchlist = () => {
         watched: WatchlistWatchedFilter;
       }>
     ) => {
+      if (!preferences) return;
       const updated = { ...preferences, ...next };
       setPreferences(updated);
       if (preferenceKey) {
@@ -196,7 +224,13 @@ const DiscoverWatchlist = () => {
   );
 
   useEffect(() => {
-    if (!canViewOthers || !eligibleUsers || ownerOptions.length === 0) return;
+    if (
+      !preferences ||
+      !canViewOthers ||
+      !eligibleUsers ||
+      ownerOptions.length === 0
+    )
+      return;
     if (!ownerOptions.some((option) => option.value === preferences.owner)) {
       const fallback = resolveEligibleWatchlistOwner(
         preferences.owner,
@@ -208,7 +242,7 @@ const DiscoverWatchlist = () => {
     canViewOthers,
     eligibleUsers,
     ownerOptions,
-    preferences.owner,
+    preferences,
     updatePreference,
   ]);
 
@@ -267,7 +301,9 @@ const DiscoverWatchlist = () => {
                 </div>
               )}
               <MediaTypeFilter
-                value={preferences.category}
+                value={
+                  preferences?.category ?? defaultWatchlistPreferences.category
+                }
                 ariaLabel={intl.formatMessage(messages.discoverwatchlist)}
                 options={[
                   {
@@ -304,7 +340,10 @@ const DiscoverWatchlist = () => {
                   <select
                     className="rounded-r-only"
                     aria-label={intl.formatMessage(messages.watchedFilter)}
-                    value={preferences.watched}
+                    value={
+                      preferences?.watched ??
+                      defaultWatchlistPreferences.watched
+                    }
                     onChange={(event) =>
                       updatePreference({
                         watched: event.target.value as WatchlistWatchedFilter,
@@ -333,7 +372,7 @@ const DiscoverWatchlist = () => {
                 <select
                   className="rounded-r-only"
                   aria-label={intl.formatMessage(messages.sortBy)}
-                  value={preferences.sort}
+                  value={preferences?.sort ?? defaultWatchlistPreferences.sort}
                   onChange={(event) =>
                     updatePreference({
                       sort: event.target.value as WatchlistSort,
@@ -361,7 +400,7 @@ const DiscoverWatchlist = () => {
       {dedicatedPage &&
       firstResultData?.supportsPresentation &&
       isEmpty &&
-      preferences.category !== 'all' ? (
+      preferences?.category !== 'all' ? (
         <div className="mt-64 w-full text-center text-2xl text-gray-400">
           {intl.formatMessage(
             firstResultData.hasUnclassifiedItems

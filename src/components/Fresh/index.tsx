@@ -1,3 +1,4 @@
+import Button from '@app/components/Common/Button';
 import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
@@ -34,6 +35,9 @@ const messages = defineMessages('components.Fresh', {
   preparing: 'Fresh is preparing its first synchronization.',
   unavailable: 'Fresh is temporarily unavailable.',
   stale: 'Showing the last successful Fresh projection.',
+  retry: 'Retry',
+  mediaType: 'Media type',
+  sort: 'Sort Fresh media',
   refreshing: 'Synchronizing Fresh media…',
 });
 
@@ -69,11 +73,12 @@ const Fresh = () => {
       <PageTitle title={intl.formatMessage(messages.fresh)} />
       <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
         <Header>{intl.formatMessage(messages.fresh)}</Header>
-        <div className="mt-2 flex flex-wrap gap-2">
+        <div className="mt-2 flex min-w-0 flex-wrap gap-2">
           <CandidateDiagnosticsShortcut
             show={hasPermission(Permission.ADMIN)}
           />
           <MediaTypeFilter
+            ariaLabel={intl.formatMessage(messages.mediaType)}
             value={mediaType}
             options={[
               { value: 'all', label: intl.formatMessage(messages.all) },
@@ -84,12 +89,13 @@ const Fresh = () => {
               set('mediaType', value === 'all' ? undefined : value)
             }
           />
-          <div className="flex">
+          <div className="flex min-w-0 max-w-full">
             <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
               <BarsArrowDownIcon className="h-6 w-6" />
             </span>
             <select
-              className="rounded-r-only"
+              aria-label={intl.formatMessage(messages.sort)}
+              className="rounded-r-only min-w-0 flex-1"
               value={sort}
               onChange={(event) =>
                 set(
@@ -137,16 +143,25 @@ const Fresh = () => {
           {intl.formatMessage(messages.preparing)}
         </div>
       ) : discover.error || status?.status === 'unavailable' ? (
-        <div className="mt-32 text-center text-2xl text-gray-400">
-          {intl.formatMessage(messages.unavailable)}
+        <div className="mt-32 text-center text-gray-400" role="alert">
+          <p className="text-2xl">{intl.formatMessage(messages.unavailable)}</p>
+          <Button className="mt-4" onClick={() => discover.mutate?.()}>
+            {intl.formatMessage(messages.retry)}
+          </Button>
         </div>
       ) : (
         <>
           {(status?.status === 'stale' || status?.refreshing) && (
-            <div className="mb-4 flex items-center rounded-md bg-gray-800 p-3 text-gray-300">
+            <div
+              className="mb-4 flex items-center rounded-md bg-gray-800 p-3 text-gray-300"
+              role="status"
+              aria-live="polite"
+            >
               <ArrowPathIcon
                 className={`mr-2 h-5 w-5 ${
-                  status.refreshing ? 'animate-spin' : ''
+                  status.refreshing
+                    ? 'animate-spin motion-reduce:animate-none'
+                    : ''
                 }`}
               />
               {intl.formatMessage(

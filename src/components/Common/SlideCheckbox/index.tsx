@@ -1,14 +1,20 @@
 type SlideCheckboxProps = {
   onClick: () => void;
   checked?: boolean;
+  ariaLabel?: string;
 };
 
-const SlideCheckbox = ({ onClick, checked = false }: SlideCheckboxProps) => {
+const SlideCheckbox = ({
+  onClick,
+  checked = false,
+  ariaLabel,
+}: SlideCheckboxProps) => {
   return (
     <span
       role="checkbox"
       tabIndex={0}
-      aria-checked={false}
+      aria-checked={checked}
+      aria-label={ariaLabel}
       onClick={() => {
         onClick();
       }}
