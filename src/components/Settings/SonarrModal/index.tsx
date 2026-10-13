@@ -1,13 +1,16 @@
 import Badge from '@app/components/Common/Badge';
 import Modal from '@app/components/Common/Modal';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
+import SlideCheckbox from '@app/components/Common/SlideCheckbox';
 import Tooltip from '@app/components/Common/Tooltip';
+import ServarrRootColorPicker from '@app/components/Settings/ServarrRootColorPicker';
 import type { SonarrTestResponse } from '@app/components/Settings/SettingsServices';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { isValidURL } from '@app/utils/urlValidationHelper';
 import { Transition } from '@headlessui/react';
+import type { StorageRootColor } from '@server/constants/storageRoot';
 import type { SonarrSettings } from '@server/lib/settings';
 import axios from 'axios';
 import { Field, Formik } from 'formik';
@@ -48,6 +51,11 @@ const messages = defineMessages('components.Settings.SonarrModal', {
   qualityprofile: 'Quality Profile',
   languageprofile: 'Language Profile',
   rootfolder: 'Root Folder',
+  rootFolderNames: 'Root folder names',
+  rootFolderNamesHelp:
+    'Optional names, colors, and Animation designations used in Library.',
+  optionalDisplayName: 'Optional display name',
+  animation: 'Animation',
   seriesType: 'Series Type',
   animeSeriesType: 'Anime Series Type',
   animequalityprofile: 'Anime Quality Profile',
@@ -119,6 +127,15 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
     languageProfiles: null,
     tags: [],
   });
+  const [rootFolderNames, setRootFolderNames] = useState<
+    Record<number, string>
+  >({});
+  const [animationRoots, setAnimationRoots] = useState<Record<number, boolean>>(
+    {}
+  );
+  const [rootFolderColors, setRootFolderColors] = useState<
+    Record<number, StorageRootColor | null>
+  >({});
 
   const SonarrSettingsSchema = Yup.object().shape({
     name: Yup.string().required(
@@ -193,11 +210,33 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
             port: Number(port),
             baseUrl,
             useSsl,
+            serviceId: sonarr?.id,
           }
         );
 
         setIsValidated(true);
         setTestResponse(response.data);
+        setRootFolderNames(
+          Object.fromEntries(
+            response.data.rootFolders.map((folder) => [
+              folder.id,
+              folder.displayName ?? '',
+            ])
+          )
+        );
+        setAnimationRoots(
+          Object.fromEntries(
+            response.data.rootFolders.map((folder) => [
+              folder.id,
+              folder.isAnimation,
+            ])
+          )
+        );
+        setRootFolderColors(
+          Object.fromEntries(
+            response.data.rootFolders.map((folder) => [folder.id, folder.color])
+          )
+        );
         if (initialLoad.current) {
           addToast(intl.formatMessage(messages.toastSonarrTestSuccess), {
             appearance: 'success',
@@ -217,7 +256,7 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
         initialLoad.current = true;
       }
     },
-    [addToast, intl]
+    [addToast, intl, sonarr?.id]
   );
 
   useEffect(() => {
@@ -316,6 +355,13 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
               preventSearch: !values.enableSearch,
               tagRequests: values.tagRequests,
               monitorNewItems: values.monitorNewItems,
+              rootFolderNames: testResponse.rootFolders.map((folder) => ({
+                sourceRootId: folder.id,
+                path: folder.path,
+                displayName: rootFolderNames[folder.id] ?? '',
+                isAnimation: animationRoots[folder.id] ?? false,
+                color: rootFolderColors[folder.id] ?? null,
+              })),
             };
             if (!sonarr) {
               await axios.post('/api/v1/settings/sonarr', submission);
@@ -679,6 +725,75 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
                       )}
                   </div>
                 </div>
+                {isValidated && testResponse.rootFolders.length > 0 && (
+                  <div className="form-row">
+                    <label className="text-label">
+                      {intl.formatMessage(messages.rootFolderNames)}
+                    </label>
+                    <div className="form-input-area">
+                      <div className="space-y-3">
+                        {testResponse.rootFolders.map((folder) => (
+                          <div
+                            key={`root-folder-name-${folder.id}`}
+                            className="grid gap-2 sm:grid-cols-2 sm:items-center"
+                          >
+                            <span
+                              className="break-all text-sm text-gray-300"
+                              title={folder.path}
+                            >
+                              {folder.path}
+                            </span>
+                            <div className="flex items-center gap-3">
+                              <input
+                                id={`root-folder-name-${folder.id}`}
+                                type="text"
+                                className="min-w-0 flex-1"
+                                maxLength={120}
+                                value={rootFolderNames[folder.id] ?? ''}
+                                placeholder={intl.formatMessage(
+                                  messages.optionalDisplayName
+                                )}
+                                onChange={(event) =>
+                                  setRootFolderNames((current) => ({
+                                    ...current,
+                                    [folder.id]: event.target.value,
+                                  }))
+                                }
+                              />
+                              <label className="flex items-center gap-2 whitespace-nowrap text-sm text-gray-300">
+                                <SlideCheckbox
+                                  ariaLabel={intl.formatMessage(
+                                    messages.animation
+                                  )}
+                                  checked={animationRoots[folder.id] ?? false}
+                                  onClick={() =>
+                                    setAnimationRoots((current) => ({
+                                      ...current,
+                                      [folder.id]: !current[folder.id],
+                                    }))
+                                  }
+                                />
+                                {intl.formatMessage(messages.animation)}
+                              </label>
+                              <ServarrRootColorPicker
+                                value={rootFolderColors[folder.id] ?? null}
+                                onChange={(color) =>
+                                  setRootFolderColors((current) => ({
+                                    ...current,
+                                    [folder.id]: color,
+                                  }))
+                                }
+                              />
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-2 text-sm text-gray-400">
+                        {intl.formatMessage(messages.rootFolderNamesHelp)}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 {testResponse.languageProfiles && (
                   <div className="form-row">
                     <label

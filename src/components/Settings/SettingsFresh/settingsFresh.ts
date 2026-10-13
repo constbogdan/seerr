@@ -55,6 +55,30 @@ export interface FreshSettingsUpdate {
   minimumTmdbVotes: number;
 }
 
+export type FreshDraftReconciliation =
+  | { type: 'unchanged' }
+  | { type: 'adopt-server'; values: FreshSettingsFormValues }
+  | { type: 'remote-conflict'; values: FreshSettingsFormValues };
+
+export const freshSettingsFormValuesEqual = (
+  left: FreshSettingsFormValues,
+  right: FreshSettingsFormValues
+): boolean => JSON.stringify(left) === JSON.stringify(right);
+
+export const reconcileFreshSettingsDraft = (
+  authoritative: FreshSettingsFormValues,
+  previousAuthoritative: FreshSettingsFormValues,
+  draft: FreshSettingsFormValues
+): FreshDraftReconciliation => {
+  if (freshSettingsFormValuesEqual(authoritative, previousAuthoritative)) {
+    return { type: 'unchanged' };
+  }
+  if (freshSettingsFormValuesEqual(draft, previousAuthoritative)) {
+    return { type: 'adopt-server', values: authoritative };
+  }
+  return { type: 'remote-conflict', values: authoritative };
+};
+
 export interface FreshFilterOption {
   id: number;
   name: string;

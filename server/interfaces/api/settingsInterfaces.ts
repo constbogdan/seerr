@@ -78,6 +78,24 @@ export interface CacheResponse {
   };
 }
 
+export type SynchronizationMode = 'normal' | 'contained' | 'commissioning';
+
+export interface SynchronizationContainmentStatus {
+  mode: SynchronizationMode;
+  startupCatchUpsAllowed: boolean;
+  scheduledExecutionAllowed: boolean;
+  manualSynchronizationAllowed: boolean;
+  manualExecutionPolicy: 'all' | 'blocked' | 'commissioning-sequence';
+  restartRequired: true;
+  commissioning: {
+    activeJobId: string | null;
+    nextRequiredJobId: string | null;
+    completedJobIds: string[];
+    lastFailedJobId: string | null;
+    freshSyncEnabled: boolean;
+  } | null;
+}
+
 export interface StatusResponse {
   version: string;
   buildChannel: BuildChannel;

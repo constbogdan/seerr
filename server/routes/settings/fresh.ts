@@ -1,4 +1,8 @@
 import { FRESH_CANDIDATE_PAGE_SIZE } from '@server/constants/fresh';
+import {
+  SynchronizationExecutionBlockedError,
+  synchronizationPolicy,
+} from '@server/job/synchronizationPolicy';
 import freshService, {
   normalizeFreshSettings,
   publicFreshSettings,
@@ -435,18 +439,26 @@ for (const [action, show] of [
 
 freshSettingsRoutes.post('/refresh', async (_req, res, next) => {
   try {
+    synchronizationPolicy.assertDirectManualExecutionAllowed();
     await freshService.refresh();
     return res.status(200).json(await freshService.status());
-  } catch {
+  } catch (error) {
+    if (error instanceof SynchronizationExecutionBlockedError) {
+      return next({ status: error.status, message: error.message });
+    }
     return next({ status: 500, message: 'Unable to refresh Fresh.' });
   }
 });
 
 freshSettingsRoutes.post('/rebuild', async (_req, res, next) => {
   try {
+    synchronizationPolicy.assertDirectManualExecutionAllowed();
     await freshService.rebuild();
     return res.status(200).json(await freshService.status());
-  } catch {
+  } catch (error) {
+    if (error instanceof SynchronizationExecutionBlockedError) {
+      return next({ status: error.status, message: error.message });
+    }
     return next({
       status: 500,
       message: 'Unable to rebuild Fresh data.',

@@ -1,3 +1,5 @@
+import backgroundDatabaseWriteCoordinator from '@server/lib/backgroundDatabaseWriteCoordinator';
+
 export class JellyfinCanonicalProcessingCoordinator {
   private tail: Promise<void> = Promise.resolve();
   private active = 0;
@@ -25,6 +27,6 @@ export class JellyfinCanonicalProcessingCoordinator {
 }
 
 const jellyfinCanonicalProcessingCoordinator =
-  new JellyfinCanonicalProcessingCoordinator();
+  backgroundDatabaseWriteCoordinator;
 
 export default jellyfinCanonicalProcessingCoordinator;

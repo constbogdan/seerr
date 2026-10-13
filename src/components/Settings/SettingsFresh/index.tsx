@@ -5,11 +5,13 @@ import SensitiveInput from '@app/components/Common/SensitiveInput';
 import CandidateDiagnostics from '@app/components/Settings/SettingsFresh/CandidateDiagnostics';
 import FreshContentFilters from '@app/components/Settings/SettingsFresh/FreshContentFilters';
 import {
+  CONFIGURED_TOKEN_MASK,
   FRESH_SECTION_STATE_KEY,
   applyFreshSectionTarget,
   defaultFreshSectionState,
   loadFreshFilters,
   parseFreshSectionState,
+  reconcileFreshSettingsDraft,
   selectedFreshFilter,
   toFreshConnectionUpdate,
   toFreshFilterSelectOptions,
@@ -18,6 +20,7 @@ import {
   type FreshFilterOption,
   type FreshSectionId,
   type FreshSectionState,
+  type FreshSettingsFormValues,
   type FreshSettingsResponse,
 } from '@app/components/Settings/SettingsFresh/settingsFresh';
 import useToasts from '@app/hooks/useToasts';
@@ -33,9 +36,16 @@ import type {
   FreshDiagnosticsSnapshot,
 } from '@server/lib/fresh';
 import axios from 'axios';
-import { Field, Form, Formik } from 'formik';
+import { Field, Form, Formik, useFormikContext } from 'formik';
 import { useRouter } from 'next/router';
-import { Fragment, useEffect, useState, type ReactNode } from 'react';
+import {
+  Fragment,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
 import { useIntl } from 'react-intl';
 import Select from 'react-select';
 import useSWR, { mutate } from 'swr';
@@ -117,6 +127,7 @@ const messages = defineMessages('components.Settings.SettingsFresh', {
     'Current Fresh dataset retained from {timestamp} ({count} items).',
   noProjection: 'No successful Fresh dataset is currently available.',
   noDiagnostics: 'No completed Fresh refresh has diagnostics yet.',
+  diagnosticsLoadFailed: 'Fresh pipeline diagnostics could not be loaded.',
   decisions: 'Recent decisions',
   newReleases: 'New autobrr releases',
   persisted: 'Persisted observations',
@@ -140,6 +151,14 @@ const messages = defineMessages('components.Settings.SettingsFresh', {
   type: 'Type',
   year: 'Year',
   mediaTitle: 'Title',
+  loading: 'Loading Fresh settings…',
+  loadFailed: 'Fresh settings could not be loaded.',
+  retry: 'Retry',
+  remoteChangeTitle: 'Fresh settings changed on the server',
+  remoteChangeDescription:
+    'Choose whether to load the server settings or continue with your unsaved edits.',
+  useServerSettings: 'Use server settings',
+  keepMyEdits: 'Keep my edits',
 });
 
 const diagnosticLabels: Record<string, string> = {
@@ -186,6 +205,67 @@ const diagnosticLabel = (value: string) =>
     .replaceAll('_', ' ')
     .replace(/\b\w/g, (character) => character.toUpperCase());
 
+const FreshSettingsDraftSync = ({
+  authoritativeValues,
+}: {
+  authoritativeValues: FreshSettingsFormValues;
+}) => {
+  const intl = useIntl();
+  const { values, dirty, resetForm } =
+    useFormikContext<FreshSettingsFormValues>();
+  const observedValuesRef = useRef(authoritativeValues);
+  const [remoteValues, setRemoteValues] =
+    useState<FreshSettingsFormValues | null>(null);
+
+  useEffect(() => {
+    const reconciliation = reconcileFreshSettingsDraft(
+      authoritativeValues,
+      observedValuesRef.current,
+      values
+    );
+    observedValuesRef.current = authoritativeValues;
+    if (reconciliation.type === 'adopt-server') {
+      resetForm({ values: reconciliation.values });
+      setRemoteValues(null);
+    } else if (reconciliation.type === 'remote-conflict') {
+      setRemoteValues(reconciliation.values);
+    }
+  }, [authoritativeValues, resetForm, values]);
+
+  useEffect(() => {
+    if (!dirty) setRemoteValues(null);
+  }, [dirty]);
+
+  if (!remoteValues) return null;
+  return (
+    <div
+      className="mb-6 rounded-md border border-amber-500/50 bg-amber-900/30 p-4"
+      role="alert"
+    >
+      <p className="font-semibold text-amber-100">
+        {intl.formatMessage(messages.remoteChangeTitle)}
+      </p>
+      <p className="mt-1 text-sm text-amber-100/80">
+        {intl.formatMessage(messages.remoteChangeDescription)}
+      </p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button
+          type="button"
+          onClick={() => {
+            resetForm({ values: remoteValues });
+            setRemoteValues(null);
+          }}
+        >
+          {intl.formatMessage(messages.useServerSettings)}
+        </Button>
+        <Button type="button" onClick={() => setRemoteValues(null)}>
+          {intl.formatMessage(messages.keepMyEdits)}
+        </Button>
+      </div>
+    </div>
+  );
+};
+
 const FreshSettingsSection = ({
   id,
   title,
@@ -205,6 +285,10 @@ const FreshSettingsSection = ({
 }) => {
   const contentId = `fresh-settings-${id}`;
   const orderClass = { 1: 'order-1', 2: 'order-2', 3: 'order-3' }[order];
+  const [hasOpened, setHasOpened] = useState(open);
+  useEffect(() => {
+    if (open) setHasOpened(true);
+  }, [open]);
   return (
     <section
       id={id}
@@ -218,16 +302,18 @@ const FreshSettingsSection = ({
         aria-controls={contentId}
         onClick={onToggle}
       >
-        <span>
+        <span className="min-w-0 whitespace-normal">
           <span className="heading block">{title}</span>
-          <span className="mt-1 block text-sm text-gray-400">{summary}</span>
+          <span className="mt-1 block whitespace-normal break-words text-sm text-gray-400">
+            {summary}
+          </span>
         </span>
         <ChevronDownIcon
-          className={`mt-1 h-5 w-5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+          className={`mt-1 h-5 w-5 shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-180' : ''}`}
         />
       </button>
-      {open && (
-        <div id={contentId} className="pt-5">
+      {hasOpened && (
+        <div id={contentId} className="pt-5" hidden={!open}>
           {children}
         </div>
       )}
@@ -254,13 +340,20 @@ const SettingsFresh = () => {
     error,
     mutate: revalidate,
   } = useSWR<FreshSettingsResponse>('/api/v1/settings/fresh');
-  const { data: diagnostics, mutate: revalidateDiagnostics } =
-    useSWR<DiagnosticsResponse>('/api/v1/settings/fresh/diagnostics');
+  const {
+    data: diagnostics,
+    error: diagnosticsError,
+    mutate: revalidateDiagnostics,
+  } = useSWR<DiagnosticsResponse>('/api/v1/settings/fresh/diagnostics');
   const { data: candidateSummary } = useSWR<FreshCandidateDiagnosticResponse>(
     '/api/v1/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority'
   );
   const apiTokenConfigured = data?.apiTokenConfigured;
   const baseUrl = data?.baseUrl;
+  const authoritativeFormValues = useMemo(
+    () => (data ? toFreshSettingsFormValues(data) : null),
+    [data]
+  );
   useEffect(() => {
     if (!apiTokenConfigured || !baseUrl) {
       setFiltersLoaded(true);
@@ -318,8 +411,26 @@ const SettingsFresh = () => {
       return next;
     });
   };
-  if (!data && !error) return <LoadingSpinner />;
-  if (!data) return null;
+  if (!data && !error) {
+    return (
+      <div role="status" aria-live="polite" className="py-8 text-center">
+        <LoadingSpinner />
+        <span className="sr-only">{intl.formatMessage(messages.loading)}</span>
+      </div>
+    );
+  }
+  if (!data || !authoritativeFormValues) {
+    return (
+      <div className="rounded-md bg-gray-800 p-4" role="alert">
+        <p className="text-red-400">
+          {intl.formatMessage(messages.loadFailed)}
+        </p>
+        <Button className="mt-3" onClick={() => void revalidate()}>
+          {intl.formatMessage(messages.retry)}
+        </Button>
+      </div>
+    );
+  }
   const schema = Yup.object({
     enabled: Yup.boolean().required(),
     protocol: Yup.string().oneOf(['http', 'https']).required(),
@@ -452,10 +563,10 @@ const SettingsFresh = () => {
       <Transition
         as={Fragment}
         show={showRebuildConfirmation}
-        enter="transition-opacity ease-in-out duration-300"
+        enter="transition-opacity ease-in-out duration-300 motion-reduce:transition-none"
         enterFrom="opacity-0"
         enterTo="opacity-100"
-        leave="transition-opacity ease-in-out duration-300"
+        leave="transition-opacity ease-in-out duration-300 motion-reduce:transition-none"
         leaveFrom="opacity-100"
         leaveTo="opacity-0"
       >
@@ -475,6 +586,17 @@ const SettingsFresh = () => {
           {intl.formatMessage(messages.description)}
         </p>
       </div>
+      {error && (
+        <div
+          className="mb-6 flex flex-wrap items-center gap-3 rounded-md bg-gray-800 p-4 text-red-400"
+          role="alert"
+        >
+          <span>{intl.formatMessage(messages.loadFailed)}</span>
+          <Button buttonSize="sm" onClick={() => void revalidate()}>
+            {intl.formatMessage(messages.retry)}
+          </Button>
+        </div>
+      )}
       <div className="flex flex-col">
         <FreshSettingsSection
           id="candidates"
@@ -484,10 +606,7 @@ const SettingsFresh = () => {
           order={1}
           onToggle={() => toggleSection('candidates')}
         >
-          <CandidateDiagnostics
-            showHeader={false}
-            key={diagnostics?.currentProjection.lastRefresh ?? 'uninitialized'}
-          />
+          <CandidateDiagnostics showHeader={false} />
         </FreshSettingsSection>
         <FreshSettingsSection
           id="configuration"
@@ -498,19 +617,30 @@ const SettingsFresh = () => {
           onToggle={() => toggleSection('configuration')}
         >
           <Formik
-            enableReinitialize
             validationSchema={schema}
-            initialValues={toFreshSettingsFormValues(data)}
-            onSubmit={async (values) => {
+            initialValues={authoritativeFormValues}
+            onSubmit={async (values, { resetForm }) => {
               try {
                 await axios.put(
                   '/api/v1/settings/fresh',
                   toFreshSettingsUpdate(values)
                 );
-                await Promise.all([
+                const [updated] = await Promise.all([
                   revalidate(),
                   mutate('/api/v1/settings/public'),
                 ]);
+                resetForm({
+                  values: updated
+                    ? toFreshSettingsFormValues(updated)
+                    : {
+                        ...values,
+                        apiToken:
+                          values.apiToken &&
+                          values.apiToken !== CONFIGURED_TOKEN_MASK
+                            ? CONFIGURED_TOKEN_MASK
+                            : values.apiToken,
+                      },
+                });
                 addToast(intl.formatMessage(messages.saved), {
                   appearance: 'success',
                   autoDismiss: true,
@@ -558,6 +688,9 @@ const SettingsFresh = () => {
               const filterOptions = toFreshFilterSelectOptions(filters);
               return (
                 <Form className="section">
+                  <FreshSettingsDraftSync
+                    authoritativeValues={authoritativeFormValues}
+                  />
                   <div className="form-row">
                     <label className="checkbox-label" htmlFor="enabled">
                       {intl.formatMessage(messages.enabled)}
@@ -661,7 +794,7 @@ const SettingsFresh = () => {
                         disabled={testing || loadingFilters || isSubmitting}
                       >
                         {testing ? (
-                          <ArrowPathIcon className="animate-spin" />
+                          <ArrowPathIcon className="animate-spin motion-reduce:animate-none" />
                         ) : (
                           <BeakerIcon />
                         )}
@@ -680,6 +813,7 @@ const SettingsFresh = () => {
                     <div className="form-input-area">
                       <Select
                         inputId="filterId"
+                        aria-label={intl.formatMessage(messages.filter)}
                         className="react-select-container"
                         classNamePrefix="react-select"
                         options={filterOptions}
@@ -771,7 +905,7 @@ const SettingsFresh = () => {
                         disabled={isSubmitting || !isValid}
                       >
                         {isSubmitting && (
-                          <ArrowPathIcon className="animate-spin" />
+                          <ArrowPathIcon className="animate-spin motion-reduce:animate-none" />
                         )}
                         {intl.formatMessage(messages.save)}
                       </Button>
@@ -793,7 +927,9 @@ const SettingsFresh = () => {
               disabled={rebuilding || refreshing || !data.enabled}
               onClick={() => setShowRebuildConfirmation(true)}
             >
-              {rebuilding && <ArrowPathIcon className="animate-spin" />}
+              {rebuilding && (
+                <ArrowPathIcon className="animate-spin motion-reduce:animate-none" />
+              )}
               <span>{intl.formatMessage(messages.rebuild)}</span>
             </Button>
           </div>
@@ -807,8 +943,13 @@ const SettingsFresh = () => {
           onToggle={() => toggleSection('pipeline')}
         >
           <div className="mt-12">
-            <div className="mb-4 flex items-center justify-between">
-              <div>
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+              <div
+                className="min-w-0"
+                role="status"
+                aria-live="polite"
+                aria-busy={refreshing}
+              >
                 <p className="description">
                   {intl.formatMessage(messages.latestAttempt)}:{' '}
                   {diagnostics?.latestAttempt?.outcome ?? '—'} ·{' '}
@@ -893,7 +1034,11 @@ const SettingsFresh = () => {
                   }
                 }}
               >
-                <ArrowPathIcon className={refreshing ? 'animate-spin' : ''} />
+                <ArrowPathIcon
+                  className={
+                    refreshing ? 'animate-spin motion-reduce:animate-none' : ''
+                  }
+                />
                 <span>{intl.formatMessage(messages.refresh)}</span>
               </Button>
             </div>
@@ -901,6 +1046,22 @@ const SettingsFresh = () => {
               <p className="mb-4 text-sm text-gray-400">
                 {intl.formatMessage(messages.refreshDisabled)}
               </p>
+            )}
+            {diagnosticsError && (
+              <div
+                className="mb-4 flex flex-wrap items-center gap-3 text-sm text-red-400"
+                role="alert"
+              >
+                <span>
+                  {intl.formatMessage(messages.diagnosticsLoadFailed)}
+                </span>
+                <Button
+                  buttonSize="sm"
+                  onClick={() => void revalidateDiagnostics()}
+                >
+                  {intl.formatMessage(messages.retry)}
+                </Button>
+              </div>
             )}
             <div className="mb-6 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
               {projectionRows.map(([label, value]) => (

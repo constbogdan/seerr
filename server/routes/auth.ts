@@ -101,7 +101,7 @@ authRoutes.post('/plex', async (req, res, next) => {
 
       settings.main.mediaServerType = MediaServerType.PLEX;
       await settings.save();
-      startJobs();
+      await startJobs();
 
       await userRepository.save(user);
     } else {
@@ -418,7 +418,7 @@ authRoutes.post('/jellyfin', async (req, res, next) => {
       settings.jellyfin.useSsl = body.useSsl ?? false;
       settings.jellyfin.apiKey = apiKey;
       await settings.save();
-      startJobs();
+      await startJobs();
     }
     // User already exists, let's update their information
     else if (account.User.Id === user?.jellyfinUserId) {

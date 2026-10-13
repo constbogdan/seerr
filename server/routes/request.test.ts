@@ -86,6 +86,10 @@ function fakeTmdbShow(tmdbId: number): TmdbTvDetails {
     original_language: 'en',
     keywords: { results: [] },
     external_ids: {},
+    seasons: [0, 1, 2, 3, 4, 5].map((season_number) => ({
+      season_number,
+      episode_count: season_number === 0 ? 2 : 10,
+    })),
   } as unknown as TmdbTvDetails;
 }
 
@@ -579,6 +583,16 @@ async function seedTvRequest(
 }
 
 describe('PUT /request/:requestId (tv)', () => {
+  it('rejects a media type that does not match the stored request', async () => {
+    const owner = await seedUser('demo@seerr.dev');
+    const mediaRequest = await seedTvRequest(owner, [1]);
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const response = await agent.put(`/request/${mediaRequest.id}`).send({
+      mediaType: MediaType.MOVIE,
+    });
+    assert.strictEqual(response.status, 400);
+  });
+
   it('does not add a season held by another request', async () => {
     const requestRepo = getRepository(MediaRequest);
 
@@ -1558,6 +1572,82 @@ describe('POST /request (tv), override rules', () => {
 
     assert.strictEqual(res.status, 201);
     assert.strictEqual(res.body.rootFolder, null);
+  });
+});
+
+describe('POST /request (tv), authoritative Season validation', () => {
+  it('rejects invalid media identities before metadata persistence', async () => {
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    for (const mediaId of [-1, 0, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      const response = await agent.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId,
+        seasons: [1],
+      });
+      assert.strictEqual(response.status, 400);
+    }
+  });
+
+  it('rejects malformed, duplicate, and unknown Seasons as client errors', async () => {
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    const cases = [[-1], [1.5], [1, 1], [99]];
+    for (const [index, seasons] of cases.entries()) {
+      const response = await agent.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId: 88100 + index,
+        seasons,
+      });
+      assert.strictEqual(response.status, 400);
+    }
+  });
+
+  it('enforces the partial-Series setting against the full requestable set', async () => {
+    const settings = getSettings();
+    const previous = settings.main.partialRequestsEnabled;
+    settings.main.partialRequestsEnabled = false;
+    try {
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
+      const partial = await agent.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId: 88110,
+        seasons: [1],
+      });
+      assert.strictEqual(partial.status, 400);
+
+      const complete = await agent.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId: 88111,
+        seasons: [1, 2, 3, 4, 5],
+      });
+      assert.strictEqual(complete.status, 201);
+    } finally {
+      settings.main.partialRequestsEnabled = previous;
+    }
+  });
+
+  it('accepts Specials only when Special Episode requests are enabled', async () => {
+    const settings = getSettings();
+    const previous = settings.main.enableSpecialEpisodes;
+    const agent = await loginAs('demo@seerr.dev', 'test1234');
+    try {
+      settings.main.enableSpecialEpisodes = false;
+      const disabled = await agent.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId: 88120,
+        seasons: [0],
+      });
+      assert.strictEqual(disabled.status, 400);
+
+      settings.main.enableSpecialEpisodes = true;
+      const enabled = await agent.post('/request').send({
+        mediaType: MediaType.TV,
+        mediaId: 88121,
+        seasons: [0],
+      });
+      assert.strictEqual(enabled.status, 201);
+    } finally {
+      settings.main.enableSpecialEpisodes = previous;
+    }
   });
 });
 

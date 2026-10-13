@@ -44,5 +44,13 @@ describe('Fresh native jobs', () => {
     assert.match(jobsUi, /'fresh-sync': 'Fresh Sync'/);
     assert.match(jobsUi, /'fresh-reconciliation': 'Fresh Reconciliation'/);
     assert.match(jobsUi, /messages\[job\.id\] \?\? messages\.unknownJob/);
+    assert.match(
+      jobsUi,
+      /'fresh-sync-description':[\s\S]*?Finds new releases matching your selected discovery sources\./
+    );
+    assert.match(
+      jobsUi,
+      /'fresh-reconciliation-description':[\s\S]*?Keeps Fresh results up to date as media becomes available or changes\./
+    );
   });
 });

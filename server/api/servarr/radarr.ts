@@ -5,10 +5,10 @@ import ServarrBase from './base';
 export interface RadarrMovieOptions {
   title: string;
   qualityProfileId: number;
+  year: number;
   minimumAvailability: string;
   tags: number[];
   profileId: number;
-  year: number;
   rootFolderPath: string;
   tmdbId: number;
   monitored?: boolean;
@@ -25,8 +25,10 @@ export interface RadarrMovie {
   titleSlug: string;
   folderName: string;
   path: string;
+  rootFolderPath?: string;
   profileId: number;
   qualityProfileId: number;
+  year?: number;
   added: string;
   hasFile: boolean;
   tags: number[];
@@ -41,6 +43,11 @@ export interface RadarrMovie {
     releaseGroup?: string;
     edition?: string;
     indexerFlags?: number;
+    quality?: {
+      quality?: {
+        resolution?: number | null;
+      } | null;
+    } | null;
     mediaInfo: {
       id: number;
       audioBitrate: number;
@@ -84,18 +91,10 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
   public getLibraryMoviesByTmdbId = async (
     tmdbId: number
   ): Promise<RadarrMovie[]> => {
-    try {
-      const response = await this.axios.get<RadarrMovie[]>('/movie', {
-        params: { tmdbId },
-      });
-
-      return response.data;
-    } catch (e) {
-      throw new Error(
-        `[Radarr] Failed to retrieve movies by TMDB ID: ${e.message}`,
-        { cause: e }
-      );
-    }
+    const response = await this.axios.get<RadarrMovie[]>('/movie', {
+      params: { tmdbId },
+    });
+    return response.data;
   };
 
   public getMovie = async ({ id }: { id: number }): Promise<RadarrMovie> => {
@@ -286,30 +285,40 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
       );
     }
   }
-  public removeMovie = async (tmdbId: number): Promise<void> => {
-    const { id, title } = await this.getMovieByTmdbId(tmdbId);
-
-    if (!id) {
+  public removeMovie = async (
+    tmdbId: number,
+    beforeDelete?: () => Promise<void>
+  ): Promise<'removed' | 'absent'> => {
+    const matches = (await this.getLibraryMoviesByTmdbId(tmdbId)).filter(
+      (movie) => movie.tmdbId === tmdbId
+    );
+    if (matches.length > 1) {
+      throw new Error('Multiple exact Radarr movies matched the TMDB ID');
+    }
+    const movie = matches[0];
+    if (!movie?.id) {
       logger.info(`[Radarr] Movie not in library, nothing to remove`, {
         tmdbId,
       });
-      return;
+      return 'absent';
     }
 
     try {
-      await this.axios.delete(`/movie/${id}`, {
+      await beforeDelete?.();
+      await this.axios.delete(`/movie/${movie.id}`, {
         params: {
           deleteFiles: true,
           addImportExclusion: false,
         },
       });
-      logger.info(`[Radarr] Removed movie ${title}`);
+      logger.info(`[Radarr] Removed movie ${movie.title}`);
+      return 'removed';
     } catch (e) {
       if (e?.response?.status === 404) {
         logger.info(`[Radarr] Movie already removed from Radarr`, {
           tmdbId,
         });
-        return;
+        return 'absent';
       }
       throw e;
     }

@@ -18,6 +18,7 @@ import {
   AfterLoad,
   Column,
   Entity,
+  Index,
   Not,
   OneToMany,
   OneToOne,
@@ -33,6 +34,7 @@ import { UserPushSubscription } from './UserPushSubscription';
 import { UserSettings } from './UserSettings';
 
 @Entity()
+@Index('UQ_user_jellyfin_id_normalized', { synchronize: false })
 export class User {
   public static filterMany(
     users: User[],

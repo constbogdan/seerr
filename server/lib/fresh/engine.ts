@@ -1711,7 +1711,6 @@ export class FreshEngine {
           displayTitle: media?.displayTitle ?? candidate.displayTitle,
           sortTitle:
             media?.sortTitle ?? normalizeFreshTitle(candidate.displayTitle),
-          originalTitle: media?.originalTitle ?? candidate.displayTitle,
         });
         this.applyMetadata(media, details, now);
         const history = await this.upsertDiscoveryHistory(
@@ -2013,7 +2012,7 @@ export class FreshEngine {
             ? await this.dependencies.tmdb.getMovie({ movieId: media.tmdbId })
             : await this.dependencies.tmdb.getTvShow({ tvId: media.tmdbId });
       } catch {
-        // Preserve the last-good snapshot and leave it due for a later retry.
+        // Preserve the last-good Fresh policy/query cache for a later retry.
         continue;
       }
       this.applyMetadata(media, details, now);
@@ -2034,7 +2033,6 @@ export class FreshEngine {
     if (media.mediaType === 'movie') {
       const movie = details as TmdbMovieDetails;
       media.displayTitle = movie.title;
-      media.originalTitle = movie.original_title;
       media.mediaDate = movie.release_date || null;
       const availabilityDates = selectMovieAvailabilityDates(
         movie,
@@ -2042,26 +2040,15 @@ export class FreshEngine {
       );
       media.digitalReleaseDate = availabilityDates.digital;
       media.physicalReleaseDate = availabilityDates.physical;
-      media.adult = movie.adult;
-      media.video = movie.video;
-      media.originCountries = [];
     } else {
       const tv = details as TmdbTvDetails;
       media.displayTitle = tv.name;
-      media.originalTitle = tv.original_name;
       media.mediaDate = tv.first_air_date || null;
       media.digitalReleaseDate = null;
       media.physicalReleaseDate = null;
-      media.adult = null;
-      media.video = null;
-      media.originCountries = tv.origin_country ?? [];
     }
     media.sortTitle = normalizeFreshTitle(media.displayTitle);
-    media.posterPath = details.poster_path ?? null;
-    media.backdropPath = details.backdrop_path ?? null;
-    media.overview = details.overview ?? '';
     media.originalLanguage = details.original_language ?? '';
-    media.popularity = details.popularity ?? 0;
     media.voteAverage = details.vote_average ?? 0;
     media.voteCount = details.vote_count ?? 0;
     media.genreIds = details.genres?.map((genre) => genre.id) ?? [];

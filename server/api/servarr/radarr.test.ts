@@ -18,16 +18,22 @@ describe('RadarrAPI removeMovie', () => {
 
   it('removes the movie when it exists in the library', async () => {
     const radarr = buildRadarr();
-    mock.method(RadarrAPI.prototype, 'getMovieByTmdbId', async () => ({
-      id: 7,
-      title: 'Test Movie',
-    }));
+    mock.method(radarr, 'getLibraryMoviesByTmdbId', async () => [
+      {
+        id: 7,
+        title: 'Test Movie',
+        tmdbId: 550,
+      },
+    ]);
     const del = mock.method(getAxios(radarr), 'delete', async () => ({}));
 
     await radarr.removeMovie(550);
 
     assert.strictEqual(del.mock.callCount(), 1);
     assert.strictEqual(del.mock.calls[0].arguments[0], '/movie/7');
+    assert.deepEqual(del.mock.calls[0].arguments[1], {
+      params: { deleteFiles: true, addImportExclusion: false },
+    });
   });
 
   it('does nothing when the movie is not in the library', async () => {
@@ -41,21 +47,40 @@ describe('RadarrAPI removeMovie', () => {
     assert.strictEqual(del.mock.callCount(), 0);
   });
 
-  it('rejects when the tmdbId is unknown to the lookup', async () => {
+  it('revalidates fenced ownership immediately before deletion', async () => {
+    const radarr = buildRadarr();
+    mock.method(radarr, 'getLibraryMoviesByTmdbId', async () => [
+      { id: 7, title: 'Test Movie', tmdbId: 550 },
+    ]);
+    const del = mock.method(getAxios(radarr), 'delete', async () => ({}));
+    const beforeDelete = mock.fn(async () => {
+      assert.equal(del.mock.callCount(), 0);
+    });
+
+    await radarr.removeMovie(550, beforeDelete);
+
+    assert.equal(beforeDelete.mock.callCount(), 1);
+    assert.equal(del.mock.callCount(), 1);
+  });
+
+  it('is idempotent when the tmdbId is absent from the library', async () => {
     const radarr = buildRadarr();
     mock.method(getAxios(radarr), 'get', async () => ({ data: [] }));
     const del = mock.method(getAxios(radarr), 'delete', async () => ({}));
 
-    await assert.rejects(() => radarr.removeMovie(550), /Movie not found/);
+    await assert.doesNotReject(() => radarr.removeMovie(550));
     assert.strictEqual(del.mock.callCount(), 0);
   });
 
   it('ignores a 404 when the movie was already removed in Radarr', async () => {
     const radarr = buildRadarr();
-    mock.method(RadarrAPI.prototype, 'getMovieByTmdbId', async () => ({
-      id: 7,
-      title: 'Test Movie',
-    }));
+    mock.method(radarr, 'getLibraryMoviesByTmdbId', async () => [
+      {
+        id: 7,
+        title: 'Test Movie',
+        tmdbId: 550,
+      },
+    ]);
     mock.method(getAxios(radarr), 'delete', async () => {
       throw { response: { status: 404 } };
     });
@@ -65,10 +90,13 @@ describe('RadarrAPI removeMovie', () => {
 
   it('rethrows errors other than 404', async () => {
     const radarr = buildRadarr();
-    mock.method(RadarrAPI.prototype, 'getMovieByTmdbId', async () => ({
-      id: 7,
-      title: 'Test Movie',
-    }));
+    mock.method(radarr, 'getLibraryMoviesByTmdbId', async () => [
+      {
+        id: 7,
+        title: 'Test Movie',
+        tmdbId: 550,
+      },
+    ]);
     mock.method(getAxios(radarr), 'delete', async () => {
       throw { response: { status: 500 } };
     });
@@ -76,7 +104,7 @@ describe('RadarrAPI removeMovie', () => {
     await assert.rejects(() => radarr.removeMovie(550));
   });
 
-  it('rethrows a 404 from the lookup instead of treating it as removed', async () => {
+  it('rethrows a 404 from the library query instead of treating it as removed', async () => {
     const radarr = buildRadarr();
     mock.method(getAxios(radarr), 'get', async () => {
       throw { response: { status: 404 } };

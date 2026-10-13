@@ -14,6 +14,7 @@ import {
   defaultFreshSectionState,
   loadFreshFilters,
   parseFreshSectionState,
+  reconcileFreshSettingsDraft,
   selectedFreshFilter,
   splitAutobrrBaseUrl,
   toFreshFilterSelectOptions,
@@ -115,6 +116,31 @@ describe('Fresh settings client boundary', () => {
     assert.equal(update.freshVisibilityDays, 7);
     assert.equal(update.apiToken, undefined);
     assert.equal(update.cachedFilterName, 'Fresh Movies & TV');
+  });
+
+  it('adopts remote settings only when the local draft is still pristine', () => {
+    const original = toFreshSettingsFormValues(response);
+    const remote = {
+      ...original,
+      freshVisibilityDays: original.freshVisibilityDays + 1,
+    };
+    assert.deepEqual(reconcileFreshSettingsDraft(remote, original, original), {
+      type: 'adopt-server',
+      values: remote,
+    });
+    assert.deepEqual(
+      reconcileFreshSettingsDraft(remote, original, {
+        ...original,
+        mediaEligibilityDays: 45,
+      }),
+      { type: 'remote-conflict', values: remote }
+    );
+    assert.deepEqual(
+      reconcileFreshSettingsDraft(original, original, original),
+      {
+        type: 'unchanged',
+      }
+    );
   });
 
   it('renders connection testing before autobrr filter selection', () => {
@@ -296,6 +322,34 @@ describe('Fresh settings client boundary', () => {
     assert.match(source, /applyFreshSectionTarget/);
     assert.match(source, /getElementById\('candidates'\)/);
     assert.match(source, /target\?\.focus/);
+    assert.match(source, /hidden=\{!open\}/);
+    assert.doesNotMatch(source, /enableReinitialize/);
+    assert.match(source, /FreshSettingsDraftSync/);
+    assert.doesNotMatch(
+      source,
+      /key=\{diagnostics\?\.currentProjection\.lastRefresh/
+    );
+  });
+
+  it('provides named filters, retryable errors, and reduced-motion status UI', () => {
+    const source = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
+    const diagnostics = readFileSync(
+      path.join(__dirname, 'CandidateDiagnostics.tsx'),
+      'utf8'
+    );
+    const filters = readFileSync(
+      path.join(__dirname, 'FreshContentFilters.tsx'),
+      'utf8'
+    );
+    assert.match(source, /role="alert"/);
+    assert.match(source, /onClick=\{\(\) => void revalidate\(\)\}/);
+    assert.match(source, /aria-live="polite"/);
+    assert.match(source, /motion-reduce:animate-none/);
+    assert.match(diagnostics, /aria-label="Candidate status"/);
+    assert.match(diagnostics, /aria-label="Candidate sort order"/);
+    assert.match(diagnostics, /onClick=\{\(\) => void mutate\(\)\}/);
+    assert.match(filters, /inputId=\{id\}/);
+    assert.match(filters, /aria-label=\{ariaLabel\}/);
   });
 
   it('renders the native media icon segment adjacent to the media-type select', () => {

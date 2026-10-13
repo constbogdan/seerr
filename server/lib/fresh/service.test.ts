@@ -167,6 +167,25 @@ describe('Fresh application service', () => {
     assert.equal(service.running(), false);
   });
 
+  it('requires a successful diagnostics outcome for commissioning', async () => {
+    const service = new FreshService({
+      ...fixture().deps,
+      engine: {
+        cancel: () => undefined,
+        run: async () => ({
+          diagnostics: { ...diagnostics, outcome: 'failed' as const },
+        }),
+      },
+    });
+    service.configure(settings);
+
+    await service.sync();
+    await assert.rejects(
+      () => service.sync(false, true),
+      /fresh_sync_incomplete/
+    );
+  });
+
   it('serializes administrator mutations behind an active synchronization', async () => {
     const events: string[] = [];
     let finishSync: (() => void) | undefined;

@@ -5,6 +5,12 @@ import Modal from '@app/components/Common/Modal';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
+import RequestModalLoadError from '@app/components/RequestModal/RequestModalLoadError';
+import {
+  classifyCollectionRequestOutcomes,
+  reconcileCollectionRequestRetryability,
+  type CollectionRequestOutcome,
+} from '@app/components/RequestModal/collectionRequestOutcomes';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -15,7 +21,7 @@ import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { Collection } from '@server/models/Collection';
 import axios from 'axios';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
 
@@ -25,6 +31,15 @@ const messages = defineMessages('components.RequestModal', {
   requestcollectiontitle: 'Request Collection',
   requestcollection4ktitle: 'Request Collection in 4K',
   requesterror: 'Something went wrong while submitting the request.',
+  requestResults: 'Request results',
+  requestOutcomeRequested: 'Requested',
+  requestOutcomeAlreadyRequested: 'Already requested',
+  requestOutcomeFailed: 'Failed',
+  requestOutcomeRetryable: 'Retry available',
+  requestSummary:
+    '{requested} requested · {already} already requested · {failed} failed',
+  requestRefreshFailed:
+    'The requests were submitted, but their current status could not be refreshed.',
   selectmovies: 'Select Movie(s)',
   requestmovies: 'Request {count} {count, plural, one {Movie} other {Movies}}',
   requestmovies4k:
@@ -47,16 +62,30 @@ const CollectionRequestModal = ({
   is4k = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isRetryingLoad, setIsRetryingLoad] = useState(false);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const [selectedParts, setSelectedParts] = useState<number[]>([]);
+  const [requestResults, setRequestResults] = useState<
+    CollectionRequestOutcome[]
+  >([]);
+  const requestActiveRef = useRef(false);
+  const mountedRef = useRef(true);
   const { addToast } = useToasts();
-  const { data, error } = useSWR<Collection>(`/api/v1/collection/${tmdbId}`, {
+  const {
+    data,
+    error,
+    mutate: retryCollection,
+  } = useSWR<Collection>(`/api/v1/collection/${tmdbId}`, {
     revalidateOnMount: true,
   });
   const intl = useIntl();
   const { user, hasPermission } = useUser();
-  const { data: quota } = useSWR<QuotaResponse>(
+  const {
+    data: quota,
+    error: quotaError,
+    mutate: retryQuota,
+  } = useSWR<QuotaResponse>(
     user &&
       (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
       ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
@@ -65,6 +94,12 @@ const CollectionRequestModal = ({
 
   const currentlyRemaining =
     (quota?.movie.remaining ?? 0) - selectedParts.length;
+
+  const retryLoad = useCallback(async () => {
+    setIsRetryingLoad(true);
+    await Promise.allSettled([retryCollection(), retryQuota()]);
+    setIsRetryingLoad(false);
+  }, [retryCollection, retryQuota]);
 
   const getAllParts = (): number[] => {
     return (data?.parts ?? [])
@@ -183,8 +218,30 @@ const CollectionRequestModal = ({
     }
   }, [isUpdating, onUpdating]);
 
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      requestActiveRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!requestActiveRef.current) {
+      setSelectedParts([]);
+      setRequestResults([]);
+    }
+  }, [is4k, tmdbId]);
+
   const sendRequest = useCallback(async () => {
+    if (requestActiveRef.current || !data) return;
+    const requestedParts = data.parts.filter((part) =>
+      selectedParts.includes(part.id)
+    );
+    if (requestedParts.length === 0) return;
+    requestActiveRef.current = true;
     setIsUpdating(true);
+    setRequestResults([]);
 
     try {
       let overrideParams = {};
@@ -198,55 +255,118 @@ const CollectionRequestModal = ({
         };
       }
 
-      await Promise.all(
-        (
-          data?.parts.filter((part) => selectedParts.includes(part.id)) ?? []
-        ).map(async (part) => {
-          await axios.post<MediaRequest>('/api/v1/request', {
+      const settled = await Promise.allSettled(
+        requestedParts.map((part) =>
+          axios.post<MediaRequest>('/api/v1/request', {
             mediaId: part.id,
             mediaType: 'movie',
             is4k,
             ...overrideParams,
-          });
-        })
+          })
+        )
+      );
+      let refreshed: Collection | undefined;
+      try {
+        refreshed = await retryCollection();
+      } catch {
+        refreshed = undefined;
+      }
+      const outcomes = reconcileCollectionRequestRetryability(
+        classifyCollectionRequestOutcomes(requestedParts, settled),
+        refreshed?.parts,
+        is4k
+      );
+      if (!mountedRef.current) return;
+      setRequestResults(outcomes);
+      setSelectedParts(
+        outcomes
+          .filter(({ kind, retryable }) => kind === 'failed' && retryable)
+          .map(({ partId }) => partId)
       );
 
-      if (onComplete) {
-        onComplete(
-          selectedParts.length === (data?.parts ?? []).length
+      const requested = outcomes.filter(
+        ({ kind }) => kind === 'requested'
+      ).length;
+      const already = outcomes.filter(
+        ({ kind }) => kind === 'already-requested'
+      ).length;
+      const failed = outcomes.filter(({ kind }) => kind === 'failed').length;
+      if (requested > 0) {
+        void mutate('/api/v1/request/count');
+      }
+
+      if (requested === outcomes.length && refreshed) {
+        onComplete?.(
+          requestedParts.length === data.parts.length
             ? MediaStatus.UNKNOWN
             : MediaStatus.PARTIALLY_AVAILABLE
         );
-        mutate('/api/v1/request/count');
+        addToast(
+          <span>
+            {intl.formatMessage(messages.requestSuccess, {
+              title: data.name,
+              strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+            })}
+          </span>,
+          { appearance: 'success', autoDismiss: true }
+        );
+      } else {
+        addToast(
+          refreshed
+            ? intl.formatMessage(messages.requestSummary, {
+                requested,
+                already,
+                failed,
+              })
+            : intl.formatMessage(messages.requestRefreshFailed),
+          {
+            appearance: failed > 0 || !refreshed ? 'error' : 'info',
+            autoDismiss: false,
+          }
+        );
       }
-
-      addToast(
-        <span>
-          {intl.formatMessage(messages.requestSuccess, {
-            title: data?.name,
-            strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-          })}
-        </span>,
-        { appearance: 'success', autoDismiss: true }
-      );
     } catch {
-      addToast(intl.formatMessage(messages.requesterror), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+      if (mountedRef.current) {
+        addToast(intl.formatMessage(messages.requesterror), {
+          appearance: 'error',
+          autoDismiss: false,
+        });
+      }
     } finally {
-      setIsUpdating(false);
+      requestActiveRef.current = false;
+      if (mountedRef.current) setIsUpdating(false);
     }
   }, [
     requestOverrides,
-    data?.parts,
-    data?.name,
     onComplete,
     addToast,
     intl,
     selectedParts,
     is4k,
+    data,
+    retryCollection,
   ]);
+
+  if (error || quotaError) {
+    return (
+      <RequestModalLoadError
+        title={intl.formatMessage(
+          is4k
+            ? messages.requestcollection4ktitle
+            : messages.requestcollectiontitle
+        )}
+        subTitle={data?.name}
+        onCancel={onCancel}
+        onRetry={() => void retryLoad()}
+        retrying={isRetryingLoad}
+        backdrop={
+          data?.backdropPath
+            ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
+            : undefined
+        }
+      />
+    );
+  }
 
   const hasAutoApprove = hasPermission(
     [
@@ -265,7 +385,7 @@ const CollectionRequestModal = ({
   return (
     <Modal
       loading={(!data && !error) || !quota}
-      backgroundClickable
+      backgroundClickable={!isUpdating}
       onCancel={onCancel}
       onOk={sendRequest}
       title={intl.formatMessage(
@@ -286,7 +406,8 @@ const CollectionRequestModal = ({
                 }
               )
       }
-      okDisabled={selectedParts.length === 0}
+      okDisabled={isUpdating || selectedParts.length === 0}
+      cancelButtonProps={{ disabled: isUpdating }}
       okButtonType={'primary'}
       backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
     >
@@ -296,6 +417,53 @@ const CollectionRequestModal = ({
             title={intl.formatMessage(messages.requestadmin)}
             type="info"
           />
+        </div>
+      )}
+      {requestResults.length > 0 && (
+        <div
+          className="mt-4 rounded-md border border-gray-600 bg-gray-900/80 p-3"
+          role="status"
+          aria-live="polite"
+        >
+          <h3 className="mb-2 text-sm font-semibold text-white">
+            {intl.formatMessage(messages.requestResults)}
+          </h3>
+          <ul className="space-y-2 text-sm">
+            {requestResults.map((result) => (
+              <li
+                key={result.partId}
+                className="flex flex-wrap items-center justify-between gap-2"
+              >
+                <span className="min-w-0 break-words text-gray-200">
+                  {result.title}
+                </span>
+                <span className="flex items-center gap-2">
+                  <Badge
+                    badgeType={
+                      result.kind === 'requested'
+                        ? 'success'
+                        : result.kind === 'already-requested'
+                          ? 'warning'
+                          : 'danger'
+                    }
+                  >
+                    {intl.formatMessage(
+                      result.kind === 'requested'
+                        ? messages.requestOutcomeRequested
+                        : result.kind === 'already-requested'
+                          ? messages.requestOutcomeAlreadyRequested
+                          : messages.requestOutcomeFailed
+                    )}
+                  </Badge>
+                  {result.retryable && (
+                    <span className="text-xs text-gray-300">
+                      {intl.formatMessage(messages.requestOutcomeRetryable)}
+                    </span>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
       {(quota?.movie.limit ?? 0) > 0 && (
@@ -318,17 +486,17 @@ const CollectionRequestModal = ({
                 <thead>
                   <tr>
                     <th className="w-16 bg-gray-700/80 px-4 py-3">
-                      <span
+                      <button
+                        type="button"
                         role="checkbox"
-                        tabIndex={0}
                         aria-checked={isAllParts()}
+                        aria-label={intl.formatMessage(messages.selectmovies)}
+                        disabled={Boolean(
+                          quota?.movie.limit &&
+                          (quota.movie.remaining ?? 0) < unrequestedParts.length
+                        )}
                         onClick={() => toggleAllParts()}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter' || e.key === 'Space') {
-                            toggleAllParts();
-                          }
-                        }}
-                        className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
+                        className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none disabled:cursor-not-allowed ${
                           quota?.movie.limit &&
                           (quota.movie.remaining ?? 0) < unrequestedParts.length
                             ? 'opacity-50'
@@ -347,7 +515,7 @@ const CollectionRequestModal = ({
                             isAllParts() ? 'translate-x-5' : 'translate-x-0'
                           } absolute left-0 inline-block h-5 w-5 rounded-full border border-gray-200 bg-white shadow transition-transform duration-200 ease-in-out group-focus:border-blue-300 group-focus:ring`}
                         />
-                      </span>
+                      </button>
                     </th>
                     <th className="bg-gray-700/80 px-1 py-3 text-left text-xs font-medium uppercase leading-4 tracking-wider text-gray-200 md:px-6">
                       {intl.formatMessage(globalMessages.movie)}
@@ -376,6 +544,14 @@ const CollectionRequestModal = ({
                           MediaStatus.DELETED
                           ? part.mediaInfo
                           : undefined;
+                      const partToggleDisabled = Boolean(
+                        (partMedia &&
+                          partMedia.status !== MediaStatus.BLOCKLISTED) ||
+                        partRequest ||
+                        (quota?.movie.limit &&
+                          currentlyRemaining <= 0 &&
+                          !isSelectedPart(part.id))
+                      );
 
                       return (
                         <tr key={`part-${part.id}`}>
@@ -385,31 +561,20 @@ const CollectionRequestModal = ({
                               'pointer-events-none opacity-50'
                             }`}
                           >
-                            <span
+                            <button
+                              type="button"
                               role="checkbox"
-                              tabIndex={0}
                               aria-checked={
                                 (!!partMedia &&
                                   partMedia.status !==
                                     MediaStatus.BLOCKLISTED) ||
                                 isSelectedPart(part.id)
                               }
+                              aria-label={part.title}
+                              disabled={partToggleDisabled}
                               onClick={() => togglePart(part.id)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' || e.key === 'Space') {
-                                  togglePart(part.id);
-                                }
-                              }}
-                              className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none ${
-                                (!!partMedia &&
-                                  partMedia.status !==
-                                    MediaStatus.BLOCKLISTED) ||
-                                partRequest ||
-                                (quota?.movie.limit &&
-                                  currentlyRemaining <= 0 &&
-                                  !isSelectedPart(part.id))
-                                  ? 'opacity-50'
-                                  : ''
+                              className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none disabled:cursor-not-allowed ${
+                                partToggleDisabled ? 'opacity-50' : ''
                               }`}
                             >
                               <span
@@ -436,7 +601,7 @@ const CollectionRequestModal = ({
                                     : 'translate-x-0'
                                 } absolute left-0 inline-block h-5 w-5 rounded-full border border-gray-200 bg-white shadow transition-transform duration-200 ease-in-out group-focus:border-blue-300 group-focus:ring`}
                               />
-                            </span>
+                            </button>
                           </td>
                           <td
                             className={`flex items-center px-1 py-4 text-sm font-medium leading-5 text-gray-100 md:px-6 ${

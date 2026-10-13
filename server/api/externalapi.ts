@@ -19,12 +19,18 @@ export interface ExternalAPIOptions {
     maxRPS: number;
     maxRequests: number;
   };
+  inFlight?: Map<string, Promise<unknown>>;
+  requestCoordinator?: {
+    schedule<T>(work: () => Promise<T>): Promise<T>;
+  };
 }
 
 class ExternalAPI {
   protected axios: AxiosInstance;
   private baseUrl: string;
   private cache?: CacheStore;
+  private inFlight?: Map<string, Promise<unknown>>;
+  private requestCoordinator?: ExternalAPIOptions['requestCoordinator'];
 
   constructor(
     baseUrl: string,
@@ -53,6 +59,8 @@ class ExternalAPI {
 
     this.baseUrl = baseUrl;
     this.cache = options.nodeCache;
+    this.inFlight = options.inFlight;
+    this.requestCoordinator = options.requestCoordinator;
   }
 
   // transform runs before the cache write.
@@ -72,16 +80,32 @@ class ExternalAPI {
       return cachedItem;
     }
 
-    const response = await this.axios.get<T>(endpoint, config);
-    const data = options?.transform
-      ? options.transform(response.data)
-      : response.data;
+    const existing = this.inFlight?.get(cacheKey) as Promise<T> | undefined;
+    if (existing) return existing;
 
-    if (cache && ttl !== 0) {
-      cache.set(cacheKey, data, ttl ?? DEFAULT_TTL);
+    const request = async () => {
+      const response = await this.axios.get<T>(endpoint, config);
+      const data = options?.transform
+        ? options.transform(response.data)
+        : response.data;
+
+      if (cache && ttl !== 0) {
+        cache.set(cacheKey, data, ttl ?? DEFAULT_TTL);
+      }
+
+      return data;
+    };
+    const pending = this.requestCoordinator
+      ? this.requestCoordinator.schedule(request)
+      : request();
+    this.inFlight?.set(cacheKey, pending);
+    try {
+      return await pending;
+    } finally {
+      if (this.inFlight?.get(cacheKey) === pending) {
+        this.inFlight.delete(cacheKey);
+      }
     }
-
-    return data;
   }
 
   protected async post<T>(

@@ -1,12 +1,18 @@
 import { MediaType } from '@server/constants/media';
+import {
+  UserMediaIntentState,
+  UserMediaIntentType,
+} from '@server/constants/watchlist';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
 import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import { Permission } from '@server/lib/permissions';
 import discoverRoutes from '@server/routes/discover';
 import userRoutes from '@server/routes/user';
+import watchlistRoutes from '@server/routes/watchlist';
 import { setupTestDb } from '@server/test/db';
 import express from 'express';
 import assert from 'node:assert/strict';
@@ -17,6 +23,7 @@ setupTestDb();
 
 const app = express();
 let otherUserId: number;
+app.use(express.json());
 app.use((req, _res, next) => {
   const role = req.header('x-test-role') ?? 'user';
   const id = Number(req.header('x-test-user') ?? 1);
@@ -38,6 +45,7 @@ app.use((req, _res, next) => {
 });
 app.use('/discover', discoverRoutes);
 app.use('/user', userRoutes);
+app.use('/watchlist', watchlistRoutes);
 app.use(
   (
     error: { status?: number; message?: string },
@@ -72,6 +80,17 @@ describe('Watchlist privacy and admin scopes', () => {
         media,
       })
     );
+    await getRepository(UserMediaIntentOccurrence).save(
+      new UserMediaIntentOccurrence({
+        userId: owner.id,
+        user: owner,
+        intentType: UserMediaIntentType.WATCHLIST,
+        mediaType: MediaType.MOVIE,
+        tmdbId: 7001,
+        state: UserMediaIntentState.ACTIVE,
+        startedAt: new Date('2026-01-01T00:00:00Z'),
+      })
+    );
     await getRepository(UserMediaState).save(
       new UserMediaState({
         user: owner,
@@ -94,6 +113,42 @@ describe('Watchlist privacy and admin scopes', () => {
         media: otherMedia,
       })
     );
+    await getRepository(UserMediaIntentOccurrence).save(
+      new UserMediaIntentOccurrence({
+        userId: other.id,
+        user: other,
+        intentType: UserMediaIntentType.WATCHLIST,
+        mediaType: MediaType.TV,
+        tmdbId: 7002,
+        state: UserMediaIntentState.ACTIVE,
+        startedAt: new Date('2026-01-02T00:00:00Z'),
+      })
+    );
+  });
+
+  it('limits Watchlist history to the owner or WATCHLIST_VIEW', async () => {
+    const own = await request(app)
+      .get('/watchlist/history')
+      .set('x-test-user', '1');
+    assert.equal(own.status, 200);
+    assert.equal(own.body.totalResults, 1);
+    assert.equal(own.body.results[0].state, UserMediaIntentState.ACTIVE);
+
+    assert.equal(
+      (
+        await request(app)
+          .get(`/watchlist/history?userId=${otherUserId}`)
+          .set('x-test-user', '1')
+      ).status,
+      403
+    );
+    const authorized = await request(app)
+      .get(`/watchlist/history?userId=${otherUserId}`)
+      .set('x-test-user', '1')
+      .set('x-test-role', 'viewer');
+    assert.equal(authorized.status, 200);
+    assert.equal(authorized.body.totalResults, 1);
+    assert.equal(authorized.body.results[0].tmdbId, 7002);
   });
 
   it('allows owner access but rejects MANAGE_REQUESTS-only cross-user access', async () => {
@@ -184,5 +239,32 @@ describe('Watchlist privacy and admin scopes', () => {
       .get(`/discover/watchlist?owner=${otherUserId}&watched=all`)
       .set('x-test-role', 'admin');
     assert.equal(specific.status, 400);
+  });
+});
+
+describe('Watchlist TMDB identity validation', () => {
+  it('rejects hostile create identifiers before provider access', async () => {
+    for (const tmdbId of [
+      -1,
+      0,
+      1.5,
+      Number.MAX_SAFE_INTEGER + 1,
+      true,
+      '1e3',
+    ]) {
+      const response = await request(app)
+        .post('/watchlist')
+        .send({ tmdbId, mediaType: MediaType.MOVIE });
+      assert.equal(response.status, 400);
+    }
+  });
+
+  it('rejects invalid delete path identities without touching Watchlist state', async () => {
+    for (const tmdbId of ['-1', '1.5', '1e3', '9007199254740992']) {
+      const response = await request(app).delete(
+        `/watchlist/${tmdbId}?mediaType=${MediaType.MOVIE}`
+      );
+      assert.equal(response.status, 400);
+    }
   });
 });

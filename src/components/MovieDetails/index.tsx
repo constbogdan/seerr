@@ -59,7 +59,14 @@ import 'country-flag-icons/3x2/flags.css';
 import { uniqBy } from 'lodash';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  Fragment,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
@@ -126,6 +133,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
   const [toggleWatchlist, setToggleWatchlist] = useState<boolean>(
     !movie?.onUserWatchlist
   );
+  const watchlistMutationRef = useRef(false);
   const [isBlocklistUpdating, setIsBlocklistUpdating] =
     useState<boolean>(false);
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
@@ -328,6 +336,8 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
   }
 
   const onClickWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
 
     try {
@@ -338,6 +348,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       });
 
       if (response.data) {
+        setToggleWatchlist(false);
         addToast(
           <span>
             {intl.formatMessage(messages.watchlistSuccess, {
@@ -347,24 +358,28 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
           </span>,
           { appearance: 'success', autoDismiss: true }
         );
+        void revalidate();
       }
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
         appearance: 'error',
         autoDismiss: true,
       });
+    } finally {
+      watchlistMutationRef.current = false;
+      setIsUpdating(false);
     }
-
-    setIsUpdating(false);
-    setToggleWatchlist((prevState) => !prevState);
   };
 
   const onClickDeleteWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
     try {
       await axios.delete(
         `/api/v1/watchlist/${movie?.id}?mediaType=${MediaType.MOVIE}`
       );
+      setToggleWatchlist(true);
 
       addToast(
         <span>
@@ -375,14 +390,15 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
         </span>,
         { appearance: 'info', autoDismiss: true }
       );
+      void revalidate();
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
         appearance: 'error',
         autoDismiss: true,
       });
     } finally {
+      watchlistMutationRef.current = false;
       setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
     }
   };
 
@@ -598,6 +614,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                       buttonSize={'md'}
                       aria-label={intl.formatMessage(messages.addtowatchlist)}
                       onClick={onClickWatchlistBtn}
+                      disabled={isUpdating}
                     >
                       {isUpdating ? (
                         <Spinner />
@@ -617,6 +634,7 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                         messages.removefromwatchlist
                       )}
                       onClick={onClickDeleteWatchlistBtn}
+                      disabled={isUpdating}
                     >
                       {isUpdating ? (
                         <Spinner />

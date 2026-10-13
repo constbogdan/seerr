@@ -31,7 +31,10 @@ const externalApiGetMock = mock.method(
     return {
       id: tmdbId,
       external_ids: {},
-      seasons: [1, 2, 3].map((season_number) => ({ season_number })),
+      seasons: [0, 1, 2, 3].map((season_number) => ({
+        season_number,
+        episode_count: season_number === 0 ? 2 : 10,
+      })),
       // Skips getMovie's localized fallback call
       videos: { results: [{ type: 'Trailer', key: 'trailer' }] },
     };

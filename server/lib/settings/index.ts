@@ -1,3 +1,8 @@
+import {
+  DEFAULT_REMOVAL_SETTINGS,
+  normalizeRemovalSettings,
+  type RemovalSettings,
+} from '@server/constants/removal';
 import { MediaServerType } from '@server/constants/server';
 import { Permission } from '@server/lib/permissions';
 import { runMigrations } from '@server/lib/settings/migrator';
@@ -393,7 +398,7 @@ interface NotificationSettings {
   agents: NotificationAgents;
 }
 
-interface JobSettings {
+export interface JobSettings {
   schedule: string;
 }
 
@@ -413,8 +418,39 @@ export type JobId =
   | 'process-blocklisted-tags'
   | 'watchlist-metadata-backfill'
   | 'watchlist-play-state-sync'
+  | 'current-jellyfin-viewing-sync'
+  | 'library-history-hydration'
   | 'fresh-sync'
-  | 'fresh-reconciliation';
+  | 'fresh-reconciliation'
+  | 'removal-candidate-selection'
+  | 'scheduled-removal-processing';
+
+const OBSOLETE_REMOVAL_JOB_SCHEDULES: Partial<
+  Record<JobId, { obsolete: string; replacement: string }>
+> = {
+  'removal-candidate-selection': {
+    obsolete: '0 * * * * *',
+    replacement: '0 0 1 */14 * *',
+  },
+  'scheduled-removal-processing': {
+    obsolete: '30 * * * * *',
+    replacement: '0 30 1 * * *',
+  },
+};
+
+export const normalizeRemovalJobSchedules = (
+  jobs: Record<JobId, JobSettings>
+): Record<JobId, JobSettings> => {
+  const normalized = { ...jobs };
+  for (const [id, migration] of Object.entries(
+    OBSOLETE_REMOVAL_JOB_SCHEDULES
+  ) as [JobId, { obsolete: string; replacement: string }][]) {
+    if (normalized[id]?.schedule === migration.obsolete) {
+      normalized[id] = { schedule: migration.replacement };
+    }
+  }
+  return normalized;
+};
 
 export interface AllSettings {
   clientId: string;
@@ -432,6 +468,7 @@ export interface AllSettings {
   jobs: Record<JobId, JobSettings>;
   network: NetworkSettings;
   fresh: FreshSettings;
+  removal: RemovalSettings;
   metadataSettings: MetadataSettings;
   migrations: string[];
 }
@@ -663,11 +700,23 @@ class Settings {
         'watchlist-play-state-sync': {
           schedule: '30 */5 * * * *',
         },
+        'current-jellyfin-viewing-sync': {
+          schedule: '45 */5 * * * *',
+        },
+        'library-history-hydration': {
+          schedule: '0 30 5 * * *',
+        },
         'fresh-sync': {
           schedule: '0 */5 * * * *',
         },
         'fresh-reconciliation': {
           schedule: '0 15 3 * * *',
+        },
+        'removal-candidate-selection': {
+          schedule: '0 0 1 */14 * *',
+        },
+        'scheduled-removal-processing': {
+          schedule: '0 30 1 * * *',
         },
       },
       network: {
@@ -708,12 +757,15 @@ class Settings {
         minimumTmdbScore: 0,
         minimumTmdbVotes: 0,
       },
+      removal: DEFAULT_REMOVAL_SETTINGS,
       migrations: [],
     };
     if (initialSettings) {
       this.data = mergeSettings(this.data, initialSettings);
     }
     this.data.fresh = finalFreshSettings(this.data.fresh);
+    this.data.removal = normalizeRemovalSettings(this.data.removal);
+    this.data.jobs = normalizeRemovalJobSchedules(this.data.jobs);
   }
 
   get main(): MainSettings {
@@ -854,6 +906,14 @@ class Settings {
     this.data.fresh = finalFreshSettings(data);
   }
 
+  get removal(): RemovalSettings {
+    return this.data.removal;
+  }
+
+  set removal(data: RemovalSettings) {
+    this.data.removal = normalizeRemovalSettings(data);
+  }
+
   get migrations(): string[] {
     return this.data.migrations;
   }
@@ -921,7 +981,14 @@ class Settings {
     if (data && !raw) {
       const parsedJson = JSON.parse(data);
       const migratedData = await runMigrations(parsedJson, SETTINGS_PATH);
-      const merged = mergeSettings(this.data, migratedData);
+      const loadedSettings = migratedData as AllSettings & {
+        retention?: unknown;
+      };
+      if (Object.prototype.hasOwnProperty.call(loadedSettings, 'retention')) {
+        delete loadedSettings.retention;
+        change = true;
+      }
+      const merged = mergeSettings(this.data, loadedSettings);
 
       if (JSON.stringify(merged) !== JSON.stringify(migratedData)) {
         change = true;
@@ -937,7 +1004,18 @@ class Settings {
       this.data.fresh = sanitizedFresh;
       change = true;
     }
-
+    const sanitizedRemoval = normalizeRemovalSettings(this.data.removal);
+    if (
+      JSON.stringify(sanitizedRemoval) !== JSON.stringify(this.data.removal)
+    ) {
+      this.data.removal = sanitizedRemoval;
+      change = true;
+    }
+    const sanitizedJobs = normalizeRemovalJobSchedules(this.data.jobs);
+    if (JSON.stringify(sanitizedJobs) !== JSON.stringify(this.data.jobs)) {
+      this.data.jobs = sanitizedJobs;
+      change = true;
+    }
     // generate keys and ids if it's missing
     if (!this.data.main.apiKey) {
       this.data.main.apiKey = this.generateApiKey();

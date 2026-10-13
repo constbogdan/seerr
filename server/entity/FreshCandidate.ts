@@ -60,7 +60,10 @@ export default class FreshCandidate {
   public effectiveMediaType?: 'movie' | 'tv' | null;
   @Column({ type: 'int', nullable: true }) public freshMediaId?: number | null;
   @ManyToOne(() => FreshMedia, { nullable: true, onDelete: 'SET NULL' })
-  @JoinColumn({ name: 'freshMediaId' })
+  @JoinColumn({
+    name: 'freshMediaId',
+    foreignKeyConstraintName: 'FK_fresh_candidate_media',
+  })
   public freshMedia?: FreshMedia | null;
   @DbAwareColumn({ type: 'datetime' }) public firstObservedAt: Date;
   @DbAwareColumn({ type: 'datetime' }) public lastObservedAt: Date;

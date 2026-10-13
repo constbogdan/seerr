@@ -339,6 +339,10 @@ describe('Watchlist play-state reconciliation', () => {
     }));
 
     assert.equal(await sync.run(), 0);
+    await assert.rejects(
+      () => sync.run(true),
+      /watchlist_play_state_incomplete/
+    );
     const stored = await stateFor(row);
     assert.equal(stored.jellyfinPlayed, true);
     assert.equal(

@@ -50,11 +50,11 @@ describe('Watchlist play-state native job', () => {
     );
     assert.match(
       jobsUi,
-      /'watchlist-play-state-sync-description':[\s\S]*?Reconciles current per-user watched state/
+      /'watchlist-play-state-sync-description':[\s\S]*?Updates watched status and progress for each user's Watchlist\./
     );
     assert.match(
       jobsUi,
-      /'watchlist-metadata-backfill-description':[\s\S]*?Fills missing TMDB genre metadata/
+      /'watchlist-metadata-backfill-description':[\s\S]*?Adds missing genre information to Watchlist items\./
     );
     assert.match(
       jobsUi,
@@ -64,6 +64,10 @@ describe('Watchlist play-state native job', () => {
       jobsUi,
       /messages\['jellyfin-(?:recently-added|full)-scan'\]\s*=/
     );
-    assert.match(jobsUi, /\.sort\(\(left, right\) =>/);
+    assert.match(jobsUi, /\.sort\(\(left, right\) => \{/);
+    assert.match(
+      jobsUi,
+      /displayedNameOrder \|\| left\.id\.localeCompare\(right\.id, locale\)/
+    );
   });
 });

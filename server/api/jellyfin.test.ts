@@ -18,6 +18,81 @@ const item = (id: string, location: 'FileSystem' | 'Virtual') =>
   }) as JellyfinLibraryItemExtended;
 
 describe('JellyfinAPI targeted item reads', () => {
+  it('enumerates all pages with stable totals and filters virtual items only after completeness checks', async () => {
+    const starts: number[] = [];
+    let pageCount = 0;
+    const api = new JellyfinAPI('http://jellyfin.test');
+    Object.defineProperty(api, 'get', {
+      value: async (
+        _path: string,
+        options: { params: { startIndex: number } }
+      ) => {
+        starts.push(options.params.startIndex);
+        return options.params.startIndex === 0
+          ? ({
+              Items: [
+                item('movie', 'FileSystem'),
+                item('future-placeholder', 'Virtual'),
+              ],
+              TotalRecordCount: 3,
+              StartIndex: 0,
+            } satisfies JellyfinItemsReponse)
+          : ({
+              Items: [item('series', 'FileSystem')],
+              TotalRecordCount: 3,
+              StartIndex: 2,
+            } satisfies JellyfinItemsReponse);
+      },
+    });
+
+    const items = await api.getAllItems(
+      {
+        parentId: 'library',
+        recursive: true,
+        includeItemTypes: ['Movie', 'Series', 'Episode'],
+      },
+      2,
+      () => pageCount++
+    );
+
+    assert.deepEqual(starts, [0, 2]);
+    assert.equal(pageCount, 2);
+    assert.deepEqual(
+      items.map(({ Id }) => Id),
+      ['movie', 'series']
+    );
+  });
+
+  it('rejects changing totals so partial enumeration cannot look complete', async () => {
+    const api = new JellyfinAPI('http://jellyfin.test');
+    Object.defineProperty(api, 'get', {
+      value: async (
+        _path: string,
+        options: { params: { startIndex: number } }
+      ) => ({
+        Items:
+          options.params.startIndex === 0
+            ? [item('one', 'FileSystem'), item('two', 'FileSystem')]
+            : [item('three', 'FileSystem')],
+        TotalRecordCount: options.params.startIndex === 0 ? 3 : 4,
+        StartIndex: options.params.startIndex,
+      }),
+    });
+
+    await assert.rejects(
+      () =>
+        api.getAllItems(
+          {
+            parentId: 'library',
+            recursive: true,
+            includeItemTypes: ['Movie'],
+          },
+          2
+        ),
+      /pagination changed/
+    );
+  });
+
   it('performs an exact bounded ID lookup with canonical fields', async () => {
     const calls: { path: string; options: { params: object } }[] = [];
     const api = new JellyfinAPI('http://jellyfin.test');

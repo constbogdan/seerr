@@ -18,6 +18,7 @@ import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
+import backgroundDatabaseWriteCoordinator from '@server/lib/backgroundDatabaseWriteCoordinator';
 import { freshEngine } from '@server/lib/fresh/engine';
 import { evaluateAdmissionEvidence } from '@server/lib/fresh/membership';
 import {
@@ -573,7 +574,8 @@ export class FreshService {
       return this.inFlight as unknown as Promise<T>;
     const execute = async () => {
       this.activeOperation = operation;
-      const actionPromise = action();
+      const actionPromise =
+        backgroundDatabaseWriteCoordinator.runExclusive(action);
       this.inFlight = actionPromise.then(() => undefined);
       void this.inFlight.catch(() => undefined);
       try {
@@ -597,7 +599,7 @@ export class FreshService {
     return result;
   }
 
-  async sync(reconcile = false): Promise<void> {
+  async sync(reconcile = false, requireComplete = false): Promise<void> {
     const settings = this.configured();
     if (!settings.enabled) return;
     if (this.inFlight && this.activeOperation === 'rebuild')
@@ -609,6 +611,9 @@ export class FreshService {
           .run(settings, reconcile)
           .then(({ diagnostics }) => {
             this.latestAttempt = diagnostics;
+            if (requireComplete && diagnostics.outcome !== 'succeeded') {
+              throw new Error('fresh_sync_incomplete');
+            }
           }),
       true
     );

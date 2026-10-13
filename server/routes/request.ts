@@ -1,5 +1,6 @@
 import RadarrAPI from '@server/api/servarr/radarr';
 import SonarrAPI from '@server/api/servarr/sonarr';
+import TheMovieDb from '@server/api/themoviedb';
 import {
   MediaRequestStatus,
   MediaStatus,
@@ -10,6 +11,7 @@ import Media from '@server/entity/Media';
 import {
   BlocklistedMediaError,
   DuplicateMediaRequestError,
+  InvalidMediaRequestError,
   MediaRequest,
   NoSeasonsAvailableError,
   QuotaRestrictedError,
@@ -22,6 +24,11 @@ import type {
   RequestResultsResponse,
 } from '@server/interfaces/api/requestInterfaces';
 import { Permission } from '@server/lib/permissions';
+import {
+  InvalidRequestSeasonsError,
+  assertCompleteSeriesRequest,
+  resolveRequestedSeasons,
+} from '@server/lib/requestSeasonValidation';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
@@ -332,6 +339,9 @@ requestRoutes.post<never, MediaRequest, MediaRequestBody>(
           return next({ status: 409, message: error.message });
         case NoSeasonsAvailableError:
           return next({ status: 202, message: error.message });
+        case InvalidRequestSeasonsError:
+        case InvalidMediaRequestError:
+          return next({ status: 400, message: error.message });
         case BlocklistedMediaError:
           return next({ status: 403, message: error.message });
         default:
@@ -482,6 +492,13 @@ requestRoutes.put<{ requestId: string }>(
           return next({ status: 404, message: 'Request not found.' });
         }
 
+        if (req.body.mediaType !== request.type) {
+          return next({
+            status: 400,
+            message: 'Request media type does not match the stored request.',
+          });
+        }
+
         if (
           (request.requestedBy.id !== req.user?.id ||
             (req.body.mediaType !== 'tv' &&
@@ -555,14 +572,6 @@ requestRoutes.put<{ requestId: string }>(
             request.tags = req.body.tags;
             request.requestedBy = requestUser as User;
 
-            const requestedSeasons = req.body.seasons as number[] | undefined;
-
-            if (!requestedSeasons || requestedSeasons.length === 0) {
-              throw new Error(
-                'Missing seasons. If you want to cancel a series request, use the DELETE method.'
-              );
-            }
-
             // Same key as create, so an edit cannot claim a season that a new
             // request is taking at the same moment
             return mediaLock.dispatch(
@@ -575,6 +584,15 @@ requestRoutes.put<{ requestId: string }>(
                     mediaType: MediaType.TV,
                   },
                   relations: { requests: true },
+                });
+                const tmdbShow = await new TheMovieDb().getTvShow({
+                  tvId: request.media.tmdbId,
+                });
+                const requestedSeasons = resolveRequestedSeasons({
+                  requestedSeasons: req.body.seasons,
+                  tmdbSeasons: tmdbShow.seasons,
+                  enableSpecialEpisodes:
+                    getSettings().main.enableSpecialEpisodes,
                 });
 
                 // Get all requested seasons that are not part of this request we are editing
@@ -626,6 +644,27 @@ requestRoutes.put<{ requestId: string }>(
 
                 const resultingSeasonCount =
                   keptSeasons.length + newSeasons.length;
+
+                const requestableSeasons = tmdbShow.seasons
+                  .filter(
+                    (season) =>
+                      Number.isSafeInteger(season.season_number) &&
+                      season.season_number > 0 &&
+                      season.episode_count > 0 &&
+                      !existingSeasons.includes(season.season_number) &&
+                      (!coveredSeasons.includes(season.season_number) ||
+                        currentSeasons.includes(season.season_number))
+                  )
+                  .map((season) => season.season_number);
+                assertCompleteSeriesRequest({
+                  requestedSeasons:
+                    req.body.seasons === 'all'
+                      ? 'all'
+                      : [...keptSeasons, ...newSeasons],
+                  requestableSeasons,
+                  partialRequestsEnabled:
+                    getSettings().main.partialRequestsEnabled,
+                });
 
                 if (resultingSeasonCount === 0) {
                   return next({
@@ -698,6 +737,9 @@ requestRoutes.put<{ requestId: string }>(
         });
       });
     } catch (e) {
+      if (e instanceof InvalidRequestSeasonsError) {
+        return next({ status: 400, message: e.message });
+      }
       next({ status: 500, message: e.message });
     }
   }

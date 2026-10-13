@@ -1,5 +1,6 @@
 import TitleCard from '@app/components/TitleCard';
 import { Permission, useUser } from '@app/hooks/useUser';
+import type { LibraryUser } from '@server/interfaces/api/libraryInterfaces';
 import type { MovieDetails } from '@server/models/Movie';
 import type { TvDetails } from '@server/models/Tv';
 import { useInView } from 'react-intersection-observer';
@@ -14,7 +15,7 @@ export interface TmdbTitleCardProps {
   isAddedToWatchlist?: boolean;
   mutateParent?: () => void;
   watchState?: 'watched' | 'not_watched' | 'unknown';
-  watchlistOwnerName?: string;
+  watchlistOwner?: LibraryUser;
 }
 
 const isMovie = (movie: MovieDetails | TvDetails): movie is MovieDetails => {
@@ -30,7 +31,7 @@ const TmdbTitleCard = ({
   isAddedToWatchlist = false,
   mutateParent,
   watchState,
-  watchlistOwnerName,
+  watchlistOwner,
 }: TmdbTitleCardProps) => {
   const { hasPermission } = useUser();
 
@@ -79,7 +80,7 @@ const TmdbTitleCard = ({
       canExpand={canExpand}
       mutateParent={mutateParent}
       watchState={watchState}
-      watchlistOwnerName={watchlistOwnerName}
+      watchlistOwner={watchlistOwner}
     />
   ) : (
     <TitleCard
@@ -98,7 +99,7 @@ const TmdbTitleCard = ({
       canExpand={canExpand}
       mutateParent={mutateParent}
       watchState={watchState}
-      watchlistOwnerName={watchlistOwnerName}
+      watchlistOwner={watchlistOwner}
     />
   );
 };

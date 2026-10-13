@@ -25,7 +25,6 @@ const movie = (date: string) =>
     metadataRefreshedAt: observedAt,
     displayTitle: 'Movie',
     sortTitle: 'movie',
-    originalTitle: 'Movie',
   });
 
 const observation = (ageDays: number) => ({

@@ -13,6 +13,7 @@ import type {
   TvResult,
 } from '@server/models/Search';
 import { useIntl } from 'react-intl';
+import { searchResultOccurrenceKey, watchlistOccurrenceKey } from './identity';
 
 type ListViewProps = {
   items?: (TvResult | MovieResult | PersonResult | CollectionResult)[];
@@ -54,7 +55,7 @@ const ListView = ({
       <ul className="cards-vertical">
         {plexItems?.map((title, index) => {
           return (
-            <li key={`${title.ratingKey}-${index}`}>
+            <li key={watchlistOccurrenceKey(title, index)}>
               <div className="relative">
                 <TmdbTitleCard
                   id={title.tmdbId}
@@ -64,10 +65,8 @@ const ListView = ({
                   canExpand
                   mutateParent={mutateParent}
                   watchState={title.watchState}
-                  watchlistOwnerName={
-                    showWatchlistOwner
-                      ? title.requestedBy?.displayName
-                      : undefined
+                  watchlistOwner={
+                    showWatchlistOwner ? title.requestedBy : undefined
                   }
                 />
               </div>
@@ -155,7 +154,9 @@ const ListView = ({
                 break;
             }
 
-            return <li key={`${title.id}-${index}`}>{titleCard}</li>;
+            return (
+              <li key={searchResultOccurrenceKey(title, index)}>{titleCard}</li>
+            );
           })}
         {isLoading &&
           !isReachingEnd &&

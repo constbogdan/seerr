@@ -42,7 +42,6 @@ const media = () =>
     metadataRefreshedAt: new Date('2026-03-20T00:00:00Z'),
     mediaDate: '2026-01-01',
     displayTitle: 'Example',
-    originalTitle: 'Example',
     sortTitle: 'example',
     originalLanguage: 'en',
     genreIds: [18, 53],

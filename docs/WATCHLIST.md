@@ -32,8 +32,8 @@ Only `jellyfinPlayed`, `jellyfinLastPlayedAt`, the successful sync time, and an
 internal normalized Jellyfin-user binding are persisted. This is reusable
 current state, not immutable playback history. Removing Watchlist membership
 does not delete it; re-adding the same typed identity immediately reuses the
-last known state. Immutable viewing history belongs to a future Jellyfin
-Activity feature, not Watchlist.
+last known state. Immutable normalized viewing evidence belongs to the Library
+foundation, not Watchlist.
 
 ## Identity, privacy, and lifecycle
 
@@ -73,6 +73,26 @@ typed TMDB identity. For example, a Watchlist Movie with TMDB `1050035` remains
 are titled “Monster.” This is an intentional fail-closed result, not a missing
 title fallback.
 
+The active `Watchlist` row remains the compatibility projection used by current
+pages and request flows. Durable `UserMediaIntentOccurrence` rows preserve each
+exact intent cycle independently:
+
+- `ACTIVE` is current outstanding consumption intent;
+- `REMOVED` closes only the occurrence explicitly abandoned by the user; and
+- `SATISFIED` closes a Movie occurrence only when exact `CONFIRMED` viewing
+  evidence for the same Seerr user and typed TMDB Movie occurs after that
+  occurrence began.
+
+Removing and later re-adding an item creates a new occurrence rather than
+reviving the old one. `LIKELY` historical completion remains useful to viewing
+projections but cannot perform the irreversible lifecycle transition. A Series
+Watchlist remains `ACTIVE` after an individual Season is completed because the
+foundation cannot prove the Series has ended or that no future desired Season
+will appear. Exact Season/Episode viewing projections can still establish that
+the user's intent is satisfied for a particular physical Season without closing
+the Series occurrence. The history API exposes only the authenticated user's
+occurrences unless `WATCHLIST_VIEW` authorizes another user.
+
 ## Reconciliation and reusable Jellyfin boundary
 
 `Watchlist Play State Sync` runs at startup, approximately every five minutes,
@@ -82,6 +102,13 @@ request, limits user concurrency, performs network work outside the database
 transaction, and atomically updates durable state records. It emits aggregate
 completion counters without raw provider payloads, media identifiers, URLs, or
 credentials.
+
+The startup invocation is automatic when application jobs are registered; the
+cron schedule controls later runs but does not suppress startup catch-up. The
+first-production procedure uses `SEERR_SYNCHRONIZATION_MODE=contained` to block
+that catch-up, followed by the ordered commissioning mode documented in the
+[deployment runbook](FIRST_PRODUCTION_DEPLOYMENT.md). Editing the schedule is not
+a containment mechanism.
 
 `Watchlist Metadata Backfill` is separate and remains necessary: it fills
 missing TMDB genre metadata used by Watchlist category filters. The Jobs page
@@ -131,10 +158,10 @@ clickable or erasing destructive color.
 - Watched is current completion, not immutable history or sentiment.
 - Likes, dislikes, favorites, recommendations, Historical Library, and Activity
   are separate future features.
-- A future Jellyfin Activity projection must own a universally visible
-  **Watched by N** aggregate (including all metrics-included users, not only
-  users or media materialized through Watchlist) and its hover/focus names.
-  Watchlist-derived current state is deliberately insufficient for that job.
+- Library's Jellyfin Activity projection owns the universally visible watched
+  aggregate for metrics-included users. Watchlist continues to consume its own
+  user-scoped current projection; the two projections do not infer membership
+  or overwrite one another.
 - Mosaic must eventually use user-scoped Seerr authorization and the canonical
   Seerr Watchlist; it must not create a parallel Watchlist database or rely on a
   broad service identity.

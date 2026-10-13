@@ -46,6 +46,7 @@ const RegionSelector = ({
     watchProviders ? '/api/v1/watchproviders/regions' : '/api/v1/regions'
   );
   const [selectedRegion, setSelectedRegion] = useState<Region | null>(null);
+  const [clientDisplayNamesReady, setClientDisplayNamesReady] = useState(false);
 
   const allRegion: Region = useMemo(
     () => ({
@@ -56,16 +57,21 @@ const RegionSelector = ({
   );
 
   const sortedRegions = useMemo(() => {
-    regions?.forEach((region) => {
-      region.name =
-        intl.formatDisplayName(region.iso_3166_1, {
-          type: 'region',
-          fallback: 'none',
-        }) ?? region.english_name;
-    });
+    return sortBy(
+      regions?.map((region) => ({
+        ...region,
+        name: clientDisplayNamesReady
+          ? (intl.formatDisplayName(region.iso_3166_1, {
+              type: 'region',
+              fallback: 'none',
+            }) ?? region.english_name)
+          : region.english_name,
+      })),
+      'name'
+    );
+  }, [clientDisplayNamesReady, intl, regions]);
 
-    return sortBy(regions, 'name');
-  }, [intl, regions]);
+  useEffect(() => setClientDisplayNamesReady(true), []);
 
   const regionName = (regionCode: string) =>
     sortedRegions?.find((region) => region.iso_3166_1 === regionCode)?.name ??

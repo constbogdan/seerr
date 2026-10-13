@@ -24,8 +24,11 @@ export default class FreshObservation {
   @Column({ type: 'varchar', length: 20 }) public releaseId: string;
   @Column({ type: 'int' }) public filterId: number;
   @Column({ type: 'int' }) public candidateId: number;
-  @ManyToOne(() => FreshCandidate, { onDelete: 'CASCADE' })
-  @JoinColumn({ name: 'candidateId' })
+  @ManyToOne(() => FreshCandidate, { nullable: false, onDelete: 'CASCADE' })
+  @JoinColumn({
+    name: 'candidateId',
+    foreignKeyConstraintName: 'FK_fresh_observation_candidate',
+  })
   public candidate: FreshCandidate;
   @Column({ type: 'varchar', length: 8 }) public mediaType: 'movie' | 'tv';
   @Column({ type: 'varchar', length: 300 }) public title: string;
