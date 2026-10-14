@@ -19,12 +19,16 @@ describe('hydration run lease migration', () => {
       await database.initialize();
       await database.runMigrations();
       await database.undoLastMigration();
+      await database.undoLastMigration();
       await database.query(
         `INSERT INTO "hydration_run" ("id", "source", "sourceScope", "stage", "status", "startedAt") VALUES (9001, 'radarr', 'service:1', 'current-library', 2, '2026-10-01 00:00:00')`
       );
 
       const applied = await database.runMigrations();
-      assert.equal(applied.at(-1)?.name, 'AddHydrationRunLeases1790000000040');
+      assert.equal(
+        applied.at(-1)?.name,
+        'AddCurrentEpisodeIdentityGeneration1790000000042'
+      );
       assert.deepEqual(
         await database.query(
           `SELECT "id", "source", "status", "heartbeatAt", "leaseExpiresAt" FROM "hydration_run" WHERE "id" = 9001`

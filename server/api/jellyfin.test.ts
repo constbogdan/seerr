@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
+import availabilitySync from '@server/lib/availabilitySync';
 import JellyfinAPI, {
   type JellyfinItemsReponse,
   type JellyfinLibraryItemExtended,
@@ -219,5 +220,25 @@ describe('JellyfinAPI targeted item reads', () => {
         userId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
       })
     );
+  });
+
+  it('does not convert a completeness-sensitive user lookup failure into an empty result', async () => {
+    const api = new JellyfinAPI('http://jellyfin.test');
+    Object.defineProperty(api, 'get', {
+      value: async () => {
+        throw { message: 'provider failure', response: { status: 500 } };
+      },
+    });
+    availabilitySync.running = true;
+    try {
+      await assert.rejects(() =>
+        api.getUserItems({
+          ids: ['aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
+          userId: 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        })
+      );
+    } finally {
+      availabilitySync.running = false;
+    }
   });
 });

@@ -198,6 +198,11 @@ export class CanonicalEpisode {
   'value',
 ])
 @Index('IDX_canonical_episode_identity_episode', ['canonicalEpisodeId'])
+@Index('IDX_canonical_episode_identity_current_generation', [
+  'provider',
+  'sourceScope',
+  'lastSeenSourceGeneration',
+])
 export class CanonicalEpisodeIdentity {
   @PrimaryGeneratedColumn() public id: number;
   @Column({ type: 'int' }) public canonicalEpisodeId: number;
@@ -211,6 +216,8 @@ export class CanonicalEpisodeIdentity {
   @Column({ type: 'varchar', length: 128, default: '' })
   public sourceScope = '';
   @Column({ type: 'varchar', length: 255 }) public value: string;
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  public lastSeenSourceGeneration?: string | null;
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;
 

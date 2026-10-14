@@ -38,6 +38,7 @@ import { MediaRequest } from '@server/entity/MediaRequest';
 import { User } from '@server/entity/User';
 import { Viewer } from '@server/entity/Viewer';
 import { ViewingEvidence } from '@server/entity/ViewingEvidence';
+import { loadCurrentViewingTargets } from '@server/lib/currentViewingTargets';
 import {
   LibraryHistoryHydrationService,
   type LibraryHydrationDependencies,
@@ -400,6 +401,76 @@ const dependencies = ({
 };
 
 describe('Current Library Hydration', () => {
+  it('tracks scoped Jellyfin Episode aliases by successful Library generation', async () => {
+    const firstId = '11111111111111111111111111111111';
+    const replacementId = '22222222222222222222222222222222';
+    const withEpisodeId = (id: string) =>
+      jellyfinItems.map((item) =>
+        item.Type === 'Episode' ? { ...item, Id: id } : item
+      );
+
+    await new LibraryHistoryHydrationService(
+      dependencies({ jellyfin: withEpisodeId(firstId) })
+    ).run();
+    const firstCheckpoint = await getRepository(
+      SourceCheckpoint
+    ).findOneByOrFail({
+      source: 'jellyfin',
+      sourceScope: jellyfinSettings.serverId,
+      stage: 'current-library',
+    });
+    const firstIdentity = await getRepository(
+      CanonicalEpisodeIdentity
+    ).findOneByOrFail({
+      provider: 'jellyfin',
+      sourceScope: jellyfinSettings.serverId,
+      value: firstId,
+    });
+    assert.equal(
+      firstIdentity.lastSeenSourceGeneration,
+      firstCheckpoint.sourceGeneration
+    );
+
+    await new LibraryHistoryHydrationService(
+      dependencies({ jellyfin: withEpisodeId(replacementId) })
+    ).run();
+    const secondCheckpoint = await getRepository(
+      SourceCheckpoint
+    ).findOneByOrFail({
+      source: 'jellyfin',
+      sourceScope: jellyfinSettings.serverId,
+      stage: 'current-library',
+    });
+    const aliases = await getRepository(CanonicalEpisodeIdentity).find({
+      where: {
+        provider: 'jellyfin',
+        sourceScope: jellyfinSettings.serverId,
+      },
+      order: { createdAt: 'ASC', id: 'ASC' },
+    });
+    assert.notEqual(
+      secondCheckpoint.sourceGeneration,
+      firstCheckpoint.sourceGeneration
+    );
+    assert.equal(aliases.length, 2);
+    assert.equal(aliases[0].value, firstId);
+    assert.equal(
+      aliases[0].lastSeenSourceGeneration,
+      firstCheckpoint.sourceGeneration
+    );
+    assert.equal(aliases[1].value, replacementId);
+    assert.equal(
+      aliases[1].lastSeenSourceGeneration,
+      secondCheckpoint.sourceGeneration
+    );
+    assert.deepEqual(
+      (await loadCurrentViewingTargets(jellyfinSettings.serverId))
+        .filter(({ mediaType }) => mediaType === 'episode')
+        .map(({ sourceItemId }) => sourceItemId),
+      [replacementId]
+    );
+  });
+
   it('hydrates roots, exact media, Specials, future episodes, distinct files, Jellyfin aliases, Seerr links, and Requests idempotently', async () => {
     const admin = await getRepository(User).findOneByOrFail({ id: 1 });
     const currentMovie = await getRepository(Media).save(
