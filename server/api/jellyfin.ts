@@ -733,6 +733,7 @@ class JellyfinAPI extends ExternalAPI {
       fields,
       limit: exactIds.length,
       timeoutMs: JELLYFIN_USER_DATA_TIMEOUT_MS,
+      allowEmptyOnAvailabilitySyncError: false,
     });
   }
 

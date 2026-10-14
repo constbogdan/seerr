@@ -72,7 +72,7 @@ describe('migration/entity schema authority', () => {
       const currentApplied = await current.runMigrations();
       assert.equal(
         currentApplied.at(-1)?.name,
-        'AddHydrationRunLeases1790000000040'
+        'AddCurrentEpisodeIdentityGeneration1790000000042'
       );
 
       assert.deepEqual(

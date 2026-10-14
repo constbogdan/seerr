@@ -140,12 +140,14 @@ const createCurrentLibrary = async () => {
       provider: 'jellyfin',
       sourceScope: SCOPE,
       value: EPISODE_ID,
+      lastSeenSourceGeneration: '1',
     }),
     new CanonicalEpisodeIdentity({
       canonicalEpisodeId: episodeTwo.id,
       provider: 'jellyfin',
       sourceScope: SCOPE,
       value: EPISODE_TWO_ID,
+      lastSeenSourceGeneration: '1',
     }),
   ]);
   await getRepository(LibraryPresence).save([
@@ -207,6 +209,7 @@ const createCurrentLibrary = async () => {
     new SourceCheckpoint({
       source: 'jellyfin',
       sourceScope: SCOPE,
+      sourceGeneration: '1',
       stage: 'current-library',
       status: SourceCheckpointStatus.CURRENT,
       lastSuccessfulAt: new Date(),
@@ -1271,6 +1274,7 @@ describe('library viewing projections', () => {
             provider: 'jellyfin',
             sourceScope: SCOPE,
             value: episodeItemIds[index],
+            lastSeenSourceGeneration: '1',
           })
       )
     );
@@ -1317,6 +1321,16 @@ describe('library viewing projections', () => {
             canonicalEpisodeId: episode.id,
           })
       )
+    );
+    await getRepository(SourceCheckpoint).save(
+      new SourceCheckpoint({
+        source: 'jellyfin',
+        sourceScope: SCOPE,
+        sourceGeneration: '1',
+        stage: 'current-library',
+        status: SourceCheckpointStatus.CURRENT,
+        lastSuccessfulAt: new Date(),
+      })
     );
     const admin = await getRepository(User).findOneByOrFail({ id: 1 });
     const second = await getRepository(User).save(

@@ -1,4 +1,7 @@
-import { LibraryMediaType } from '@server/constants/libraryHistory';
+import {
+  LibraryMediaType,
+  SourceCheckpointStatus,
+} from '@server/constants/libraryHistory';
 import dataSource, { getRepository } from '@server/datasource';
 import {
   CanonicalEpisode,
@@ -9,6 +12,7 @@ import {
   LibraryFileEpisode,
   LibraryPresence,
 } from '@server/entity/LibraryHistory';
+import { SourceCheckpoint } from '@server/entity/LibraryHydration';
 import { User } from '@server/entity/User';
 import { Viewer } from '@server/entity/Viewer';
 import { normalizeExactJellyfinId } from '@server/lib/jellyfinViewingSource';
@@ -124,13 +128,23 @@ export const loadCurrentViewingTargets = async (
       .filter((episode) => currentSeriesIds.has(episode.season.seriesId))
       .map((episode) => [episode.id, episode])
   );
+  const jellyfinCheckpoint = await manager
+    .getRepository(SourceCheckpoint)
+    .findOneBy({
+      source: 'jellyfin',
+      sourceScope: scope,
+      stage: 'current-library',
+      status: SourceCheckpointStatus.CURRENT,
+    });
+  const currentSourceGeneration = jellyfinCheckpoint?.sourceGeneration;
   const episodeIdentities =
-    episodeById.size === 0
+    episodeById.size === 0 || !currentSourceGeneration
       ? []
       : await manager.getRepository(CanonicalEpisodeIdentity).find({
           where: {
             provider: 'jellyfin',
             sourceScope: scope,
+            lastSeenSourceGeneration: currentSourceGeneration,
             canonicalEpisodeId: In([...episodeById.keys()]),
           },
           order: { createdAt: 'DESC', id: 'DESC' },
@@ -196,7 +210,15 @@ export const loadActiveCurrentViewingStatesForMedia = async (
     `INNER JOIN "canonical_episode_identity" episode_identity ON ` +
     `episode_identity."canonicalEpisodeId" = episode.id AND ` +
     `episode_identity.provider = 'jellyfin' AND ` +
-    `episode_identity."sourceScope" = state."sourceScope" ` +
+    `episode_identity."sourceScope" = state."sourceScope" AND ` +
+    `episode_identity."lastSeenSourceGeneration" = (` +
+    `SELECT current_checkpoint."sourceGeneration" FROM "source_checkpoint" current_checkpoint ` +
+    `WHERE current_checkpoint.source = 'jellyfin' AND ` +
+    `current_checkpoint."sourceScope" = state."sourceScope" AND ` +
+    `current_checkpoint.stage = 'current-library' AND ` +
+    `current_checkpoint.status = :currentCheckpointStatus ` +
+    `LIMIT 1` +
+    `) ` +
     `WHERE episode.id = state."canonicalEpisodeId" AND ` +
     `season."seriesId" = state."canonicalMediaId" AND ` +
     `${normalizedJellyfinIdSql('episode_identity.value')} = ` +
@@ -206,6 +228,8 @@ export const loadActiveCurrentViewingStatesForMedia = async (
     `WHERE latest_identity."canonicalEpisodeId" = episode.id AND ` +
     `latest_identity.provider = 'jellyfin' AND ` +
     `latest_identity."sourceScope" = state."sourceScope" ` +
+    `AND latest_identity."lastSeenSourceGeneration" = ` +
+    `episode_identity."lastSeenSourceGeneration" ` +
     `ORDER BY latest_identity."createdAt" DESC, latest_identity.id DESC ` +
     `LIMIT 1` +
     `) AND EXISTS (` +
@@ -257,6 +281,7 @@ export const loadActiveCurrentViewingStatesForMedia = async (
     })
     .andWhere(`((${movieTarget}) OR (${episodeTarget}))`)
     .setParameter('current', true)
+    .setParameter('currentCheckpointStatus', SourceCheckpointStatus.CURRENT)
     .getRawMany<RawActiveCurrentViewingState>();
 
   return rows.map((row) => {

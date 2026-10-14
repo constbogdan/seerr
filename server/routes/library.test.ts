@@ -1,6 +1,7 @@
 import {
   LibraryMediaType,
   LibraryRemovalSource,
+  SourceCheckpointStatus,
   ViewingCompletionClassification,
 } from '@server/constants/libraryHistory';
 import { MediaRequestStatus, MediaType } from '@server/constants/media';
@@ -22,6 +23,7 @@ import {
   LibraryPresence,
   StorageRoot,
 } from '@server/entity/LibraryHistory';
+import { SourceCheckpoint } from '@server/entity/LibraryHydration';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import { RemovalSchedule } from '@server/entity/RemovalSchedule';
@@ -143,6 +145,7 @@ const jellyfinMovieId = (tmdbId: number) =>
   tmdbId.toString(16).padStart(32, '0');
 const jellyfinEpisodeId = (episodeNumber: number, seasonNumber = 1) =>
   (seasonNumber * 1000 + episodeNumber).toString(16).padStart(32, '0');
+const jellyfinLibraryGeneration = 'library-route-fixture-generation';
 
 const addCurrentMovie = async (
   title: string,
@@ -287,6 +290,16 @@ beforeEach(async () => {
       sourceUserId: 'private-second-id',
       userId: secondUser.id,
       user: secondUser,
+    })
+  );
+  await getRepository(SourceCheckpoint).save(
+    new SourceCheckpoint({
+      source: 'jellyfin',
+      sourceScope: 'jf',
+      sourceGeneration: jellyfinLibraryGeneration,
+      stage: 'current-library',
+      status: SourceCheckpointStatus.CURRENT,
+      lastSuccessfulAt: new Date('2026-03-13T12:00:00.000Z'),
     })
   );
 
@@ -436,6 +449,7 @@ beforeEach(async () => {
         provider: 'jellyfin',
         sourceScope: 'jf',
         value: episodeSourceId,
+        lastSeenSourceGeneration: jellyfinLibraryGeneration,
       }),
       new CanonicalEpisodeIdentity({
         canonicalEpisodeId: episode.id,
@@ -558,6 +572,7 @@ beforeEach(async () => {
       provider: 'jellyfin',
       sourceScope: 'jf',
       value: specialSourceId,
+      lastSeenSourceGeneration: jellyfinLibraryGeneration,
     })
   );
   const specialFile = await getRepository(LibraryFile).save(
@@ -1842,6 +1857,7 @@ describe('Library factual administrator API', () => {
           provider: 'jellyfin',
           sourceScope: 'jf',
           value: jellyfinItemId,
+          lastSeenSourceGeneration: jellyfinLibraryGeneration,
         })
       );
       const file = await getRepository(LibraryFile).save(
@@ -3008,6 +3024,7 @@ describe('Library factual administrator API', () => {
             provider: 'jellyfin',
             sourceScope: 'jf',
             value: jellyfinEpisodeId(index + 1, 2),
+            lastSeenSourceGeneration: jellyfinLibraryGeneration,
           })
       )
     );

@@ -1508,6 +1508,12 @@ export class LibraryHistoryHydrationService {
     );
     let failure: unknown;
     try {
+      const sourceGeneration = run.sourceGeneration;
+      if (!sourceGeneration) {
+        throw new Error(
+          'Jellyfin Library hydration requires a durable source generation.'
+        );
+      }
       const context = await this.dependencies.createJellyfinContext();
       if (!context) {
         if (
@@ -1671,10 +1677,21 @@ export class LibraryHistoryHydrationService {
                     provider: identity.provider,
                     sourceScope: identity.sourceScope ?? '',
                     value: String(identity.value),
+                    lastSeenSourceGeneration:
+                      identity.provider === 'jellyfin'
+                        ? sourceGeneration
+                        : null,
                   })
                 );
                 summary.aliasesCreated++;
               } else {
+                if (
+                  identity.provider === 'jellyfin' &&
+                  existing.lastSeenSourceGeneration !== sourceGeneration
+                ) {
+                  existing.lastSeenSourceGeneration = sourceGeneration;
+                  await repository.save(existing);
+                }
                 summary.aliasesResolved++;
               }
             }
