@@ -154,4 +154,27 @@ describe('Storage root display names', () => {
       [null, null]
     );
   });
+
+  it('reports an invalid legacy color as unset without rewriting the record', async () => {
+    const root = await getRepository(StorageRoot).save(
+      new StorageRoot({
+        servarrType: 'radarr',
+        serviceId: 9,
+        sourceRootId: 22,
+        pathSnapshot: '/media/movies',
+        displayName: 'Movies',
+        isAnimation: true,
+        color: '#ffffff',
+      })
+    );
+
+    assert.deepEqual(
+      await storageRootConfigurations('radarr', 9, [22]),
+      new Map([[22, { displayName: 'Movies', isAnimation: true, color: null }]])
+    );
+    assert.equal(
+      (await getRepository(StorageRoot).findOneByOrFail({ id: root.id })).color,
+      '#ffffff'
+    );
+  });
 });

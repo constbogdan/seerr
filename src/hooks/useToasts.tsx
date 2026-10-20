@@ -1,4 +1,9 @@
 import Toast from '@app/components/Toast';
+import {
+  shouldAutoDismissToast,
+  ToastDismissalManager,
+  TRANSIENT_TOAST_DURATION_MS,
+} from '@app/hooks/toastLifecycle';
 import { useCallback } from 'react';
 import { toast } from 'react-hot-toast';
 
@@ -6,6 +11,13 @@ interface ToastOptions {
   appearance?: 'success' | 'error' | 'info' | 'warning';
   autoDismiss?: boolean;
 }
+
+const toastDismissals = new ToastDismissalManager();
+
+const dismissToast = (id: string): void => {
+  toastDismissals.cancel(id);
+  toast.dismiss(id);
+};
 
 export const useToasts = () => {
   const addToast = useCallback(
@@ -21,7 +33,7 @@ export const useToasts = () => {
           return (
             <Toast
               appearance={options?.appearance || 'info'}
-              onDismiss={() => toast.dismiss(t.id)}
+              onDismiss={() => dismissToast(t.id)}
               transitionState={t.visible ? 'entered' : 'exiting'}
             >
               {message}
@@ -29,9 +41,19 @@ export const useToasts = () => {
           );
         },
         {
-          duration: options?.autoDismiss !== false ? 4000 : Infinity,
+          // Seerr owns transient dismissal so a touch-generated mouse-enter
+          // cannot leave react-hot-toast's global hover pause latched.
+          duration: Infinity,
         }
       );
+
+      if (shouldAutoDismissToast(options?.autoDismiss)) {
+        toastDismissals.schedule(
+          id,
+          (toastId) => toast.dismiss(toastId),
+          TRANSIENT_TOAST_DURATION_MS
+        );
+      }
 
       if (callback) {
         callback(id);
@@ -41,7 +63,7 @@ export const useToasts = () => {
   );
 
   const removeToast = useCallback((id: string) => {
-    toast.dismiss(id);
+    dismissToast(id);
   }, []);
 
   return { addToast, removeToast };

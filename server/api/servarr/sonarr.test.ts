@@ -146,6 +146,91 @@ describe('SonarrAPI getSeriesByTvdbId', () => {
   });
 });
 
+describe('SonarrAPI whole-Series relocation', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('uses the native Sonarr moveFiles update and returns the verified target path', async () => {
+    const sonarr = buildSonarr();
+    const put = mock.method(getAxios(sonarr), 'put', async () => ({
+      data: {},
+    }));
+    const series = {
+      id: 20,
+      title: 'Example',
+      path: '/volume3/shows/Example',
+    } as Parameters<SonarrAPI['moveSeries']>[0];
+
+    assert.deepEqual(await sonarr.moveSeries(series, '/volume9/shows/'), {
+      destinationPath: '/volume9/shows/Example',
+    });
+    assert.equal(put.mock.callCount(), 1);
+    assert.equal(put.mock.calls[0].arguments[0], '/series/20');
+    const body = put.mock.calls[0].arguments[1] as {
+      path: string;
+      rootFolderPath: string;
+    };
+    assert.equal(body.path, '/volume9/shows/Example');
+    assert.equal(body.rootFolderPath, '/volume9/shows');
+    assert.deepEqual(put.mock.calls[0].arguments[2], {
+      params: { moveFiles: true },
+    });
+  });
+
+  it('rejects a Series without a provider identity before issuing a request', async () => {
+    const sonarr = buildSonarr();
+    const put = mock.method(getAxios(sonarr), 'put', async () => ({
+      data: {},
+    }));
+    await assert.rejects(
+      () =>
+        sonarr.moveSeries(
+          { path: '/volume3/shows/Example' } as Parameters<
+            SonarrAPI['moveSeries']
+          >[0],
+          '/volume9/shows'
+        ),
+      /without an ID/
+    );
+    assert.equal(put.mock.callCount(), 0);
+  });
+
+  it('reads and filters the Sonarr move commands for the requested Series', async () => {
+    const sonarr = buildSonarr();
+    const get = mock.method(getAxios(sonarr), 'get', async () => ({
+      data: [
+        {
+          id: 1,
+          commandName: 'MoveSeries',
+          status: 'started',
+          body: { seriesId: 20, destinationPath: '/volume9/shows/Example' },
+        },
+        {
+          id: 2,
+          name: 'MoveSeries',
+          status: 'queued',
+          body: { seriesId: 21, destinationPath: '/volume9/shows/Other' },
+        },
+        {
+          id: 3,
+          commandName: 'RefreshSeries',
+          status: 'started',
+          body: { seriesId: 20 },
+        },
+      ],
+    }));
+
+    assert.deepEqual(await sonarr.getSeriesMoveCommands(20), [
+      {
+        id: 1,
+        commandName: 'MoveSeries',
+        status: 'started',
+        body: { seriesId: 20, destinationPath: '/volume9/shows/Example' },
+      },
+    ]);
+    assert.deepEqual(get.mock.calls[0].arguments, ['/command']);
+  });
+});
+
 describe('SonarrAPI current EpisodeFile reads', () => {
   afterEach(() => mock.restoreAll());
 

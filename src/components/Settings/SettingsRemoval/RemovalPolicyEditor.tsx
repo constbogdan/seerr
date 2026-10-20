@@ -1,10 +1,12 @@
 import SlideCheckbox from '@app/components/Common/SlideCheckbox';
 import Tooltip from '@app/components/Common/Tooltip';
 import {
+  ArrowPathIcon,
   CalendarDaysIcon,
   ChevronDownIcon,
   ChevronUpIcon,
   ClockIcon,
+  ExclamationTriangleIcon,
   InformationCircleIcon,
 } from '@heroicons/react/24/solid';
 import type { AutomaticRemovalPolicy } from '@server/constants/removal';
@@ -20,6 +22,9 @@ const messages = defineMessages('components.Settings.SettingsRemoval', {
   monthUnit: '{count, plural, one {month} other {months}}',
   itemsPerRun: 'Items per run',
   eligibleCount: '{count} eligible',
+  calculatingEligibility: 'Calculating eligibility…',
+  previewFailed: 'Unable to calculate the eligibility preview.',
+  previewRetry: 'Retry preview',
   candidateOrder: 'Sorted by Last active, oldest first.',
   showCandidates: 'Show next-batch candidates',
   hideCandidates: 'Hide next-batch candidates',
@@ -54,6 +59,8 @@ interface RemovalPolicyEditorProps {
   policy: AutomaticRemovalPolicy;
   preview: RemovalPreviewPool | null;
   previewing: boolean;
+  previewError: boolean;
+  onRetryPreview: () => void;
   onChange: (policy: AutomaticRemovalPolicy) => void;
 }
 
@@ -62,6 +69,8 @@ const RemovalPolicyEditor = ({
   policy,
   preview,
   previewing,
+  previewError,
+  onRetryPreview,
   onChange,
 }: RemovalPolicyEditorProps) => {
   const intl = useIntl();
@@ -75,7 +84,7 @@ const RemovalPolicyEditor = ({
     : [...ITEMS_PER_RUN_OPTIONS, policy.itemsPerRun].sort(
         (left, right) => left - right
       );
-  const eligible = preview?.eligibleUnscheduled ?? 0;
+  const eligible = preview?.eligibleUnscheduled;
   const set = <K extends keyof AutomaticRemovalPolicy>(
     key: K,
     value: AutomaticRemovalPolicy[K]
@@ -140,12 +149,49 @@ const RemovalPolicyEditor = ({
 
       <div className="mt-6 border-t border-gray-700 pt-4">
         <div className="flex flex-wrap items-center gap-2">
-          <strong className="text-sm text-white">
-            {previewing && !preview
-              ? '...'
-              : intl.formatMessage(messages.eligibleCount, {
+          <strong
+            className="inline-flex min-w-[9rem] items-center gap-1.5 text-sm text-white"
+            aria-busy={previewing}
+            aria-live="polite"
+          >
+            <span className="tabular-nums">
+              {eligible === undefined ? (
+                <>
+                  <span aria-hidden="true">—</span>
+                  <span className="sr-only">
+                    {intl.formatMessage(messages.calculatingEligibility)}
+                  </span>
+                </>
+              ) : (
+                intl.formatMessage(messages.eligibleCount, {
                   count: eligible,
-                })}
+                })
+              )}
+            </span>
+            {previewing && (
+              <ArrowPathIcon
+                className="h-4 w-4 flex-none animate-spin text-gray-400 motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            )}
+            {previewError && (
+              <Tooltip
+                content={`${intl.formatMessage(
+                  messages.previewFailed
+                )} ${intl.formatMessage(messages.previewRetry)}`}
+              >
+                <button
+                  type="button"
+                  className="rounded text-yellow-500 hover:text-yellow-400 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  aria-label={`${intl.formatMessage(
+                    messages.previewFailed
+                  )} ${intl.formatMessage(messages.previewRetry)}`}
+                  onClick={onRetryPreview}
+                >
+                  <ExclamationTriangleIcon className="h-4 w-4" />
+                </button>
+              </Tooltip>
+            )}
           </strong>
           <span className="text-gray-500" aria-hidden="true">
             &middot;
@@ -190,7 +236,15 @@ const RemovalPolicyEditor = ({
         </div>
         {expanded && (
           <div className="mt-3 max-h-96 overflow-y-auto rounded-md border border-gray-700 bg-gray-900">
-            {!preview || preview.candidates.length === 0 ? (
+            {!preview ? (
+              <p className="p-3 text-sm text-gray-400">
+                {intl.formatMessage(
+                  previewError
+                    ? messages.previewFailed
+                    : messages.calculatingEligibility
+                )}
+              </p>
+            ) : preview.candidates.length === 0 ? (
               <p className="p-3 text-sm text-gray-400">
                 {intl.formatMessage(messages.noCandidates)}
               </p>

@@ -38,10 +38,13 @@ const PersonDetails = () => {
   );
   const [showBio, setShowBio] = useState(false);
 
-  const { data: combinedCredits, error: errorCombinedCredits } =
-    useSWR<PersonCombinedCreditsResponse>(
-      `/api/v1/person/${router.query.personId}/combined_credits`
-    );
+  const {
+    data: combinedCredits,
+    error: errorCombinedCredits,
+    mutate: revalidateCombinedCredits,
+  } = useSWR<PersonCombinedCreditsResponse>(
+    `/api/v1/person/${router.query.personId}/combined_credits`
+  );
 
   const sortedCast = useMemo(() => {
     const filtered = (combinedCredits?.cast ?? []).filter(
@@ -183,6 +186,8 @@ const PersonDetails = () => {
                 summary={media.overview}
                 mediaType={media.mediaType as 'movie' | 'tv'}
                 status={media.mediaInfo?.status}
+                isAddedToWatchlist={media.mediaInfo?.watchlists?.length ?? 0}
+                mutateParent={revalidateCombinedCredits}
                 canExpand
               />
               {media.character && (
@@ -224,6 +229,8 @@ const PersonDetails = () => {
                 summary={media.overview}
                 mediaType={media.mediaType as 'movie' | 'tv'}
                 status={media.mediaInfo?.status}
+                isAddedToWatchlist={media.mediaInfo?.watchlists?.length ?? 0}
+                mutateParent={revalidateCombinedCredits}
                 canExpand
               />
               {media.job && (

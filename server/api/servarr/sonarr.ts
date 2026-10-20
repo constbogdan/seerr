@@ -1,6 +1,6 @@
 import logger from '@server/logger';
 import type { AxiosResponse } from 'axios';
-import ServarrBase from './base';
+import ServarrBase, { type QueueItem, type ServarrHistoryRecord } from './base';
 
 export interface SonarrSeason {
   seasonNumber: number;
@@ -46,6 +46,57 @@ export interface SonarrEpisodeFile {
   } | null;
 }
 
+export interface SonarrQueueItem extends QueueItem {
+  seriesId: number;
+  episodeId?: number;
+}
+
+export interface SonarrHistoryRecord extends ServarrHistoryRecord {
+  seriesId: number;
+  episodeId: number;
+  sourceTitle: string;
+  data: Record<string, string | undefined>;
+}
+
+export interface SonarrSeriesMove {
+  destinationPath: string;
+}
+
+export interface SonarrSeriesMoveCommand {
+  id: number;
+  name?: string;
+  commandName?: string;
+  status:
+    | 'queued'
+    | 'started'
+    | 'completed'
+    | 'failed'
+    | 'aborted'
+    | 'cancelled'
+    | 'orphaned';
+  result?: 'unknown' | 'successful' | 'unsuccessful';
+  body?: {
+    seriesId?: number | string;
+    sourcePath?: string;
+    destinationPath?: string;
+    [key: string]: unknown;
+  };
+}
+
+export const seriesDestinationPath = (
+  sourcePath: string,
+  destinationRootPath: string
+): string => {
+  const normalizedRoot = destinationRootPath.replace(/[\\/]+$/, '');
+  const normalizedSource = sourcePath.replace(/[\\/]+$/, '');
+  const leaf = normalizedSource.split(/[\\/]/).pop();
+  if (!normalizedRoot || !leaf) {
+    throw new Error('Cannot resolve the destination Series path');
+  }
+  const separator = destinationRootPath.includes('\\') ? '\\' : '/';
+  return `${normalizedRoot}${separator}${leaf}`;
+};
+
 export interface SonarrSeries {
   title: string;
   sortTitle: string;
@@ -62,6 +113,7 @@ export interface SonarrSeries {
   seasons: SonarrSeason[];
   year: number;
   path: string;
+  pendingPath?: string | null;
   profileId: number;
   languageProfileId: number;
   seasonFolder: boolean;
@@ -215,9 +267,13 @@ class SonarrAPI extends ServarrBase<{
     return response.data[0];
   }
 
-  public async addSeries(options: AddSeriesOptions): Promise<SonarrSeries> {
+  public async addSeries(
+    options: AddSeriesOptions,
+    existingSeries?: SonarrSeries
+  ): Promise<SonarrSeries> {
     try {
-      const series = await this.getSeriesByTvdbId(options.tvdbid);
+      const series =
+        existingSeries ?? (await this.getSeriesByTvdbId(options.tvdbid));
 
       // If the series already exists, we will simply just update it
       if (series.id) {
@@ -411,6 +467,102 @@ class SonarrAPI extends ServarrBase<{
         seriesId,
       });
       throw new Error('Failed to get episode files', { cause: e });
+    }
+  }
+
+  public async getSeriesQueue(seriesId: number): Promise<SonarrQueueItem[]> {
+    try {
+      const response = await this.axios.get<SonarrQueueItem[]>(
+        '/queue/details',
+        {
+          params: { seriesId, includeEpisode: true },
+        }
+      );
+      if (!Array.isArray(response.data)) {
+        throw new Error('Queue details response was not an array');
+      }
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve Series queue: ${e.message}`,
+        {
+          cause: e,
+        }
+      );
+    }
+  }
+
+  public async getSeriesHistory(
+    seriesId: number
+  ): Promise<SonarrHistoryRecord[]> {
+    try {
+      const response = await this.axios.get<SonarrHistoryRecord[]>(
+        '/history/series',
+        { params: { seriesId } }
+      );
+      if (!Array.isArray(response.data) || response.data.length > 20_000) {
+        throw new Error('Series history response was malformed or unbounded');
+      }
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve complete Series history: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async getSeriesMoveCommands(
+    seriesId: number
+  ): Promise<SonarrSeriesMoveCommand[]> {
+    try {
+      const response =
+        await this.axios.get<SonarrSeriesMoveCommand[]>('/command');
+      if (!Array.isArray(response.data) || response.data.length > 10_000) {
+        throw new Error('Command response was malformed or unbounded');
+      }
+      return response.data.filter((command) => {
+        const name = (command.commandName ?? command.name ?? '').toLowerCase();
+        return (
+          name === 'moveseries' && Number(command.body?.seriesId) === seriesId
+        );
+      });
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve Series move commands: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async moveSeries(
+    series: SonarrSeries,
+    destinationRootPath: string
+  ): Promise<SonarrSeriesMove> {
+    if (!series.id) throw new Error('Cannot move a Series without an ID');
+    const normalizedRoot = destinationRootPath.replace(/[\\/]+$/, '');
+    const destinationPath = seriesDestinationPath(
+      series.path,
+      destinationRootPath
+    );
+    try {
+      await this.axios.put(
+        `/series/${series.id}`,
+        {
+          ...series,
+          path: destinationPath,
+          rootFolderPath: normalizedRoot,
+        },
+        { params: { moveFiles: true } }
+      );
+      return { destinationPath };
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to request whole-Series move: ${e.message}`,
+        {
+          cause: e,
+        }
+      );
     }
   }
 

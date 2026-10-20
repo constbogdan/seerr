@@ -29,7 +29,10 @@ describe('TitleCard interaction contracts', () => {
   });
 
   it('preserves the two-step touch reveal while Enter uses native navigation', () => {
-    assert.match(source, /if \(isTouch && !showDetail\)/);
+    assert.match(source, /onPointerDown=/);
+    assert.match(source, /onTouchStart=/);
+    assert.match(source, /shouldRevealTitleCard\(/);
+    assert.match(source, /isKeyboardActivation: event\.detail === 0/);
     assert.match(source, /event\.preventDefault\(\)/);
     assert.match(source, /setShowDetail\(true\)/);
     assert.match(source, /focus-visible:ring-indigo-400/);
@@ -49,6 +52,8 @@ describe('TitleCard interaction contracts', () => {
     assert.match(source, /confirmedWatchlistStateRef\.current = false/);
     assert.match(source, /setToggleWatchlist\(false\)/);
     assert.match(source, /setToggleWatchlist\(true\)/);
+    assert.match(addHandler, /mutateParent\?\.\(\)/);
+    assert.match(deleteHandler, /mutateParent\?\.\(\)/);
     assert.doesNotMatch(addHandler, /finally \{[\s\S]*?setToggleWatchlist/);
     assert.doesNotMatch(deleteHandler, /finally \{[\s\S]*?setToggleWatchlist/);
     assert.match(source, /disabled=\{isUpdating\}/);

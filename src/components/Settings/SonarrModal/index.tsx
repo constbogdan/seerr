@@ -5,6 +5,7 @@ import SlideCheckbox from '@app/components/Common/SlideCheckbox';
 import Tooltip from '@app/components/Common/Tooltip';
 import ServarrRootColorPicker from '@app/components/Settings/ServarrRootColorPicker';
 import type { SonarrTestResponse } from '@app/components/Settings/SettingsServices';
+import { sonarrSeriesTypeInitialValues } from '@app/components/Settings/SonarrModal/seriesTypeValues';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
@@ -117,6 +118,7 @@ interface SonarrModalProps {
 
 const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
   const intl = useIntl();
+  const seriesTypeInitialValues = sonarrSeriesTypeInitialValues(sonarr);
   const initialLoad = useRef(false);
   const { addToast } = useToasts();
   const [isValidated, setIsValidated] = useState(sonarr ? true : false);
@@ -294,8 +296,8 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
           activeProfileId: sonarr?.activeProfileId,
           activeLanguageProfileId: sonarr?.activeLanguageProfileId,
           rootFolder: sonarr?.activeDirectory,
-          seriesType: sonarr?.seriesType,
-          animeSeriesType: sonarr?.animeSeriesType ?? 'anime',
+          seriesType: seriesTypeInitialValues.seriesType,
+          animeSeriesType: seriesTypeInitialValues.animeSeriesType,
           activeAnimeProfileId: sonarr?.activeAnimeProfileId,
           activeAnimeLanguageProfileId: sonarr?.activeAnimeLanguageProfileId,
           activeAnimeRootFolder: sonarr?.activeAnimeDirectory,
@@ -426,6 +428,7 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
                 isSubmitting
               }
               okDisabled={!isValidated || isSubmitting || isTesting || !isValid}
+              okButtonProps={{ type: 'button' }}
               onOk={() => handleSubmit()}
               title={
                 !sonarr
@@ -735,19 +738,19 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
                         {testResponse.rootFolders.map((folder) => (
                           <div
                             key={`root-folder-name-${folder.id}`}
-                            className="grid gap-2 sm:grid-cols-2 sm:items-center"
+                            className="rounded-md border border-gray-700 bg-gray-800/50 p-3"
                           >
                             <span
-                              className="break-all text-sm text-gray-300"
+                              className="block break-all text-sm text-gray-300"
                               title={folder.path}
                             >
                               {folder.path}
                             </span>
-                            <div className="flex items-center gap-3">
+                            <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                               <input
                                 id={`root-folder-name-${folder.id}`}
                                 type="text"
-                                className="min-w-0 flex-1"
+                                className="w-full min-w-0"
                                 maxLength={120}
                                 value={rootFolderNames[folder.id] ?? ''}
                                 placeholder={intl.formatMessage(
@@ -760,30 +763,32 @@ const SonarrModal = ({ onClose, sonarr, onSave }: SonarrModalProps) => {
                                   }))
                                 }
                               />
-                              <label className="flex items-center gap-2 whitespace-nowrap text-sm text-gray-300">
-                                <SlideCheckbox
-                                  ariaLabel={intl.formatMessage(
-                                    messages.animation
-                                  )}
-                                  checked={animationRoots[folder.id] ?? false}
-                                  onClick={() =>
-                                    setAnimationRoots((current) => ({
+                              <div className="flex min-w-0 items-center justify-between gap-3 sm:justify-start">
+                                <label className="flex items-center gap-2 whitespace-nowrap text-sm text-gray-300">
+                                  <SlideCheckbox
+                                    ariaLabel={intl.formatMessage(
+                                      messages.animation
+                                    )}
+                                    checked={animationRoots[folder.id] ?? false}
+                                    onClick={() =>
+                                      setAnimationRoots((current) => ({
+                                        ...current,
+                                        [folder.id]: !current[folder.id],
+                                      }))
+                                    }
+                                  />
+                                  {intl.formatMessage(messages.animation)}
+                                </label>
+                                <ServarrRootColorPicker
+                                  value={rootFolderColors[folder.id] ?? null}
+                                  onChange={(color) =>
+                                    setRootFolderColors((current) => ({
                                       ...current,
-                                      [folder.id]: !current[folder.id],
+                                      [folder.id]: color,
                                     }))
                                   }
                                 />
-                                {intl.formatMessage(messages.animation)}
-                              </label>
-                              <ServarrRootColorPicker
-                                value={rootFolderColors[folder.id] ?? null}
-                                onChange={(color) =>
-                                  setRootFolderColors((current) => ({
-                                    ...current,
-                                    [folder.id]: color,
-                                  }))
-                                }
-                              />
+                              </div>
                             </div>
                           </div>
                         ))}

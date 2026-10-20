@@ -46,6 +46,11 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     canceljob: 'Cancel Job',
     jobstarted: '{jobname} started.',
     jobcancelled: '{jobname} canceled.',
+    jobresult:
+      'Moved {moved}; blocked {blocked}; reconciliation required {reconciliation}',
+    rouletteJobResult:
+      'Requested {requested}; skipped {skipped}; failed {failed}',
+    lastExecution: 'Last run {date}',
     process: 'Process',
     command: 'Command',
     cache: 'Cache',
@@ -105,6 +110,15 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'scheduled-removal-processing': 'Removal Processing',
     'scheduled-removal-processing-description':
       'Processes scheduled removals when their deadlines arrive.',
+    'series-relocation': 'Series Relocation',
+    'series-relocation-description':
+      'Automatically relocates eligible Series between storage volumes.',
+    'watchlist-roulette-movies': 'Watchlist Roulette Movies',
+    'watchlist-roulette-movies-description':
+      "Automatically requests random Movies from users' Watchlists.",
+    'watchlist-roulette-series': 'Watchlist Roulette Series',
+    'watchlist-roulette-series-description':
+      "Automatically requests Season 1 of random Series from users' Watchlists.",
     'watchlist-play-state-sync-description':
       "Updates watched status and progress for each user's Watchlist.",
     'current-jellyfin-viewing-sync-description':
@@ -148,9 +162,18 @@ interface Job {
   nextExecutionTime: string | null;
   running: boolean;
   enabled: boolean;
+  configurableEnabled: boolean;
+  lastResult?: Record<string, unknown> | null;
+  lastExecutionTime?: string | null;
   scheduledExecutionAllowed: boolean;
   manualExecutionAllowed: boolean;
 }
+
+const numericResult = (
+  result: Record<string, unknown> | null | undefined,
+  key: string
+): number | null =>
+  result && typeof result[key] === 'number' ? (result[key] as number) : null;
 
 type JobModalState = {
   isOpen?: boolean;
@@ -546,6 +569,42 @@ const SettingsJobs = () => {
                   {messages[`${job.id}-description`] && (
                     <div className="mt-1 text-xs text-gray-400">
                       {intl.formatMessage(messages[`${job.id}-description`])}
+                    </div>
+                  )}
+                  {job.id === 'series-relocation' && job.lastResult && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages.jobresult, {
+                        moved: numericResult(job.lastResult, 'moved') ?? 0,
+                        blocked: numericResult(job.lastResult, 'blocked') ?? 0,
+                        reconciliation:
+                          numericResult(
+                            job.lastResult,
+                            'needsReconciliation'
+                          ) ?? 0,
+                      })}
+                    </div>
+                  )}
+                  {(job.id === 'watchlist-roulette-movies' ||
+                    job.id === 'watchlist-roulette-series') &&
+                    job.lastResult && (
+                      <div className="mt-1 text-xs text-gray-400">
+                        {intl.formatMessage(messages.rouletteJobResult, {
+                          requested:
+                            numericResult(job.lastResult, 'requested') ?? 0,
+                          skipped:
+                            numericResult(job.lastResult, 'skipped') ?? 0,
+                          failed: numericResult(job.lastResult, 'failed') ?? 0,
+                        })}
+                      </div>
+                    )}
+                  {job.lastExecutionTime && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages.lastExecution, {
+                        date: intl.formatDate(new Date(job.lastExecutionTime), {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        }),
+                      })}
                     </div>
                   )}
                 </Table.TD>

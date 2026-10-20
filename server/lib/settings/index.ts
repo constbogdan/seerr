@@ -1,9 +1,19 @@
 import {
+  DEFAULT_OVERFLOW_SETTINGS,
+  normalizeOverflowSettings,
+  type OverflowSettings,
+} from '@server/constants/overflow';
+import {
   DEFAULT_REMOVAL_SETTINGS,
   normalizeRemovalSettings,
   type RemovalSettings,
 } from '@server/constants/removal';
 import { MediaServerType } from '@server/constants/server';
+import {
+  DEFAULT_WATCHLIST_ROULETTE_SETTINGS,
+  normalizeWatchlistRouletteSettings,
+  type WatchlistRouletteSettings,
+} from '@server/constants/watchlistRoulette';
 import { Permission } from '@server/lib/permissions';
 import { runMigrations } from '@server/lib/settings/migrator';
 import type { AvailableLocale } from '@server/types/languages';
@@ -400,6 +410,7 @@ interface NotificationSettings {
 
 export interface JobSettings {
   schedule: string;
+  enabled?: boolean;
 }
 
 export type JobId =
@@ -423,7 +434,10 @@ export type JobId =
   | 'fresh-sync'
   | 'fresh-reconciliation'
   | 'removal-candidate-selection'
-  | 'scheduled-removal-processing';
+  | 'scheduled-removal-processing'
+  | 'series-relocation'
+  | 'watchlist-roulette-movies'
+  | 'watchlist-roulette-series';
 
 const OBSOLETE_REMOVAL_JOB_SCHEDULES: Partial<
   Record<JobId, { obsolete: string; replacement: string }>
@@ -446,7 +460,40 @@ export const normalizeRemovalJobSchedules = (
     OBSOLETE_REMOVAL_JOB_SCHEDULES
   ) as [JobId, { obsolete: string; replacement: string }][]) {
     if (normalized[id]?.schedule === migration.obsolete) {
-      normalized[id] = { schedule: migration.replacement };
+      normalized[id] = {
+        ...normalized[id],
+        schedule: migration.replacement,
+      };
+    }
+  }
+  return normalized;
+};
+
+const OBSOLETE_WATCHLIST_ROULETTE_JOB_SCHEDULES: Partial<
+  Record<JobId, { obsolete: string; replacement: string }>
+> = {
+  'watchlist-roulette-movies': {
+    obsolete: '0 0 2 * * 0',
+    replacement: '0 0 1 */7 * *',
+  },
+  'watchlist-roulette-series': {
+    obsolete: '0 0 2 1 * *',
+    replacement: '0 0 1 */30 * *',
+  },
+};
+
+export const normalizeWatchlistRouletteJobSchedules = (
+  jobs: Record<JobId, JobSettings>
+): Record<JobId, JobSettings> => {
+  const normalized = { ...jobs };
+  for (const [id, migration] of Object.entries(
+    OBSOLETE_WATCHLIST_ROULETTE_JOB_SCHEDULES
+  ) as [JobId, { obsolete: string; replacement: string }][]) {
+    if (normalized[id]?.schedule === migration.obsolete) {
+      normalized[id] = {
+        ...normalized[id],
+        schedule: migration.replacement,
+      };
     }
   }
   return normalized;
@@ -469,6 +516,8 @@ export interface AllSettings {
   network: NetworkSettings;
   fresh: FreshSettings;
   removal: RemovalSettings;
+  overflow: OverflowSettings;
+  watchlistRoulette: WatchlistRouletteSettings;
   metadataSettings: MetadataSettings;
   migrations: string[];
 }
@@ -718,6 +767,18 @@ class Settings {
         'scheduled-removal-processing': {
           schedule: '0 30 1 * * *',
         },
+        'series-relocation': {
+          schedule: '0 0 2 * * *',
+          enabled: false,
+        },
+        'watchlist-roulette-movies': {
+          schedule: '0 0 1 */7 * *',
+          enabled: false,
+        },
+        'watchlist-roulette-series': {
+          schedule: '0 0 1 */30 * *',
+          enabled: false,
+        },
       },
       network: {
         csrfProtection: false,
@@ -758,14 +819,25 @@ class Settings {
         minimumTmdbVotes: 0,
       },
       removal: DEFAULT_REMOVAL_SETTINGS,
+      overflow: DEFAULT_OVERFLOW_SETTINGS,
+      watchlistRoulette: DEFAULT_WATCHLIST_ROULETTE_SETTINGS,
       migrations: [],
     };
+    const persistedOverflow = initialSettings?.overflow;
     if (initialSettings) {
       this.data = mergeSettings(this.data, initialSettings);
     }
     this.data.fresh = finalFreshSettings(this.data.fresh);
     this.data.removal = normalizeRemovalSettings(this.data.removal);
-    this.data.jobs = normalizeRemovalJobSchedules(this.data.jobs);
+    this.data.overflow = normalizeOverflowSettings(
+      persistedOverflow ?? this.data.overflow
+    );
+    this.data.watchlistRoulette = normalizeWatchlistRouletteSettings(
+      this.data.watchlistRoulette
+    );
+    this.data.jobs = normalizeWatchlistRouletteJobSchedules(
+      normalizeRemovalJobSchedules(this.data.jobs)
+    );
   }
 
   get main(): MainSettings {
@@ -914,6 +986,22 @@ class Settings {
     this.data.removal = normalizeRemovalSettings(data);
   }
 
+  get overflow(): OverflowSettings {
+    return this.data.overflow;
+  }
+
+  set overflow(data: OverflowSettings) {
+    this.data.overflow = normalizeOverflowSettings(data);
+  }
+
+  get watchlistRoulette(): WatchlistRouletteSettings {
+    return this.data.watchlistRoulette;
+  }
+
+  set watchlistRoulette(data: WatchlistRouletteSettings) {
+    this.data.watchlistRoulette = normalizeWatchlistRouletteSettings(data);
+  }
+
   get migrations(): string[] {
     return this.data.migrations;
   }
@@ -1011,7 +1099,26 @@ class Settings {
       this.data.removal = sanitizedRemoval;
       change = true;
     }
-    const sanitizedJobs = normalizeRemovalJobSchedules(this.data.jobs);
+    const sanitizedOverflow = normalizeOverflowSettings(this.data.overflow);
+    if (
+      JSON.stringify(sanitizedOverflow) !== JSON.stringify(this.data.overflow)
+    ) {
+      this.data.overflow = sanitizedOverflow;
+      change = true;
+    }
+    const sanitizedWatchlistRoulette = normalizeWatchlistRouletteSettings(
+      this.data.watchlistRoulette
+    );
+    if (
+      JSON.stringify(sanitizedWatchlistRoulette) !==
+      JSON.stringify(this.data.watchlistRoulette)
+    ) {
+      this.data.watchlistRoulette = sanitizedWatchlistRoulette;
+      change = true;
+    }
+    const sanitizedJobs = normalizeWatchlistRouletteJobSchedules(
+      normalizeRemovalJobSchedules(this.data.jobs)
+    );
     if (JSON.stringify(sanitizedJobs) !== JSON.stringify(this.data.jobs)) {
       this.data.jobs = sanitizedJobs;
       change = true;

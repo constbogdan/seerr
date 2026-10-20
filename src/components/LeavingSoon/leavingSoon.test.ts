@@ -40,6 +40,31 @@ describe('Leaving Soon presentation', () => {
     assert.doesNotMatch(source, /failureMessage|sourceScope|leaseToken/);
   });
 
+  it('reuses bounded Library presentation polling and revalidates once after settlement', () => {
+    assert.match(source, /data\?\.presentation\?\.state !== 'pending'/);
+    assert.match(source, /data\?\.presentation\?\.batchId/);
+    assert.match(
+      source,
+      /\/api\/v1\/leaving-soon\/presentation-status\/\$\{batchId\}/
+    );
+    assert.match(source, /attempts >= 40/);
+    assert.match(source, /Math\.min\(500 \* attempts, 2000\)/);
+    assert.match(
+      source,
+      /status\.state === 'complete' \|\| status\.state === 'partial'/
+    );
+    assert.match(source, /await mutate\(\)/);
+    assert.match(source, /cancelled = true/);
+    assert.match(source, /clearTimeout\(timeout\)/);
+    assert.match(source, /Missing, expired, or transiently unavailable/);
+  });
+
+  it('does not introduce per-card metadata hydration or replace TitleCard loading', () => {
+    assert.doesNotMatch(source, /\/api\/v1\/(?:movie|tv)\//);
+    assert.doesNotMatch(source, /getMovie|getTvShow|<CachedImage/);
+    assert.match(source, /image=\{item\.posterPath \?\? undefined\}/);
+  });
+
   it('groups Season countdowns under their canonical Series card', () => {
     assert.match(source, /item\.canonicalMediaId/);
     assert.match(source, /schedule\.targetType === 'season'/);

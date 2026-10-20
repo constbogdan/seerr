@@ -12,6 +12,7 @@ import {
   RemovalScheduleStatus,
   RemovalTargetType,
 } from '@server/constants/removal';
+import { SeriesRelocationState } from '@server/constants/seriesRelocation';
 import applicationDataSource from '@server/datasource';
 import { CanonicalMedia } from '@server/entity/CanonicalMedia';
 import {
@@ -19,10 +20,12 @@ import {
   RemovalExecutionClaim,
 } from '@server/entity/RemovalExecution';
 import { RemovalSchedule } from '@server/entity/RemovalSchedule';
+import { SeriesRelocationExecution } from '@server/entity/SeriesRelocationExecution';
 import {
   RemovalExecutionClaimConflictError,
   RemovalExecutionCoordinator,
   RemovalExecutionOwnershipLostError,
+  RemovalExecutionStateError,
 } from '@server/lib/removalExecutionCoordinator';
 import {
   RemovalScheduleConflictError,
@@ -402,6 +405,43 @@ describe('RemovalExecutionCoordinator durable claims', () => {
       assert.ok(stored.providerAcknowledgedAt);
       assert.equal(stored.providerAbsentAt, null);
       assert.equal(stored.physicalAbsenceConfirmedAt, null);
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  it('refuses a Removal claim while a durable Series relocation owns the canonical target', async () => {
+    const fixture = await createConnections();
+    try {
+      const target = await series(fixture.first, 'Relocation interlock');
+      await fixture.first.getRepository(SeriesRelocationExecution).save(
+        new SeriesRelocationExecution({
+          id: '00000000-0000-4000-8000-000000000001',
+          canonicalMediaId: target.id,
+          state: SeriesRelocationState.VERIFYING,
+          activeKey: `series:${target.id}`,
+          serviceId: 1,
+          sonarrSeriesId: 20,
+          sourceRootFolderId: 3,
+          destinationRootFolderId: 9,
+          sourceVolumeId: 'physical:volume3',
+          destinationVolumeId: 'physical:volume9',
+          sourcePath: '/volume3/shows/Series',
+          destinationPath: '/volume9/shows/Series',
+          expectedEpisodeFileIds: [11],
+          expectedFileCount: 1,
+          expectedBytes: '100',
+        })
+      );
+      const coordinator = new RemovalExecutionCoordinator(fixture.first);
+      await assert.rejects(
+        coordinator.acquire({
+          canonicalMediaId: target.id,
+          targetType: RemovalTargetType.SERIES,
+          initiator: RemovalExecutionInitiator.MANUAL,
+        }),
+        RemovalExecutionStateError
+      );
     } finally {
       await fixture.close();
     }

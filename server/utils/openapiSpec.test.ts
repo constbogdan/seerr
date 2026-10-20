@@ -1,3 +1,4 @@
+import { STORAGE_ROOT_COLOR_PALETTE } from '@server/constants/storageRoot';
 import cookieParser from 'cookie-parser';
 import express from 'express';
 import * as OpenApiValidator from 'express-openapi-validator';
@@ -11,6 +12,21 @@ import request from 'supertest';
 const API_SPEC_PATH = path.join(__dirname, '../../seerr-api.yml');
 
 describe('OpenAPI runtime schema', () => {
+  it('publishes the user-scoped Leaving Soon presentation lifecycle', () => {
+    const spec = load(readFileSync(API_SPEC_PATH, 'utf8')) as {
+      paths: Record<string, unknown>;
+      components: {
+        schemas: Record<string, { properties?: Record<string, unknown> }>;
+      };
+    };
+    assert.ok(spec.paths['/leaving-soon']);
+    assert.ok(spec.paths['/leaving-soon/presentation-status/{batchId}']);
+    assert.ok(
+      spec.components.schemas.LeavingSoonResultsResponse.properties
+        ?.presentation
+    );
+  });
+
   it('keeps Watchlist ownership on the active compatibility schema', () => {
     const spec = load(readFileSync(API_SPEC_PATH, 'utf8')) as {
       components: {
@@ -84,12 +100,95 @@ describe('OpenAPI runtime schema', () => {
     assert.ok(
       spec.components.schemas.StorageRootWithDisplayName.properties?.isAnimation
     );
-    assert.ok(
-      spec.components.schemas.StorageRootDisplayNameInput.properties?.color
+    for (const schemaName of [
+      'StorageRootDisplayNameInput',
+      'StorageRootWithDisplayName',
+    ]) {
+      const color = spec.components.schemas[schemaName].properties?.color as {
+        enum?: (string | null)[];
+        nullable?: boolean;
+      };
+      assert.equal(color.nullable, true);
+      assert.deepEqual(color.enum, [...STORAGE_ROOT_COLOR_PALETTE, null]);
+    }
+    const overflowSettings = spec.components.schemas.OverflowSettings as {
+      properties?: Record<
+        string,
+        {
+          enum?: (number | string)[];
+          default?: number | string;
+          minimum?: number;
+          type?: string;
+        }
+      >;
+      required?: string[];
+    };
+    assert.deepEqual(overflowSettings.required, [
+      'enabled',
+      'freeSpaceThreshold',
+      'automaticSeriesPlacement',
+      'defaultSeriesVolumeId',
+      'expansionSeriesVolumeId',
+      'seriesSeasonThreshold',
+      'torrentRelocationDelayHours',
+      'routes',
+    ]);
+    assert.deepEqual(overflowSettings.properties?.freeSpaceThreshold, {
+      type: 'integer',
+      enum: [5, 10, 15, 20],
+      default: 10,
+    });
+    assert.deepEqual(overflowSettings.properties?.automaticSeriesPlacement, {
+      type: 'boolean',
+      default: false,
+    });
+    const overflowRoute = spec.components.schemas.OverflowRoute as {
+      required?: string[];
+      properties?: Record<string, unknown>;
+    };
+    assert.deepEqual(overflowRoute.required, [
+      'sourceVolumeId',
+      'destinationVolumeId',
+      'thresholdGb',
+      'enabled',
+    ]);
+    assert.deepEqual(overflowRoute.properties?.thresholdGb, {
+      type: 'integer',
+      minimum: 1,
+      default: 50,
+    });
+    assert.ok(spec.paths['/settings/storage/series-relocation/next-candidate']);
+    assert.ok(spec.paths['/settings/watchlist-roulette']);
+    assert.ok(spec.components.schemas.WatchlistRouletteSettings);
+    assert.ok(spec.components.schemas.WatchlistRouletteSettingsResponse);
+    const seriesRelocationPreviewResult = spec.components.schemas
+      .SeriesRelocationPreviewResult as {
+      required?: string[];
+      properties?: Record<string, unknown>;
+    };
+    assert.deepEqual(seriesRelocationPreviewResult.required, [
+      'status',
+      'candidate',
+      'reason',
+    ]);
+    assert.deepEqual(
+      (
+        seriesRelocationPreviewResult.properties?.status as {
+          enum?: string[];
+        }
+      ).enum,
+      ['eligible', 'none', 'unavailable']
     );
-    assert.ok(
-      spec.components.schemas.StorageRootWithDisplayName.properties?.color
-    );
+    const seriesRelocationPreviewCandidate = spec.components.schemas
+      .SeriesRelocationPreviewCandidate as { required?: string[] };
+    assert.deepEqual(seriesRelocationPreviewCandidate.required, [
+      'canonicalMediaId',
+      'title',
+      'year',
+      'retainedSeasonCount',
+      'totalBytes',
+      'sonarrUrl',
+    ]);
     assert.ok(spec.components.schemas.LibraryItem.properties?.watchedUsers);
     assert.ok(spec.components.schemas.LibraryItem.properties?.watchedUserCount);
     assert.ok(spec.components.schemas.LibraryItem.properties?.hasWatchedDetail);
@@ -303,6 +402,7 @@ describe('OpenAPI runtime schema', () => {
   it('is accepted by the same middleware Seerr installs at runtime', async () => {
     const app = express();
     app.use(cookieParser());
+    app.use(express.json());
     app.use(
       OpenApiValidator.middleware({
         apiSpec: API_SPEC_PATH,
@@ -310,6 +410,12 @@ describe('OpenAPI runtime schema', () => {
       })
     );
     app.get('/api/v1/fresh', (_req, res) => res.status(200).json({ ok: true }));
+    app.put('/api/v1/settings/radarr/:radarrId', (req, res) =>
+      res.status(200).json(req.body)
+    );
+    app.put('/api/v1/settings/sonarr/:sonarrId', (req, res) =>
+      res.status(200).json(req.body)
+    );
     app.use(
       (
         error: { message?: string; status?: number },
@@ -340,5 +446,61 @@ describe('OpenAPI runtime schema', () => {
       (await authenticatedGet('/api/v1/fresh?unknown=true')).status,
       400
     );
+
+    const commonSettings = {
+      name: 'Test',
+      hostname: 'localhost',
+      apiKey: 'test-key',
+      useSsl: false,
+      activeProfileId: 1,
+      activeProfileName: 'HD',
+      activeDirectory: '/media',
+      is4k: false,
+      isDefault: true,
+    };
+    const requestBodies = [
+      {
+        path: '/api/v1/settings/radarr/1',
+        body: {
+          ...commonSettings,
+          port: 7878,
+          minimumAvailability: 'released',
+        },
+      },
+      {
+        path: '/api/v1/settings/sonarr/1',
+        body: {
+          ...commonSettings,
+          port: 8989,
+          seriesType: 'standard',
+          animeSeriesType: 'anime',
+          enableSeasonFolders: true,
+          monitorNewItems: 'all',
+        },
+      },
+    ];
+    for (const { path: requestPath, body } of requestBodies) {
+      for (const rootFolder of [
+        { sourceRootId: 1, path: '/media', color: null },
+        { sourceRootId: 1, path: '/media', color: '#60a5fa' },
+        { sourceRootId: 1, path: '/media' },
+      ]) {
+        const saveResponse = await request(app)
+          .put(requestPath)
+          .set('Cookie', 'connect.sid=test-session')
+          .send({ ...body, rootFolderNames: [rootFolder] });
+        assert.equal(saveResponse.status, 200, saveResponse.body?.message);
+      }
+      for (const color of ['', '#ffffff']) {
+        const invalidResponse = await request(app)
+          .put(requestPath)
+          .set('Cookie', 'connect.sid=test-session')
+          .send({
+            ...body,
+            rootFolderNames: [{ sourceRootId: 1, path: '/media', color }],
+          });
+        assert.equal(invalidResponse.status, 400);
+      }
+    }
   });
 });
