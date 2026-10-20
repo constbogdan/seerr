@@ -13,8 +13,11 @@ import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
 import { buildTitleCardStateIndicators } from '@app/components/TitleCard/stateIndicators';
 import {
-  normalizeCardPointerType,
-  shouldRevealTitleCard,
+  beginCardPointerGesture,
+  beginCardTouchFallbackGesture,
+  cancelCardNavigationGesture,
+  consumeCardNavigationClick,
+  createCardNavigationGesture,
 } from '@app/components/TitleCard/touchNavigation';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useToasts from '@app/hooks/useToasts';
@@ -104,8 +107,7 @@ const TitleCard = ({
   const cardRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
   const watchlistMutationRef = useRef(false);
-  const navigationPointerTypeRef =
-    useRef<ReturnType<typeof normalizeCardPointerType>>('unknown');
+  const navigationGestureRef = useRef(createCardNavigationGesture());
   const targetIdentityRef = useRef(`${mediaType}:${id}`);
   const confirmedWatchlistStateRef = useRef<boolean | null>(null);
 
@@ -655,25 +657,42 @@ const TitleCard = ({
               aria-label={intl.formatMessage(messages.viewTitle, { title })}
               className="absolute inset-0 z-20 h-full w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
               onPointerDown={(event) => {
-                navigationPointerTypeRef.current = normalizeCardPointerType(
-                  event.pointerType
-                );
+                navigationGestureRef.current = beginCardPointerGesture({
+                  pointerType: event.pointerType,
+                  isTouchEnvironment: isTouch,
+                  isDetailVisible: showDetail,
+                });
+
+                if (navigationGestureRef.current.suppressClick) {
+                  setShowDetail(true);
+                }
               }}
               onPointerCancel={() => {
-                navigationPointerTypeRef.current = 'unknown';
+                navigationGestureRef.current = cancelCardNavigationGesture();
               }}
               onTouchStart={() => {
                 // Fallback for touch browsers that do not dispatch PointerEvents.
-                navigationPointerTypeRef.current = 'touch';
+                navigationGestureRef.current = beginCardTouchFallbackGesture({
+                  gesture: navigationGestureRef.current,
+                  isTouchEnvironment: isTouch,
+                  isDetailVisible: showDetail,
+                });
+
+                if (navigationGestureRef.current.suppressClick) {
+                  setShowDetail(true);
+                }
+              }}
+              onTouchCancel={() => {
+                navigationGestureRef.current = cancelCardNavigationGesture();
               }}
               onClick={(event) => {
-                const shouldReveal = shouldRevealTitleCard({
-                  pointerType: navigationPointerTypeRef.current,
+                const shouldReveal = consumeCardNavigationClick({
+                  gesture: navigationGestureRef.current,
                   isTouchEnvironment: isTouch,
                   isDetailVisible: showDetail,
                   isKeyboardActivation: event.detail === 0,
                 });
-                navigationPointerTypeRef.current = 'unknown';
+                navigationGestureRef.current = createCardNavigationGesture();
 
                 if (shouldReveal) {
                   event.preventDefault();

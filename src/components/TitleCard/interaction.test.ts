@@ -31,7 +31,10 @@ describe('TitleCard interaction contracts', () => {
   it('preserves the two-step touch reveal while Enter uses native navigation', () => {
     assert.match(source, /onPointerDown=/);
     assert.match(source, /onTouchStart=/);
-    assert.match(source, /shouldRevealTitleCard\(/);
+    assert.match(source, /beginCardPointerGesture\(/);
+    assert.match(source, /beginCardTouchFallbackGesture\(/);
+    assert.match(source, /consumeCardNavigationClick\(/);
+    assert.match(source, /navigationGestureRef\.current\.suppressClick/);
     assert.match(source, /isKeyboardActivation: event\.detail === 0/);
     assert.match(source, /event\.preventDefault\(\)/);
     assert.match(source, /setShowDetail\(true\)/);
