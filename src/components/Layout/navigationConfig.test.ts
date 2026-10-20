@@ -198,4 +198,42 @@ describe('shared application navigation', () => {
     assert.match(sidebar, /closeButtonRef\.current\?\.focus/);
     assert.doesNotMatch(sidebar, /role="button"/);
   });
+
+  it('uses an accessible expandable Settings group on desktop and tablet', () => {
+    const sidebar = readFileSync(
+      path.join(__dirname, 'Sidebar/index.tsx'),
+      'utf8'
+    );
+
+    assert.match(sidebar, /<button[\s\S]*?aria-expanded=\{expanded\}/);
+    assert.match(sidebar, /aria-controls=\{submenuId\}/);
+    assert.match(sidebar, /sidebarLink\.id === 'settings'/);
+    assert.match(sidebar, /variant="desktop"/);
+    assert.match(sidebar, /variant="tablet"/);
+    assert.match(sidebar, /aria-current=\{active \? 'page' : undefined\}/);
+    assert.match(sidebar, /activeItemRef\.current\?\.scrollIntoView/);
+    assert.match(sidebar, /block: 'nearest'/);
+    assert.match(sidebar, /closeDrawer=\{setClosed\}/);
+    assert.match(sidebar, /className="mt-1 space-y-1 pl-9"/);
+  });
+
+  it('keeps phone Settings navigation flat while the page supplies a compact selector', () => {
+    const mobileMenu = readFileSync(
+      path.join(__dirname, 'MobileMenu/index.tsx'),
+      'utf8'
+    );
+    const settingsLayout = readFileSync(
+      path.join(__dirname, '../Settings/SettingsLayout.tsx'),
+      'utf8'
+    );
+    const settingsSelector = readFileSync(
+      path.join(__dirname, '../Settings/SettingsNavigationSelector.tsx'),
+      'utf8'
+    );
+
+    assert.match(mobileMenu, /filteredLinks\.map/);
+    assert.doesNotMatch(mobileMenu, /settings-submenu/);
+    assert.match(settingsLayout, /SettingsNavigationSelector/);
+    assert.match(settingsSelector, /className="lg:hidden"/);
+  });
 });

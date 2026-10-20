@@ -333,6 +333,57 @@ describe('ServarrBase queue pagination', () => {
   }
 });
 
+describe('ServarrBase fresh root folders', () => {
+  afterEach(() => mock.restoreAll());
+
+  it('retrieves provider capacity directly without the rolling cache', async () => {
+    const radarr = buildRadarr();
+    const folders = [
+      {
+        id: 1,
+        path: '/media/movies',
+        totalSpace: 1_000,
+        freeSpace: 400,
+        unmappedFolders: [],
+      },
+    ];
+    const get = mock.method(getAxios(radarr), 'get', async () => ({
+      data: folders,
+    }));
+
+    assert.deepEqual(await radarr.getRootFoldersFresh(), folders);
+    assert.deepEqual(await radarr.getRootFoldersFresh(), folders);
+    assert.equal(get.mock.callCount(), 2);
+    assert.deepEqual(
+      get.mock.calls.map((call) => call.arguments[0]),
+      ['/rootfolder', '/rootfolder']
+    );
+  });
+
+  it('retrieves disk-space capacity directly without the rolling cache', async () => {
+    const radarr = buildRadarr();
+    const disks = [
+      {
+        path: '/volume1',
+        label: 'Internal',
+        totalSpace: 1_000,
+        freeSpace: 400,
+      },
+    ];
+    const get = mock.method(getAxios(radarr), 'get', async () => ({
+      data: disks,
+    }));
+
+    assert.deepEqual(await radarr.getDiskSpaceFresh(), disks);
+    assert.deepEqual(await radarr.getDiskSpaceFresh(), disks);
+    assert.equal(get.mock.callCount(), 2);
+    assert.deepEqual(
+      get.mock.calls.map((call) => call.arguments[0]),
+      ['/diskspace', '/diskspace']
+    );
+  });
+});
+
 describe('ServarrBase bounded history', () => {
   afterEach(() => mock.restoreAll());
 
@@ -408,7 +459,7 @@ describe('ServarrBase command completion', () => {
 
     await sonarr.refreshMonitoredDownloads({
       pollIntervalMs: 1,
-      timeoutMs: 100,
+      timeoutMs: 1000,
     });
 
     assert.strictEqual(get.mock.callCount(), 2);

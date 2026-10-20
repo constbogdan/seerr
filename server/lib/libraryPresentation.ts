@@ -121,6 +121,7 @@ export class LibraryPresentationCoordinator {
   private readonly pending = new Set<string>();
   private readonly failures = new Map<string, PresentationFailure>();
   private readonly batches = new Map<string, PresentationBatch>();
+  private readonly statusAccess = new Map<string, Map<number, number>>();
   private revision = 0;
   private stopped = false;
 
@@ -207,11 +208,34 @@ export class LibraryPresentationCoordinator {
     return { state, revision: this.revision, pendingCount };
   }
 
+  public grantStatusAccess(batchId: string, userId: number): boolean {
+    this.pruneBatches();
+    const batch = this.batches.get(batchId);
+    if (!batch) return false;
+    const grants = this.statusAccess.get(batchId) ?? new Map<number, number>();
+    grants.set(userId, batch.expiresAt);
+    this.statusAccess.set(batchId, grants);
+    return true;
+  }
+
+  public statusFor(
+    batchId: string,
+    userId: number
+  ): LibraryPresentationStatus | null {
+    this.pruneBatches();
+    const expiresAt = this.statusAccess.get(batchId)?.get(userId);
+    if (!expiresAt || expiresAt <= this.now()) return null;
+    const status = this.status(batchId);
+    if (status.state !== 'pending') this.statusAccess.delete(batchId);
+    return status;
+  }
+
   public shutdown(): void {
     if (this.stopped) return;
     this.stopped = true;
     this.queue.close('Library presentation enrichment is shutting down');
     this.batches.clear();
+    this.statusAccess.clear();
   }
 
   public stats() {
@@ -290,7 +314,16 @@ export class LibraryPresentationCoordinator {
   private pruneBatches(): void {
     const current = this.now();
     for (const [id, batch] of this.batches) {
-      if (batch.expiresAt <= current) this.batches.delete(id);
+      if (batch.expiresAt <= current) {
+        this.batches.delete(id);
+        this.statusAccess.delete(id);
+      }
+    }
+    for (const [id, grants] of this.statusAccess) {
+      for (const [userId, expiresAt] of grants) {
+        if (expiresAt <= current) grants.delete(userId);
+      }
+      if (grants.size === 0) this.statusAccess.delete(id);
     }
   }
 }

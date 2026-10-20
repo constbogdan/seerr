@@ -2,28 +2,33 @@ type SlideCheckboxProps = {
   onClick: () => void;
   checked?: boolean;
   ariaLabel?: string;
+  disabled?: boolean;
 };
 
 const SlideCheckbox = ({
   onClick,
   checked = false,
   ariaLabel,
+  disabled = false,
 }: SlideCheckboxProps) => {
   return (
     <span
       role="checkbox"
-      tabIndex={0}
+      tabIndex={disabled ? -1 : 0}
       aria-checked={checked}
       aria-label={ariaLabel}
+      aria-disabled={disabled}
       onClick={() => {
-        onClick();
+        if (!disabled) onClick();
       }}
       onKeyDown={(e) => {
-        if (e.key === 'Enter' || e.key === 'Space') {
+        if (!disabled && (e.key === 'Enter' || e.key === 'Space')) {
           onClick();
         }
       }}
-      className={`relative inline-flex h-5 w-10 flex-shrink-0 cursor-pointer items-center justify-center pt-2 focus:outline-none`}
+      className={`relative inline-flex h-5 w-10 flex-shrink-0 items-center justify-center pt-2 focus:outline-none ${
+        disabled ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+      }`}
     >
       <span
         aria-hidden="true"

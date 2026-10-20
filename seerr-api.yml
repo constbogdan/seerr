@@ -475,6 +475,238 @@ components:
         removalProcessingEnabled: { type: boolean }
         movie: { $ref: '#/components/schemas/RemovalAutomaticPolicy' }
         series: { $ref: '#/components/schemas/RemovalAutomaticPolicy' }
+    OverflowRoute:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceVolumeId
+        - destinationVolumeId
+        - thresholdGb
+        - enabled
+      properties:
+        sourceVolumeId:
+          { type: string, pattern: '^(physical|location):[^\s]+$' }
+        destinationVolumeId:
+          { type: string, pattern: '^(physical|location):[^\s]+$' }
+        thresholdGb: { type: integer, minimum: 1, default: 50 }
+        enabled: { type: boolean }
+    OverflowSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - enabled
+        - freeSpaceThreshold
+        - automaticSeriesPlacement
+        - defaultSeriesVolumeId
+        - expansionSeriesVolumeId
+        - seriesSeasonThreshold
+        - torrentRelocationDelayHours
+        - routes
+      properties:
+        enabled: { type: boolean, default: false }
+        freeSpaceThreshold:
+          { type: integer, enum: [5, 10, 15, 20], default: 10 }
+        automaticSeriesPlacement: { type: boolean, default: false }
+        defaultSeriesVolumeId:
+          {
+            type: string,
+            nullable: true,
+            pattern: '^(physical|location):[^\s]+$',
+          }
+        expansionSeriesVolumeId:
+          {
+            type: string,
+            nullable: true,
+            pattern: '^(physical|location):[^\s]+$',
+          }
+        seriesSeasonThreshold: { type: integer, minimum: 1, default: 3 }
+        torrentRelocationDelayHours: { type: integer, minimum: 0, default: 48 }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/OverflowRoute' }
+    StorageLocation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - provider
+        - serviceId
+        - serviceName
+        - rootFolderId
+        - name
+        - path
+        - color
+        - diskSpacePath
+        - totalSpace
+        - usedSpace
+        - freeSpace
+        - usedPercentage
+        - accessible
+        - routable
+      properties:
+        id: { type: string }
+        provider: { type: string, enum: [radarr, sonarr] }
+        serviceId: { type: integer, minimum: 0 }
+        serviceName: { type: string }
+        rootFolderId: { type: integer, minimum: 0, nullable: true }
+        name: { type: string }
+        path: { type: string }
+        color: { type: string, nullable: true }
+        isAnimation: { type: boolean }
+        diskSpacePath: { type: string, nullable: true }
+        totalSpace: { type: number, minimum: 0, nullable: true }
+        usedSpace: { type: number, minimum: 0, nullable: true }
+        freeSpace: { type: number, minimum: 0, nullable: true }
+        usedPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+        accessible: { type: boolean }
+        routable: { type: boolean }
+    StorageUsageSegment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - locationId
+        - provider
+        - serviceId
+        - serviceName
+        - rootFolderId
+        - label
+        - path
+        - color
+        - indexedUsageBytes
+        - percentage
+        - pendingRemovalBytes
+        - pendingRemovalPercentage
+      properties:
+        id: { type: string }
+        locationId: { type: string }
+        provider: { type: string, enum: [radarr, sonarr] }
+        serviceId: { type: integer, minimum: 0 }
+        serviceName: { type: string }
+        rootFolderId: { type: integer, minimum: 0, nullable: true }
+        label: { type: string }
+        path: { type: string }
+        color: { type: string }
+        indexedUsageBytes: { type: string, pattern: '^\d+$' }
+        percentage: { type: number, minimum: 0, nullable: true }
+        pendingRemovalBytes: { type: string, pattern: '^\d+$', nullable: true }
+        pendingRemovalPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+    PhysicalVolume:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - volumeKey
+        - locationIds
+        - segments
+        - totalSpace
+        - usedSpace
+        - freeSpace
+        - usedPercentage
+        - knownLibraryUsageBytes
+        - pendingRemovalBytes
+        - pendingRemovalPercentage
+        - pendingRemovalAvailable
+        - pendingRemovalComplete
+        - omittedRemovalScheduleCount
+        - unaccountedUsageBytes
+        - provisionedSpaceBytes
+        - usageExceedsPhysical
+        - capacityReadingsDiffer
+        - accessible
+      properties:
+        id: { type: string }
+        name: { type: string }
+        volumeKey: { type: string, nullable: true }
+        locationIds:
+          type: array
+          items: { type: string }
+        segments:
+          type: array
+          items: { $ref: '#/components/schemas/StorageUsageSegment' }
+        totalSpace: { type: number, minimum: 0, nullable: true }
+        usedSpace: { type: number, minimum: 0, nullable: true }
+        freeSpace: { type: number, minimum: 0, nullable: true }
+        usedPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+        knownLibraryUsageBytes: { type: string, pattern: '^\d+$' }
+        pendingRemovalBytes: { type: string, pattern: '^\d+$', nullable: true }
+        pendingRemovalPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+        pendingRemovalAvailable: { type: boolean }
+        pendingRemovalComplete: { type: boolean }
+        omittedRemovalScheduleCount: { type: integer, minimum: 0 }
+        unaccountedUsageBytes:
+          { type: string, pattern: '^\d+$', nullable: true }
+        provisionedSpaceBytes:
+          { type: string, pattern: '^\d+$', nullable: true }
+        usageExceedsPhysical: { type: boolean }
+        capacityReadingsDiffer: { type: boolean }
+        accessible: { type: boolean }
+    StorageInstanceStatus:
+      type: object
+      additionalProperties: false
+      required: [provider, serviceId, serviceName, available, capacityAvailable]
+      properties:
+        provider: { type: string, enum: [radarr, sonarr] }
+        serviceId: { type: integer, minimum: 0 }
+        serviceName: { type: string }
+        available: { type: boolean }
+        capacityAvailable: { type: boolean }
+    StorageSettingsResponse:
+      type: object
+      additionalProperties: false
+      required: [settings, locations, volumes, instances, refreshedAt]
+      properties:
+        settings: { $ref: '#/components/schemas/OverflowSettings' }
+        locations:
+          type: array
+          items: { $ref: '#/components/schemas/StorageLocation' }
+        volumes:
+          type: array
+          items: { $ref: '#/components/schemas/PhysicalVolume' }
+        instances:
+          type: array
+          items: { $ref: '#/components/schemas/StorageInstanceStatus' }
+        refreshedAt: { type: string, format: date-time }
+    SeriesRelocationPreviewCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - canonicalMediaId
+        - title
+        - year
+        - retainedSeasonCount
+        - totalBytes
+        - sonarrUrl
+      properties:
+        canonicalMediaId: { type: integer, minimum: 1 }
+        title: { type: string }
+        year: { type: integer, nullable: true }
+        retainedSeasonCount: { type: integer, minimum: 1 }
+        totalBytes: { type: string, pattern: '^\d+$' }
+        sonarrUrl: { type: string, format: uri, nullable: true }
+    SeriesRelocationPreviewResult:
+      type: object
+      additionalProperties: false
+      required: [status, candidate, reason]
+      properties:
+        status: { type: string, enum: [eligible, none, unavailable] }
+        candidate:
+          type: object
+          allOf:
+            - { $ref: '#/components/schemas/SeriesRelocationPreviewCandidate' }
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          enum:
+            - configuration-incomplete
+            - provider-unavailable
+            - incomplete-evidence
     RemovalPreviewCandidate:
       type: object
       additionalProperties: false
@@ -567,6 +799,40 @@ components:
         revision: { type: integer, minimum: 0 }
         pendingCount: { type: integer, minimum: 0 }
         batchId: { type: string, format: uuid }
+    LeavingSoonItem:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          canonicalMediaId,
+          tmdbId,
+          mediaType,
+          title,
+          year,
+          posterPath,
+          schedules,
+        ]
+      properties:
+        canonicalMediaId: { type: integer, minimum: 1 }
+        tmdbId: { type: integer, minimum: 1, nullable: true }
+        mediaType: { type: string, enum: [movie, series] }
+        title: { type: string }
+        year: { type: integer, nullable: true }
+        posterPath: { type: string, nullable: true }
+        schedules:
+          type: array
+          items: { $ref: '#/components/schemas/RemovalSchedule' }
+    LeavingSoonResultsResponse:
+      type: object
+      additionalProperties: false
+      required: [pageInfo, results]
+      properties:
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/LeavingSoonItem' }
+        presentation:
+          $ref: '#/components/schemas/LibraryPresentationBatchStatus'
     LibraryFilterUsersResponse:
       type: object
       required: [users]
@@ -817,6 +1083,114 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WatchlistHistoryOccurrence'
+    WatchlistRouletteRunSummary:
+      type: object
+      required:
+        - startedAt
+        - completedAt
+        - status
+        - requested
+        - skipped
+        - failed
+        - examined
+        - requestIds
+      properties:
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        status: { type: string, enum: [succeeded, failed] }
+        requested: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        examined: { type: integer, minimum: 0 }
+        requestIds:
+          type: array
+          items: { type: integer, minimum: 1 }
+        failureCode:
+          type: string
+          enum:
+            - request-owner-unavailable
+            - provider-not-configured
+            - acquisition-state-unavailable
+            - unexpected-error
+    WatchlistRouletteSettings:
+      type: object
+      required: [requestOwnerUserId, movieItemsPerRun, seriesItemsPerRun]
+      properties:
+        requestOwnerUserId:
+          type: integer
+          minimum: 1
+          nullable: true
+        movieItemsPerRun:
+          { type: integer, minimum: 1, maximum: 100, default: 3 }
+        seriesItemsPerRun:
+          { type: integer, minimum: 1, maximum: 100, default: 1 }
+        lastMovieRun:
+          $ref: '#/components/schemas/WatchlistRouletteRunSummary'
+        lastSeriesRun:
+          $ref: '#/components/schemas/WatchlistRouletteRunSummary'
+    WatchlistRouletteAdministrator:
+      type: object
+      required: [id, displayName]
+      properties:
+        id: { type: integer, minimum: 1 }
+        displayName: { type: string }
+    WatchlistRouletteSelection:
+      type: object
+      required:
+        - requestId
+        - mediaType
+        - tmdbId
+        - title
+        - year
+        - seerrUrl
+        - servarrUrl
+        - unavailable
+      properties:
+        requestId: { type: integer, minimum: 1 }
+        mediaType:
+          type: string
+          enum: [movie, tv]
+          nullable: true
+        tmdbId: { type: integer, minimum: 1, nullable: true }
+        title: { type: string, nullable: true }
+        year: { type: integer, nullable: true }
+        seerrUrl: { type: string, nullable: true }
+        servarrUrl: { type: string, format: uri, nullable: true }
+        unavailable: { type: boolean }
+    WatchlistRouletteLastRun:
+      type: object
+      required: [summary, selections]
+      properties:
+        summary:
+          $ref: '#/components/schemas/WatchlistRouletteRunSummary'
+        selections:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchlistRouletteSelection'
+    WatchlistRouletteSettingsResponse:
+      type: object
+      required:
+        - settings
+        - administrators
+        - lastMovieRun
+        - lastSeriesRun
+      properties:
+        settings:
+          $ref: '#/components/schemas/WatchlistRouletteSettings'
+        administrators:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchlistRouletteAdministrator'
+        lastMovieRun:
+          type: object
+          allOf:
+            - $ref: '#/components/schemas/WatchlistRouletteLastRun'
+          nullable: true
+        lastSeriesRun:
+          type: object
+          allOf:
+            - $ref: '#/components/schemas/WatchlistRouletteLastRun'
+          nullable: true
     User:
       type: object
       properties:
@@ -2826,6 +3200,7 @@ components:
               '#c084fc',
               '#818cf8',
               '#94a3b8',
+              null,
             ]
           nullable: true
       required:
@@ -2860,6 +3235,7 @@ components:
               '#c084fc',
               '#818cf8',
               '#94a3b8',
+              null,
             ]
           nullable: true
       required:
@@ -3103,7 +3479,7 @@ components:
           enum: [process, command]
         interval:
           type: string
-          enum: [short, long, fixed]
+          enum: [seconds, minutes, hours, days, fixed]
         name:
           type: string
           example: A Job Name
@@ -3116,6 +3492,17 @@ components:
         enabled:
           type: boolean
           description: Whether the job's intrinsic feature gate is enabled.
+        configurableEnabled:
+          type: boolean
+          description: Whether administrators may change the job feature gate.
+        lastResult:
+          type: object
+          nullable: true
+          additionalProperties: true
+        lastExecutionTime:
+          type: string
+          format: date-time
+          nullable: true
         scheduledExecutionAllowed:
           type: boolean
           description: Whether the current synchronization mode permits scheduled execution.
@@ -4743,6 +5130,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+  /settings/jobs/{jobId}/enabled:
+    post:
+      summary: Enable or disable a configurable job
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Configurable job not found
   /settings/jobs/{jobId}/schedule:
     post:
       summary: Modify job schedule
@@ -7700,7 +8117,33 @@ paths:
           name: page
           schema: { type: integer, minimum: 1, default: 1 }
       responses:
-        '200': { description: User-safe paginated Leaving Soon projection }
+        '200':
+          description: User-safe paginated Leaving Soon projection
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/LeavingSoonResultsResponse' }
+        '403': { description: Authentication required }
+  /leaving-soon/presentation-status/{batchId}:
+    get:
+      summary: Get presentation status for the requesting user's Leaving Soon batch
+      description: Returns only the bounded presentation status for a batch previously issued to the same authenticated user.
+      tags: [library]
+      parameters:
+        - in: path
+          name: batchId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current presentation enrichment state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryPresentationStatus' }
+        '400': { description: Invalid presentation batch identity }
+        '403': { description: Authentication required }
+        '404':
+          { description: Batch was not issued to this user or is unavailable }
   /settings/removal:
     get:
       summary: Get removal settings
@@ -7726,6 +8169,86 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/RemovalSettings' }
+        '403': { description: Administrator permission required }
+  /settings/storage:
+    get:
+      summary: Get Overflow settings and fresh Servarr storage capacity
+      tags: [settings]
+      responses:
+        '200':
+          description: Overflow settings and read-only storage locations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageSettingsResponse' }
+        '403': { description: Administrator permission required }
+    post:
+      summary: Update Overflow settings and volume mappings
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OverflowSettings' }
+      responses:
+        '200':
+          description: Updated Overflow settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverflowSettings' }
+        '400': { description: Invalid settings or missing storage root }
+        '403': { description: Administrator permission required }
+        '503': { description: A referenced Servarr instance is unavailable }
+  /settings/watchlist-roulette:
+    get:
+      summary: Get Watchlist Roulette configuration and last-run selections
+      tags: [settings]
+      responses:
+        '200':
+          description: Watchlist Roulette settings, administrator choices, and last-run selections
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistRouletteSettingsResponse'
+        '403': { description: Administrator permission required }
+    post:
+      summary: Update Watchlist Roulette request ownership and per-run limits
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                [requestOwnerUserId, movieItemsPerRun, seriesItemsPerRun]
+              properties:
+                requestOwnerUserId:
+                  type: integer
+                  minimum: 1
+                  nullable: true
+                movieItemsPerRun: { type: integer, minimum: 1, maximum: 100 }
+                seriesItemsPerRun: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: Updated Watchlist Roulette settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistRouletteSettings'
+        '400': { description: Invalid settings or request owner }
+        '403': { description: Administrator permission required }
+  /settings/storage/series-relocation/next-candidate:
+    get:
+      summary: Evaluate the next eligible Series Relocation candidate
+      tags: [settings]
+      responses:
+        '200':
+          description: Read-only Series Relocation candidate evaluation
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/SeriesRelocationPreviewResult' }
         '403': { description: Administrator permission required }
   /settings/removal/clear:
     post:

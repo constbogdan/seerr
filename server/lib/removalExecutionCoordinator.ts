@@ -15,7 +15,14 @@ import {
   RemovalExecution,
   RemovalExecutionClaim,
 } from '@server/entity/RemovalExecution';
-import { LessThanOrEqual, type DataSource, type EntityManager } from 'typeorm';
+import { SeriesRelocationExecution } from '@server/entity/SeriesRelocationExecution';
+import {
+  IsNull,
+  LessThanOrEqual,
+  Not,
+  type DataSource,
+  type EntityManager,
+} from 'typeorm';
 
 const DEFAULT_LEASE_MS = 10 * 60_000;
 const TRANSACTION_ATTEMPTS = 5;
@@ -288,6 +295,19 @@ export class RemovalExecutionCoordinator {
       ) {
         throw new RemovalExecutionStateError(
           'Removal execution target does not match canonical media type'
+        );
+      }
+
+      if (
+        await manager.getRepository(SeriesRelocationExecution).exists({
+          where: {
+            canonicalMediaId: input.canonicalMediaId,
+            activeKey: Not(IsNull()),
+          },
+        })
+      ) {
+        throw new RemovalExecutionStateError(
+          'A Series relocation is active for this canonical media target'
         );
       }
 

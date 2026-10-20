@@ -32,6 +32,8 @@ import { isAuthenticated } from '@server/middleware/auth';
 import discoverSettingRoutes from '@server/routes/settings/discover';
 import freshSettingRoutes from '@server/routes/settings/fresh';
 import removalSettingRoutes from '@server/routes/settings/removal';
+import storageSettingRoutes from '@server/routes/settings/storage';
+import watchlistRouletteSettingRoutes from '@server/routes/settings/watchlistRoulette';
 import { ApiError } from '@server/types/error';
 import { appDataPath } from '@server/utils/appDataVolume';
 import {
@@ -64,6 +66,8 @@ settingsRoutes.use('/sonarr', sonarrRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
 settingsRoutes.use('/fresh', freshSettingRoutes);
 settingsRoutes.use('/removal', removalSettingRoutes);
+settingsRoutes.use('/storage', storageSettingRoutes);
+settingsRoutes.use('/watchlist-roulette', watchlistRouletteSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
 
 const libraryUpdateSchema = z.object({
@@ -747,6 +751,14 @@ settingsRoutes.get(
 const scheduledJobResponse = (job: (typeof scheduledJobs)[number]) => {
   const enabled = job.enabled ? job.enabled() : true;
   const freshSyncEnabled = getSettings().fresh.enabled;
+  const lastResult = job.result?.() ?? null;
+  const lastExecutionTime =
+    lastResult &&
+    typeof lastResult === 'object' &&
+    'completedAt' in lastResult &&
+    typeof lastResult.completedAt === 'string'
+      ? lastResult.completedAt
+      : null;
   return {
     id: job.id,
     name: job.name,
@@ -756,6 +768,9 @@ const scheduledJobResponse = (job: (typeof scheduledJobs)[number]) => {
     nextExecutionTime: enabled ? job.job.nextInvocation() : null,
     running: job.running ? job.running() : false,
     enabled,
+    configurableEnabled: job.configurableEnabled === true,
+    lastResult,
+    lastExecutionTime,
     scheduledExecutionAllowed:
       enabled && synchronizationPolicy.scheduledExecutionAllowed,
     manualExecutionAllowed:
@@ -810,6 +825,24 @@ settingsRoutes.post<{ jobId: string }>('/jobs/:jobId/run', (req, res, next) => {
 
   return res.status(200).json(scheduledJobResponse(scheduledJob));
 });
+
+settingsRoutes.post<{ jobId: JobId }>(
+  '/jobs/:jobId/enabled',
+  async (req, res, next) => {
+    const scheduledJob = scheduledJobs.find(
+      (job) => job.id === req.params.jobId
+    );
+    if (!scheduledJob?.configurableEnabled || !scheduledJob.setEnabled) {
+      return next({ status: 404, message: 'Configurable job not found.' });
+    }
+    const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) {
+      return next({ status: 400, message: 'Invalid job enabled state.' });
+    }
+    await scheduledJob.setEnabled(parsed.data.enabled);
+    return res.status(200).json(scheduledJobResponse(scheduledJob));
+  }
+);
 
 settingsRoutes.post<{ jobId: JobId }>(
   '/jobs/:jobId/cancel',

@@ -12,6 +12,10 @@ import TitleCardCornerBadge from '@app/components/TitleCard/CornerBadge';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
 import { buildTitleCardStateIndicators } from '@app/components/TitleCard/stateIndicators';
+import {
+  normalizeCardPointerType,
+  shouldRevealTitleCard,
+} from '@app/components/TitleCard/touchNavigation';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
@@ -100,6 +104,8 @@ const TitleCard = ({
   const cardRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
   const watchlistMutationRef = useRef(false);
+  const navigationPointerTypeRef =
+    useRef<ReturnType<typeof normalizeCardPointerType>>('unknown');
   const targetIdentityRef = useRef(`${mediaType}:${id}`);
   const confirmedWatchlistStateRef = useRef<boolean | null>(null);
 
@@ -648,8 +654,28 @@ const TitleCard = ({
               href={cardHref}
               aria-label={intl.formatMessage(messages.viewTitle, { title })}
               className="absolute inset-0 z-20 h-full w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
+              onPointerDown={(event) => {
+                navigationPointerTypeRef.current = normalizeCardPointerType(
+                  event.pointerType
+                );
+              }}
+              onPointerCancel={() => {
+                navigationPointerTypeRef.current = 'unknown';
+              }}
+              onTouchStart={() => {
+                // Fallback for touch browsers that do not dispatch PointerEvents.
+                navigationPointerTypeRef.current = 'touch';
+              }}
               onClick={(event) => {
-                if (isTouch && !showDetail) {
+                const shouldReveal = shouldRevealTitleCard({
+                  pointerType: navigationPointerTypeRef.current,
+                  isTouchEnvironment: isTouch,
+                  isDetailVisible: showDetail,
+                  isKeyboardActivation: event.detail === 0,
+                });
+                navigationPointerTypeRef.current = 'unknown';
+
+                if (shouldReveal) {
                   event.preventDefault();
                   setShowDetail(true);
                 }

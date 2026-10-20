@@ -6,6 +6,7 @@ import { User } from '@server/entity/User';
 import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
+  getAggregatedWatchlistIdentities,
   getLocalWatchlist,
   getWatchlistForUser,
   parseWatchlistQuery,
@@ -158,6 +159,58 @@ describe('local Watchlist query and ownership', () => {
         watched: 'not_watched',
       }
     );
+  });
+
+  it('returns distinct canonical identities only for metrics-enabled users', async () => {
+    const included = await admin();
+    const secondIncluded = await getRepository(User).save(
+      new User({
+        email: 'roulette-included@example.test',
+        avatar: '',
+        includeInUserMetrics: true,
+      })
+    );
+    const excluded = await getRepository(User).save(
+      new User({
+        email: 'roulette-excluded@example.test',
+        avatar: '',
+        includeInUserMetrics: false,
+      })
+    );
+    const createdAt = new Date('2026-10-19T00:00:00Z');
+    for (const user of [included, secondIncluded]) {
+      await addRow({
+        user,
+        tmdbId: 901,
+        mediaType: MediaType.MOVIE,
+        title: 'Shared Movie',
+        genreIds: [],
+        createdAt,
+      });
+    }
+    await addRow({
+      user: excluded,
+      tmdbId: 902,
+      mediaType: MediaType.MOVIE,
+      title: 'Excluded Movie',
+      genreIds: [],
+      createdAt,
+    });
+    await addRow({
+      user: included,
+      tmdbId: 903,
+      mediaType: MediaType.TV,
+      title: 'Series',
+      genreIds: [],
+      createdAt,
+    });
+
+    assert.deepEqual(await getAggregatedWatchlistIdentities(MediaType.MOVIE), [
+      { mediaType: MediaType.MOVIE, tmdbId: 901 },
+    ]);
+    assert.deepEqual(await getAggregatedWatchlistIdentities(MediaType.TV), [
+      { mediaType: MediaType.TV, tmdbId: 903 },
+    ]);
   });
 
   it('filters before pagination, isolates users, and reports filtered totals', async () => {

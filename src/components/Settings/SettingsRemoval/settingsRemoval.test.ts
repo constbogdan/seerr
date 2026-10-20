@@ -4,11 +4,7 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 
 import { DEFAULT_REMOVAL_SETTINGS } from '@server/constants/removal';
-import {
-  newlyEnabledRemovalPolicies,
-  normalizeRemovalThresholds,
-  revertNewlyEnabledRemovalPolicies,
-} from './helpers';
+import { normalizeRemovalThresholds } from './helpers';
 
 describe('Removal Settings interaction structure', () => {
   const source = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
@@ -24,12 +20,11 @@ describe('Removal Settings interaction structure', () => {
     path.join(__dirname, '../../Common/SlideCheckbox/index.tsx'),
     'utf8'
   );
-  const badgeSource = readFileSync(
-    path.join(__dirname, '../../Common/Badge/index.tsx'),
-    'utf8'
+  const saveSource = source.slice(
+    source.indexOf('const saveSettings = async () => {'),
+    source.indexOf('\n  return (', source.indexOf('const saveSettings'))
   );
-
-  it('debounces a non-mutating preview from current form values', () => {
+  it('debounces a non-mutating preview only when eligibility inputs change', () => {
     assert.match(source, /setTimeout\(\(\) => \{/);
     assert.match(source, /\/api\/v1\/settings\/removal\/preview/);
     assert.match(source, /}, 400\)/);
@@ -37,9 +32,12 @@ describe('Removal Settings interaction structure', () => {
       routeSource,
       /routes\.post\('\/preview'[\s\S]*removalScheduler\.preview\(proposed\)/
     );
-    assert.match(source, /removalSettingsFingerprint\(values\)/);
+    assert.match(source, /removalPreviewFingerprint\(values\)/);
+    assert.match(source, /\[previewFingerprint, previewRetry, updateValues\]/);
+    assert.doesNotMatch(source, /\[previewRetry, updateValues, values\]/);
     assert.match(source, /isCurrentRemovalPreviewRequest\(/);
-    assert.match(source, /currentRemovalPreview\(previewState, values\)/);
+    assert.match(source, /removalPreviewPresentation\(/);
+    assert.doesNotMatch(source, /setPreviewState\(null\)/);
   });
 
   it('preserves dirty drafts and requires explicit remote-conflict resolution', () => {
@@ -66,21 +64,46 @@ describe('Removal Settings interaction structure', () => {
     assert.match(source, /messages\.saveRefreshFailed/);
   });
 
-  it('keeps the zero-schedule Clear path render-safe with a ref-capable tooltip trigger', () => {
+  it('keeps the zero-schedule Clear path render-safe with the explanation on the button', () => {
     assert.match(
       source,
-      /<Tooltip content=\{intl\.formatMessage\(messages\.clearDescription\)\}>\s*<Badge/
+      /<Tooltip content=\{intl\.formatMessage\(messages\.clearDescription\)\}>\s*<Button/
     );
+    assert.doesNotMatch(source, /badgeType="warning"/);
+    assert.doesNotMatch(source, /InformationCircleIcon/);
     assert.match(
       source,
-      /className="h-6 w-6 items-center justify-center !px-0"/
+      /aria-label=\{intl\.formatMessage\(messages\.clearItems, \{[\s\S]*count: preview\?\.actionableScheduleCount \?\? 0/
     );
     assert.match(source, /preview\?\.actionableScheduleCount \?\? 0/);
+    assert.match(source, /className="min-w-\[8rem\]"/);
     assert.match(
       source,
       /!previewIsActionable[\s\S]*\(preview\?\.actionableScheduleCount \?\? 0\) === 0/
     );
-    assert.match(badgeSource, /React\.forwardRef\(Badge\)/);
+  });
+
+  it('keeps stale counts visible in stable inline status regions', () => {
+    assert.match(source, /const preview = previewPresentation\.value/);
+    assert.match(source, /previewPresentation\.current/);
+    assert.match(policySource, /min-w-\[9rem\]/);
+    assert.match(policySource, /tabular-nums/);
+    assert.match(policySource, /aria-busy=\{previewing\}/);
+    assert.match(policySource, /animate-spin/);
+    assert.match(policySource, /previewError/);
+    assert.match(policySource, /onRetryPreview/);
+    assert.doesNotMatch(policySource, /eligibleUnscheduled \?\? 0/);
+  });
+
+  it('stores successful preview responses under eligibility identity', () => {
+    assert.match(
+      source,
+      /setPreviewState\(\{ fingerprint, value: response\.data \}\)/
+    );
+    assert.match(
+      source,
+      /current\?\.fingerprint === previewFingerprint[\s\S]*actionableScheduleCount: 0/
+    );
   });
 
   it('uses bounded inline month dropdowns without the superseded timeline', () => {
@@ -200,46 +223,30 @@ describe('Removal Settings interaction structure', () => {
     assert.doesNotMatch(policySource, /Math\.floor/);
   });
 
-  it('requires confirmation only for disabled-to-enabled transitions', () => {
-    const saved = structuredClone(DEFAULT_REMOVAL_SETTINGS);
-    const ordinaryEdit = structuredClone(saved);
-    ordinaryEdit.movie.minimumAgeMonths += 1;
-    assert.deepEqual(newlyEnabledRemovalPolicies(saved, ordinaryEdit), []);
-
-    const movieEnabled = structuredClone(ordinaryEdit);
-    movieEnabled.movie.enabled = true;
-    assert.deepEqual(newlyEnabledRemovalPolicies(saved, movieEnabled), [
-      'movie',
-    ]);
-
-    const bothEnabled = structuredClone(movieEnabled);
-    bothEnabled.series.enabled = true;
-    assert.deepEqual(newlyEnabledRemovalPolicies(saved, bothEnabled), [
-      'movie',
-      'series',
-    ]);
-    assert.match(source, /Enable automatic Movie and Series scheduling\?/);
-    assert.match(source, /currently qualify/);
-    assert.match(source, /would enter Leaving Soon/);
-    assert.match(source, /Removal delay/);
-    assert.match(source, /Activity during the countdown cancels/);
+  it('saves enabled Removal settings directly without confirmation or job execution', () => {
+    assert.doesNotMatch(source, /window\.confirm/);
+    assert.doesNotMatch(source, /automaticEnableConfirmation/);
+    assert.doesNotMatch(saveSource, /\/api\/v1\/settings\/removal\/preview/);
+    assert.match(
+      saveSource,
+      /axios\.post<RemovalSettings>\(\s*'\/api\/v1\/settings\/removal'/
+    );
+    assert.doesNotMatch(saveSource, /\/run|\/clear/);
   });
 
-  it('reverts only newly enabled toggles when confirmation is cancelled', () => {
-    const proposed = structuredClone(DEFAULT_REMOVAL_SETTINGS);
-    proposed.movie.enabled = true;
-    proposed.series.enabled = true;
-    proposed.movie.minimumAgeMonths = 12;
+  it('preserves unsaved values when the settings request fails', () => {
+    const requestIndex = saveSource.indexOf("'/api/v1/settings/removal'");
+    const savedUpdateIndex = saveSource.indexOf(
+      'updateSavedValues(response.data)',
+      requestIndex
+    );
+    const catchIndex = saveSource.indexOf('} catch {', savedUpdateIndex);
+    const catchBlock = saveSource.slice(catchIndex);
 
-    const reverted = revertNewlyEnabledRemovalPolicies(proposed, [
-      'movie',
-      'series',
-    ]);
-    assert.equal(reverted.movie.enabled, false);
-    assert.equal(reverted.series.enabled, false);
-    assert.equal(reverted.movie.minimumAgeMonths, 12);
-    assert.equal(proposed.movie.enabled, true);
-    assert.match(source, /revertNewlyEnabledRemovalPolicies/);
+    assert.ok(requestIndex >= 0);
+    assert.ok(savedUpdateIndex > requestIndex);
+    assert.doesNotMatch(catchBlock, /updateValues\(|updateSavedValues\(/);
+    assert.match(catchBlock, /messages\.saveFailed/);
   });
 
   it('keeps one counted clear action explicitly non-media-destructive', () => {
@@ -255,7 +262,7 @@ describe('Removal Settings interaction structure', () => {
     );
     assert.match(
       source,
-      /className="actions"[\s\S]*<Tooltip content=\{intl\.formatMessage\(messages\.clearDescription\)\}>[\s\S]*badgeType="warning"[\s\S]*InformationCircleIcon[\s\S]*<Button[\s\S]*setClearPreviewFingerprint\(valuesFingerprint\)[\s\S]*setShowClearConfirmation\(true\)[\s\S]*messages\.save/
+      /className="actions"[\s\S]*<Tooltip content=\{intl\.formatMessage\(messages\.clearDescription\)\}>\s*<Button[\s\S]*setClearPreviewFingerprint\(previewFingerprint\)[\s\S]*setShowClearConfirmation\(true\)[\s\S]*messages\.save/
     );
     assert.match(source, /\/api\/v1\/settings\/removal\/clear/);
     assert.match(
@@ -325,12 +332,9 @@ describe('Removal Settings interaction structure', () => {
     );
   });
 
-  it('uses the native Advanced badge with the Jobs tooltip', () => {
-    assert.match(source, /<SettingsBadge/);
-    assert.match(source, /badgeType="advanced"/);
-    assert.match(
-      source,
-      /Job frequency and manual runs are managed in Jobs & Cache\./
-    );
+  it('does not decorate the Removal heading with an unexplained Advanced badge', () => {
+    assert.doesNotMatch(source, /<SettingsBadge/);
+    assert.doesNotMatch(source, /badgeType="advanced"/);
+    assert.doesNotMatch(source, /advancedTooltip/);
   });
 });

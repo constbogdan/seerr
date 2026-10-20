@@ -44,6 +44,13 @@ export interface RootFolder {
   }[];
 }
 
+export interface DiskSpace {
+  path: string;
+  label?: string;
+  freeSpace: number;
+  totalSpace: number;
+}
+
 export interface QualityProfile {
   id: number;
   name: string;
@@ -257,6 +264,40 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     } catch (e) {
       throw new Error(
         `[${this.apiName}] Failed to retrieve root folders: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  /**
+   * Retrieves a current provider capacity snapshot without the rolling cache.
+   * This method is read-only and is intended for administrator diagnostics and
+   * future capacity-sensitive decisions.
+   */
+  public getRootFoldersFresh = async (): Promise<RootFolder[]> => {
+    try {
+      const response = await this.axios.get<RootFolder[]>('/rootfolder');
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to retrieve current root folders: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  /**
+   * Retrieves a current provider disk-space snapshot without a rolling cache.
+   */
+  public getDiskSpaceFresh = async (): Promise<DiskSpace[]> => {
+    try {
+      const response = await this.axios.get<DiskSpace[]>('/diskspace');
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to retrieve current disk space: ${e.message}`,
         { cause: e }
       );
     }

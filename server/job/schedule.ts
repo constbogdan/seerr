@@ -1,3 +1,4 @@
+import { MediaType } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import blocklistedTagsProcessor from '@server/job/blocklistedTagsProcessor';
 import {
@@ -5,7 +6,20 @@ import {
   startRemovalProcessing,
   startRemovalScan,
 } from '@server/job/removalJobs';
+import seriesRelocation, {
+  runSeriesRelocation,
+  seriesRelocationJobEnabled,
+  setSeriesRelocationJobEnabled,
+} from '@server/job/seriesRelocationJob';
 import { synchronizationPolicy } from '@server/job/synchronizationPolicy';
+import {
+  runMovieWatchlistRoulette,
+  runSeriesWatchlistRoulette,
+  setWatchlistRouletteJobEnabled,
+  watchlistRouletteJobEnabled,
+  watchlistRouletteJobResult,
+  watchlistRouletteJobRunning,
+} from '@server/job/watchlistRouletteJobs';
 import acquisitionMonitor from '@server/lib/acquisitionMonitor';
 import availabilitySync from '@server/lib/availabilitySync';
 import currentJellyfinViewing from '@server/lib/currentJellyfinViewing';
@@ -30,7 +44,7 @@ import watchlistSync from '@server/lib/watchlistsync';
 import logger from '@server/logger';
 import schedule from 'node-schedule';
 
-interface ScheduledJob {
+export interface ScheduledJob {
   id: JobId;
   job: schedule.Job;
   name: string;
@@ -39,6 +53,9 @@ interface ScheduledJob {
   cronSchedule: string;
   running?: () => boolean;
   enabled?: () => boolean;
+  configurableEnabled?: boolean;
+  setEnabled?: (enabled: boolean) => Promise<void>;
+  result?: () => unknown;
   cancelFn?: () => void;
   commissioningRun?: () => Promise<unknown>;
 }
@@ -64,6 +81,7 @@ export const startJobs = async (): Promise<void> => {
 
   if (synchronizationPolicy.startupCatchUpsAllowed) {
     await currentJellyfinViewing.recoverAbandonedRuns();
+    await seriesRelocation.reconcileOutstanding();
   }
 
   if (mediaServerType === MediaServerType.PLEX) {
@@ -508,6 +526,62 @@ export const startJobs = async (): Promise<void> => {
     ),
     running: () => freshService.running(),
     cancelFn: () => freshService.cancel(),
+  });
+
+  scheduledJobs.push({
+    id: 'series-relocation',
+    name: 'Series Relocation',
+    type: 'process',
+    interval: 'days',
+    cronSchedule: jobs['series-relocation'].schedule,
+    job: scheduleGuardedJob(
+      'series-relocation',
+      jobs['series-relocation'].schedule,
+      runSeriesRelocation
+    ),
+    running: () => seriesRelocation.running(),
+    enabled: seriesRelocationJobEnabled,
+    configurableEnabled: true,
+    setEnabled: setSeriesRelocationJobEnabled,
+    result: () => seriesRelocation.status(),
+  });
+
+  scheduledJobs.push({
+    id: 'watchlist-roulette-movies',
+    name: 'Watchlist Roulette Movies',
+    type: 'process',
+    interval: 'days',
+    cronSchedule: jobs['watchlist-roulette-movies'].schedule,
+    job: scheduleGuardedJob(
+      'watchlist-roulette-movies',
+      jobs['watchlist-roulette-movies'].schedule,
+      runMovieWatchlistRoulette
+    ),
+    running: () => watchlistRouletteJobRunning(MediaType.MOVIE),
+    enabled: () => watchlistRouletteJobEnabled('watchlist-roulette-movies'),
+    configurableEnabled: true,
+    setEnabled: (enabled) =>
+      setWatchlistRouletteJobEnabled('watchlist-roulette-movies', enabled),
+    result: () => watchlistRouletteJobResult(MediaType.MOVIE),
+  });
+
+  scheduledJobs.push({
+    id: 'watchlist-roulette-series',
+    name: 'Watchlist Roulette Series',
+    type: 'process',
+    interval: 'days',
+    cronSchedule: jobs['watchlist-roulette-series'].schedule,
+    job: scheduleGuardedJob(
+      'watchlist-roulette-series',
+      jobs['watchlist-roulette-series'].schedule,
+      runSeriesWatchlistRoulette
+    ),
+    running: () => watchlistRouletteJobRunning(MediaType.TV),
+    enabled: () => watchlistRouletteJobEnabled('watchlist-roulette-series'),
+    configurableEnabled: true,
+    setEnabled: (enabled) =>
+      setWatchlistRouletteJobEnabled('watchlist-roulette-series', enabled),
+    result: () => watchlistRouletteJobResult(MediaType.TV),
   });
 
   logger.info('Scheduled jobs loaded', { label: 'Jobs' });

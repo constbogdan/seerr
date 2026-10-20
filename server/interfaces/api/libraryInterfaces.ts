@@ -323,4 +323,5 @@ export interface LeavingSoonItem {
 
 export interface LeavingSoonResultsResponse extends PaginatedResponse {
   results: LeavingSoonItem[];
+  presentation?: LibraryPresentationBatchStatus;
 }

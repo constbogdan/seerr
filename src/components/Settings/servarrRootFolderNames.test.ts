@@ -26,9 +26,21 @@ describe('Servarr root-folder Library settings', () => {
       assert.match(source, /displayName: rootFolderNames\[folder\.id\]/);
       assert.match(source, /isAnimation: animationRoots\[folder\.id\]/);
       assert.match(source, /color: rootFolderColors\[folder\.id\]/);
+      assert.match(source, /color: rootFolderColors\[folder\.id\] \?\? null/);
       assert.match(source, /maxLength=\{120\}/);
       assert.match(source, /Optional display name/);
       assert.match(source, /names, colors, and Animation designations/);
+      assert.match(
+        source,
+        /rounded-md border border-gray-700 bg-gray-800\/50 p-3/
+      );
+      assert.match(source, /block break-all text-sm text-gray-300/);
+      assert.match(
+        source,
+        /sm:grid-cols-\[minmax\(0,1fr\)_auto\] sm:items-center/
+      );
+      assert.match(source, /className="w-full min-w-0"/);
+      assert.match(source, /okButtonProps=\{\{ type: 'button' \}\}/);
     }
   });
 

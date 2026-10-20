@@ -1,24 +1,19 @@
 import Alert from '@app/components/Common/Alert';
-import Badge from '@app/components/Common/Badge';
 import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import SlideCheckbox from '@app/components/Common/SlideCheckbox';
 import Tooltip from '@app/components/Common/Tooltip';
-import SettingsBadge from '@app/components/Settings/SettingsBadge';
 import RemovalPolicyEditor, {
   type RemovalPreviewPool,
 } from '@app/components/Settings/SettingsRemoval/RemovalPolicyEditor';
+import { normalizeRemovalThresholds } from '@app/components/Settings/SettingsRemoval/helpers';
 import {
-  newlyEnabledRemovalPolicies,
-  normalizeRemovalThresholds,
-  revertNewlyEnabledRemovalPolicies,
-} from '@app/components/Settings/SettingsRemoval/helpers';
-import {
-  currentRemovalPreview,
   isCurrentRemovalPreviewRequest,
   reconcileRemovalDraft,
+  removalPreviewFingerprint,
+  removalPreviewPresentation,
   removalSettingsEqual,
   removalSettingsFingerprint,
   type RemovalPreviewIdentity,
@@ -27,7 +22,6 @@ import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { Transition } from '@headlessui/react';
-import { InformationCircleIcon } from '@heroicons/react/24/solid';
 import type { RemovalSettings } from '@server/constants/removal';
 import axios from 'axios';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
@@ -40,7 +34,6 @@ const messages = defineMessages('components.Settings.SettingsRemoval', {
   title: 'Removal Settings',
   description:
     'Configure automatic removal rules and scheduled removal behavior.',
-  advancedTooltip: 'Job frequency and manual runs are managed in Jobs & Cache.',
   countdownLabel: 'Removal Grace Period',
   countdownDescription: 'Time between scheduling an item and removing it.',
   dayUnit: '{count, plural, one {day} other {days}}',
@@ -53,8 +46,6 @@ const messages = defineMessages('components.Settings.SettingsRemoval', {
   movies: 'Movies',
   series: 'Series',
   loadFailed: 'Unable to load Removal settings.',
-  previewFailed: 'Unable to calculate the eligibility preview.',
-  previewRetry: 'Retry preview',
   save: 'Save changes',
   saving: 'Saving…',
   saved: 'Removal settings saved.',
@@ -75,14 +66,6 @@ const messages = defineMessages('components.Settings.SettingsRemoval', {
     'This will cancel all pending Movie, Series, and Season removal schedules and clear Leaving Soon. No media will be removed.',
   clearCompleted:
     '{count, plural, =0 {No actionable schedules existed.} one {# actionable schedule was cancelled.} other {# actionable schedules were cancelled.}}',
-  enableMovieTitle: 'Enable automatic Movie scheduling?',
-  enableSeriesTitle: 'Enable automatic Series scheduling?',
-  enableBothTitle: 'Enable automatic Movie and Series scheduling?',
-  enableConsequence:
-    '{count} {media} currently qualify.\nUp to {selected} would enter Leaving Soon on the next scan.',
-  enableDelay: 'Removal delay: {days} days.',
-  enableBehavior:
-    'Removal Scan creates countdown schedules; it does not immediately remove media. Activity during the countdown cancels the schedule when Removal Processing runs.',
 });
 
 interface RemovalPreview {
@@ -124,6 +107,7 @@ const SettingsRemoval = () => {
   const saveRequestRef = useRef(false);
   const clearRequestRef = useRef(false);
   const mountedRef = useRef(true);
+  const previewFingerprint = values ? removalPreviewFingerprint(values) : null;
   const updateValues = useCallback((next: RemovalSettings) => {
     valuesRef.current = next;
     setValues(next);
@@ -153,7 +137,6 @@ const SettingsRemoval = () => {
     if (reconciliation.type === 'unchanged') return;
 
     previewRequestRef.current += 1;
-    setPreviewState(null);
     setPreviewErrorFingerprint(null);
     setPreviewingFingerprint(null);
     setPreviewRetry((current) => current + 1);
@@ -169,14 +152,18 @@ const SettingsRemoval = () => {
   }, [data, updateSavedValues, updateValues]);
 
   useEffect(() => {
-    if (!values) return;
-    const fingerprint = removalSettingsFingerprint(values);
+    const proposedValues = valuesRef.current;
+    if (!proposedValues || !previewFingerprint) return;
+    const fingerprint = previewFingerprint;
     const requestId = ++previewRequestRef.current;
     const timeout = setTimeout(() => {
       setPreviewingFingerprint(fingerprint);
       setPreviewErrorFingerprint(null);
       void axios
-        .post<RemovalPreview>('/api/v1/settings/removal/preview', values)
+        .post<RemovalPreview>(
+          '/api/v1/settings/removal/preview',
+          proposedValues
+        )
         .then((response) => {
           const currentValues = valuesRef.current;
           if (
@@ -225,7 +212,7 @@ const SettingsRemoval = () => {
     return () => {
       clearTimeout(timeout);
     };
-  }, [previewRetry, updateValues, values]);
+  }, [previewFingerprint, previewRetry, updateValues]);
 
   if (!values && !error) return <LoadingSpinner />;
   if (!values) {
@@ -236,52 +223,28 @@ const SettingsRemoval = () => {
     );
   }
 
-  const valuesFingerprint = removalSettingsFingerprint(values);
-  const preview = currentRemovalPreview(previewState, values);
-  const previewing = previewingFingerprint === valuesFingerprint;
-  const previewError = previewErrorFingerprint === valuesFingerprint;
+  const previewPresentation = removalPreviewPresentation(
+    previewState,
+    values,
+    previewingFingerprint,
+    previewErrorFingerprint
+  );
+  const preview = previewPresentation.value;
+  const previewing = previewPresentation.refreshing;
+  const previewError = previewPresentation.failed;
   const previewIsActionable = Boolean(
-    preview && !previewing && !previewError && !remoteValues
+    preview &&
+    previewPresentation.current &&
+    !previewing &&
+    !previewError &&
+    !remoteValues
   );
   const clearPreviewIsCurrent = Boolean(
-    previewIsActionable && clearPreviewFingerprint === valuesFingerprint
+    previewIsActionable && clearPreviewFingerprint === previewFingerprint
   );
   const dirty = Boolean(
     savedValues && !removalSettingsEqual(savedValues, values)
   );
-
-  const automaticEnableConfirmation = (
-    keys: ('movie' | 'series')[],
-    currentPreview: RemovalPreview
-  ) => {
-    const title = intl.formatMessage(
-      keys.length === 2
-        ? messages.enableBothTitle
-        : keys[0] === 'movie'
-          ? messages.enableMovieTitle
-          : messages.enableSeriesTitle
-    );
-    const consequences = keys.map((key) =>
-      intl.formatMessage(messages.enableConsequence, {
-        count: currentPreview[key].eligibleUnscheduled,
-        media: intl.formatMessage(
-          key === 'movie' ? messages.movies : messages.series
-        ),
-        selected: currentPreview[key].candidates.length,
-      })
-    );
-    return [
-      title,
-      '',
-      ...consequences,
-      '',
-      intl.formatMessage(messages.enableDelay, {
-        days: values.removalDelayDays,
-      }),
-      '',
-      intl.formatMessage(messages.enableBehavior),
-    ].join('\n');
-  };
 
   const clearScheduledItems = async () => {
     if (
@@ -303,7 +266,7 @@ const SettingsRemoval = () => {
       });
       if (!mountedRef.current) return;
       setPreviewState((current) =>
-        current?.fingerprint === valuesFingerprint
+        current?.fingerprint === previewFingerprint
           ? {
               ...current,
               value: { ...current.value, actionableScheduleCount: 0 },
@@ -335,52 +298,6 @@ const SettingsRemoval = () => {
     let saved = false;
     try {
       if (!savedValues) return;
-      const newlyEnabled = newlyEnabledRemovalPolicies(
-        savedValues,
-        submittedValues
-      );
-      const scanEnabling =
-        !savedValues.removalScanEnabled && submittedValues.removalScanEnabled;
-      if (newlyEnabled.length > 0 || scanEnabling) {
-        const response = await axios.post<RemovalPreview>(
-          '/api/v1/settings/removal/preview',
-          submittedValues
-        );
-        if (!mountedRef.current) return;
-        if (
-          valuesRef.current &&
-          removalSettingsFingerprint(valuesRef.current) === submittedFingerprint
-        ) {
-          setPreviewState({
-            fingerprint: submittedFingerprint,
-            value: response.data,
-          });
-        }
-        const keys = scanEnabling
-          ? (['movie', 'series'] as const)
-          : newlyEnabled;
-        if (
-          !window.confirm(automaticEnableConfirmation([...keys], response.data))
-        ) {
-          if (
-            valuesRef.current &&
-            removalSettingsFingerprint(valuesRef.current) ===
-              submittedFingerprint
-          ) {
-            updateValues({
-              ...revertNewlyEnabledRemovalPolicies(
-                submittedValues,
-                newlyEnabled
-              ),
-              removalScanEnabled: scanEnabling
-                ? false
-                : submittedValues.removalScanEnabled,
-            });
-          }
-          return;
-        }
-      }
-
       const response = await axios.post<RemovalSettings>(
         '/api/v1/settings/removal',
         submittedValues
@@ -475,13 +392,7 @@ const SettingsRemoval = () => {
         </Modal>
       </Transition>
       <div className="mb-6">
-        <div className="flex items-center gap-2">
-          <h3 className="heading">{intl.formatMessage(messages.title)}</h3>
-          <SettingsBadge
-            badgeType="advanced"
-            tooltip={intl.formatMessage(messages.advancedTooltip)}
-          />
-        </div>
+        <h3 className="heading">{intl.formatMessage(messages.title)}</h3>
         <p className="description">
           {intl.formatMessage(messages.description)}
         </p>
@@ -598,27 +509,17 @@ const SettingsRemoval = () => {
       </section>
 
       <section className="border-t border-gray-700 pt-6">
-        {previewError && (
-          <div className="mb-4 flex flex-wrap items-center gap-3 text-sm text-red-400">
-            <span>{intl.formatMessage(messages.previewFailed)}</span>
-            <Button
-              buttonSize="sm"
-              onClick={() => {
-                setPreviewState(null);
-                setPreviewErrorFingerprint(null);
-                setPreviewRetry((current) => current + 1);
-              }}
-            >
-              {intl.formatMessage(messages.previewRetry)}
-            </Button>
-          </div>
-        )}
         <div className="grid grid-cols-1 items-start gap-6 sm:grid-cols-[minmax(0,27.25rem)] xl:grid-cols-[repeat(2,minmax(0,27.25rem))]">
           <RemovalPolicyEditor
             title={intl.formatMessage(messages.movies)}
             policy={values.movie}
             preview={preview?.movie ?? null}
             previewing={previewing}
+            previewError={previewError}
+            onRetryPreview={() => {
+              setPreviewErrorFingerprint(null);
+              setPreviewRetry((current) => current + 1);
+            }}
             onChange={(movie) => updateValues({ ...values, movie })}
           />
           <RemovalPolicyEditor
@@ -626,6 +527,11 @@ const SettingsRemoval = () => {
             policy={values.series}
             preview={preview?.series ?? null}
             previewing={previewing}
+            previewError={previewError}
+            onRetryPreview={() => {
+              setPreviewErrorFingerprint(null);
+              setPreviewRetry((current) => current + 1);
+            }}
             onChange={(series) => updateValues({ ...values, series })}
           />
         </div>
@@ -636,20 +542,13 @@ const SettingsRemoval = () => {
       )}
       <div className="actions">
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <div className="flex items-center gap-2">
-            <Tooltip content={intl.formatMessage(messages.clearDescription)}>
-              <Badge
-                badgeType="warning"
-                className="h-6 w-6 items-center justify-center !px-0"
-              >
-                <InformationCircleIcon className="h-4 w-4" aria-hidden />
-                <span className="sr-only">
-                  {intl.formatMessage(messages.clearDescription)}
-                </span>
-              </Badge>
-            </Tooltip>
+          <Tooltip content={intl.formatMessage(messages.clearDescription)}>
             <Button
               buttonType="danger"
+              className="min-w-[8rem]"
+              aria-label={intl.formatMessage(messages.clearItems, {
+                count: preview?.actionableScheduleCount ?? 0,
+              })}
               disabled={
                 clearing ||
                 saving ||
@@ -658,7 +557,7 @@ const SettingsRemoval = () => {
               }
               onClick={() => {
                 if (!previewIsActionable) return;
-                setClearPreviewFingerprint(valuesFingerprint);
+                setClearPreviewFingerprint(previewFingerprint);
                 setShowClearConfirmation(true);
               }}
             >
@@ -668,7 +567,7 @@ const SettingsRemoval = () => {
                     count: preview?.actionableScheduleCount ?? 0,
                   })}
             </Button>
-          </div>
+          </Tooltip>
           <Button
             buttonType="primary"
             disabled={clearing || saving || Boolean(remoteValues) || !dirty}

@@ -19,6 +19,38 @@ import type { SelectQueryBuilder } from 'typeorm';
 export const WATCHLIST_PAGE_SIZE = 20;
 export const WATCHLIST_ANIMATION_GENRE_ID = 16;
 
+export interface WatchlistIdentity {
+  mediaType: MediaType;
+  tmdbId: number;
+}
+
+export const getAggregatedWatchlistIdentities = async (
+  mediaType: MediaType
+): Promise<WatchlistIdentity[]> => {
+  const rows = await getRepository(Watchlist)
+    .createQueryBuilder('watchlist')
+    .innerJoin('watchlist.requestedBy', 'requestedBy')
+    .select('watchlist.mediaType', 'mediaType')
+    .addSelect('watchlist.tmdbId', 'tmdbId')
+    .where('requestedBy.includeInUserMetrics = :included', { included: true })
+    .andWhere('watchlist.mediaType = :mediaType', { mediaType })
+    .andWhere('watchlist.tmdbId > 0')
+    .distinct(true)
+    .getRawMany<{ mediaType: MediaType; tmdbId: number | string }>();
+
+  return rows
+    .map((row) => ({
+      mediaType: row.mediaType,
+      tmdbId: Number(row.tmdbId),
+    }))
+    .filter(
+      (row) =>
+        [MediaType.MOVIE, MediaType.TV].includes(row.mediaType) &&
+        Number.isSafeInteger(row.tmdbId) &&
+        row.tmdbId > 0
+    );
+};
+
 export interface WatchlistQuery {
   page: number;
   category: WatchlistCategory;

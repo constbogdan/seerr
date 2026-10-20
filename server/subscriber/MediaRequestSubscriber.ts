@@ -1,4 +1,8 @@
-import type { RadarrMovieOptions } from '@server/api/servarr/radarr';
+import { DEFAULT_DOWNLOAD_QUEUE_SIZE } from '@server/api/servarr/base';
+import type {
+  RadarrMovie,
+  RadarrMovieOptions,
+} from '@server/api/servarr/radarr';
 import RadarrAPI from '@server/api/servarr/radarr';
 import type {
   AddSeriesOptions,
@@ -12,6 +16,7 @@ import {
   MediaStatus,
   MediaType,
 } from '@server/constants/media';
+import type { OverflowSettings } from '@server/constants/overflow';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
@@ -19,7 +24,12 @@ import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import acquisitionMonitor from '@server/lib/acquisitionMonitor';
 import notificationManager, { Notification } from '@server/lib/notifications';
+import {
+  evaluateOverflowPlacement,
+  resolveOverflowRoutingTags,
+} from '@server/lib/overflowRouting';
 import { getSettings } from '@server/lib/settings';
+import { discoverStorageLocations } from '@server/lib/storageSettings';
 import logger from '@server/logger';
 import { withNestedTransaction } from '@server/utils/nestedTransaction';
 import { isEqual, truncate } from 'lodash';
@@ -45,6 +55,19 @@ const sanitizeDisplayName = (displayName: string): string => {
 export const wakeAcquisitionMonitorForDispatch = (): void => {
   acquisitionMonitor.wake('seerr-request');
 };
+
+export const shouldEvaluateMovieOverflow = (
+  overflow: Pick<OverflowSettings, 'enabled' | 'routes'>,
+  explicitRoot: boolean
+): boolean =>
+  overflow.enabled &&
+  overflow.routes.some((route) => route.enabled) &&
+  !explicitRoot;
+
+export const shouldEvaluateAutomaticSeriesPlacement = (
+  overflow: Pick<OverflowSettings, 'automaticSeriesPlacement'>,
+  explicitRoot: boolean
+): boolean => overflow.automaticSeriesPlacement && !explicitRoot;
 
 @EventSubscriber()
 export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRequest> {
@@ -323,9 +346,84 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           url: RadarrAPI.buildUrl(radarrSettings, '/api/v3'),
         });
         const movie = await tmdb.getMovie({ movieId: entity.media.tmdbId });
+        let existingRadarrMovie: RadarrMovie | undefined;
+        let radarrTags: Awaited<ReturnType<RadarrAPI['getTags']>> | undefined;
+        let applyRootFolderAndTagsToExisting = false;
+
+        if (
+          shouldEvaluateMovieOverflow(
+            settings.overflow,
+            Boolean(entity.rootFolder)
+          )
+        ) {
+          try {
+            const [discovery, existingMovie, providerTags] = await Promise.all([
+              discoverStorageLocations(settings),
+              radarr.getMovieByTmdbId(movie.id),
+              radarr.getTags(),
+            ]);
+            existingRadarrMovie = existingMovie;
+            radarrTags = providerTags;
+            const activeQueue =
+              existingMovie.id && !existingMovie.hasFile
+                ? await radarr.getQueue(radarrSettings.downloadQueueSize)
+                : [];
+            const queueLimit =
+              radarrSettings.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE;
+            const decision = evaluateOverflowPlacement({
+              mediaType: 'movie',
+              settings: settings.overflow,
+              discovery,
+              provider: 'radarr',
+              serviceId: radarrSettings.id,
+              configuredRootPath: rootFolder,
+              explicitRoot: false,
+              existingMediaHasFiles: existingMovie.hasFile,
+              existingMediaAcquisitionActiveOrUnknown:
+                activeQueue.some((item) => item.movieId === existingMovie.id) ||
+                activeQueue.length >= queueLimit,
+            });
+            const tagResolution = decision.selected
+              ? resolveOverflowRoutingTags(
+                  providerTags,
+                  Array.from(new Set([...existingMovie.tags, ...tags])),
+                  decision.placement!
+                )
+              : null;
+            logger.info('Evaluated Movie Overflow placement', {
+              label: 'Overflow',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+              selected: decision.selected,
+              reason: decision.reason,
+              placement: decision.placement,
+              routeKey: decision.routeKey,
+              rootFolderPath: decision.location?.path,
+              tagResolution: tagResolution?.valid
+                ? 'resolved'
+                : tagResolution?.reason,
+            });
+            if (decision.selected && tagResolution?.valid) {
+              rootFolder = decision.location!.path;
+              tags = tagResolution.tags;
+              applyRootFolderAndTagsToExisting = true;
+            }
+          } catch (error) {
+            logger.warn(
+              'Movie Overflow evaluation failed; preserving existing request placement',
+              {
+                label: 'Overflow',
+                requestId: entity.id,
+                mediaId: entity.media.id,
+                errorMessage:
+                  error instanceof Error ? error.message : String(error),
+              }
+            );
+          }
+        }
 
         if (radarrSettings.tagRequests) {
-          const radarrTags = await radarr.getTags();
+          radarrTags ??= await radarr.getTags();
           // old tags had space around the hyphen
           let userTag = radarrTags.find((v) =>
             v.label.startsWith(entity.requestedBy.id + ' - ')
@@ -380,13 +478,14 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           monitored: true,
           tags,
           searchNow: !radarrSettings.preventSearch,
+          applyRootFolderAndTagsToExisting,
         };
 
         wakeAcquisitionMonitorForDispatch();
 
         // Run entity asynchronously so we don't wait for it on the UI side
         radarr
-          .addMovie(radarrMovieOptions)
+          .addMovie(radarrMovieOptions, existingRadarrMovie)
           .then(async (radarrMovie) => {
             // Needs its own repository as this runs detached from the request transaction
             const mediaRepository = getRepository(Media);
@@ -672,8 +771,79 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           });
         }
 
+        let existingSonarrSeries: SonarrSeries | undefined;
+        let sonarrTags: Awaited<ReturnType<SonarrAPI['getTags']>> | undefined;
+        if (
+          shouldEvaluateAutomaticSeriesPlacement(
+            settings.overflow,
+            Boolean(entity.rootFolder)
+          )
+        ) {
+          try {
+            const [discovery, existingSeries, providerTags] = await Promise.all(
+              [
+                discoverStorageLocations(settings),
+                sonarr.getSeriesByTvdbId(tvdbId),
+                sonarr.getTags(),
+              ]
+            );
+            existingSonarrSeries = existingSeries;
+            sonarrTags = providerTags;
+            const decision = evaluateOverflowPlacement({
+              mediaType: 'series',
+              settings: settings.overflow,
+              discovery,
+              provider: 'sonarr',
+              serviceId: sonarrSettings.id,
+              configuredRootPath: rootFolder,
+              explicitRoot: false,
+              existingSeries: Boolean(existingSeries.id),
+              requestedRegularSeasonNumbers: entity.seasons.map(
+                (season) => season.seasonNumber
+              ),
+            });
+            const tagResolution = decision.selected
+              ? resolveOverflowRoutingTags(
+                  providerTags,
+                  Array.from(
+                    new Set([...(existingSeries.tags ?? []), ...tags])
+                  ),
+                  decision.placement!
+                )
+              : null;
+            logger.info('Evaluated automatic Series placement', {
+              label: 'Series Placement',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+              selected: decision.selected,
+              reason: decision.reason,
+              placement: decision.placement,
+              routeKey: decision.routeKey,
+              rootFolderPath: decision.location?.path,
+              tagResolution: tagResolution?.valid
+                ? 'resolved'
+                : tagResolution?.reason,
+            });
+            if (decision.selected && tagResolution?.valid) {
+              rootFolder = decision.location!.path;
+              tags = tagResolution.tags;
+            }
+          } catch (error) {
+            logger.warn(
+              'Automatic Series placement failed; preserving existing request placement',
+              {
+                label: 'Series Placement',
+                requestId: entity.id,
+                mediaId: entity.media.id,
+                errorMessage:
+                  error instanceof Error ? error.message : String(error),
+              }
+            );
+          }
+        }
+
         if (sonarrSettings.tagRequests) {
-          const sonarrTags = await sonarr.getTags();
+          sonarrTags ??= await sonarr.getTags();
           // old tags had space around the hyphen
           let userTag = sonarrTags.find((v) =>
             v.label.startsWith(entity.requestedBy.id + ' - ')
@@ -736,7 +906,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
 
         // Run entity asynchronously so we don't wait for it on the UI side
         sonarr
-          .addSeries(sonarrSeriesOptions)
+          .addSeries(sonarrSeriesOptions, existingSonarrSeries)
           .then(async (sonarrSeries) => {
             // Needs its own repository as this runs detached from the request transaction
             const mediaRepository = getRepository(Media);

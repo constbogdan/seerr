@@ -41,6 +41,7 @@ import {
 import { RemovalSchedule } from '@server/entity/RemovalSchedule';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import { SeriesRelocationExecution } from '@server/entity/SeriesRelocationExecution';
 import { Session } from '@server/entity/Session';
 import { User } from '@server/entity/User';
 import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
@@ -94,6 +95,7 @@ const entities = [
   RemovalExecution,
   RemovalExecutionClaim,
   RemovalSchedule,
+  SeriesRelocationExecution,
   Season,
   SeasonRequest,
   Session,

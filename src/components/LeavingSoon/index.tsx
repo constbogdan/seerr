@@ -14,11 +14,12 @@ import { ChevronLeftIcon, ChevronRightIcon } from '@heroicons/react/24/solid';
 import type {
   LeavingSoonItem,
   LeavingSoonResultsResponse,
+  LibraryPresentationStatus,
   LibraryRemovalSchedule,
 } from '@server/interfaces/api/libraryInterfaces';
 import axios from 'axios';
 import { useRouter } from 'next/router';
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
 
@@ -62,6 +63,39 @@ const LeavingSoon = () => {
   const { data, error, mutate } = useSWR<LeavingSoonResultsResponse>(
     `/api/v1/leaving-soon?page=${page}`
   );
+  useEffect(() => {
+    const batchId = data?.presentation?.batchId;
+    if (data?.presentation?.state !== 'pending' || !batchId) return;
+
+    let cancelled = false;
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    let attempts = 0;
+    const poll = async () => {
+      if (cancelled || attempts >= 40) return;
+      attempts += 1;
+      try {
+        const { data: status } = await axios.get<LibraryPresentationStatus>(
+          `/api/v1/leaving-soon/presentation-status/${batchId}`
+        );
+        if (cancelled) return;
+        if (status.state === 'pending') {
+          timeout = setTimeout(poll, Math.min(500 * attempts, 2000));
+          return;
+        }
+        if (status.state === 'complete' || status.state === 'partial') {
+          await mutate();
+        }
+      } catch {
+        // Missing, expired, or transiently unavailable batch status leaves the
+        // current projection intact. Ordinary SWR revalidation can refresh it.
+      }
+    };
+    timeout = setTimeout(poll, 500);
+    return () => {
+      cancelled = true;
+      if (timeout) clearTimeout(timeout);
+    };
+  }, [data?.presentation?.batchId, data?.presentation?.state, mutate]);
   const canCancelSchedules = hasPermission(Permission.ADMIN);
   const selectedSchedule = cancelDialog?.item.schedules.find(
     (schedule) => schedule.id === cancelDialog.scheduleId

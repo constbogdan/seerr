@@ -3,17 +3,26 @@ import {
   getVisibleNavigationDestinations,
   isNavigationDestinationActive,
   menuMessages,
+  type NavigationDestination,
 } from '@app/components/Layout/navigation';
 import VersionStatus from '@app/components/Layout/VersionStatus';
+import {
+  useSettingsNavigation,
+  type SettingsNavigationRoute,
+} from '@app/components/Settings/settingsNavigation';
+import {
+  isSettingsPath,
+  synchronizeSettingsMenuExpansion,
+} from '@app/components/Settings/settingsNavigationState';
 import useClickOutside from '@app/hooks/useClickOutside';
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
 import { Transition, TransitionChild } from '@headlessui/react';
-import { XMarkIcon } from '@heroicons/react/24/outline';
+import { ChevronDownIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { Fragment, useEffect, useRef } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 
 interface SidebarProps {
@@ -24,6 +33,138 @@ interface SidebarProps {
   revalidateIssueCount: () => void;
   revalidateRequestsCount: () => void;
 }
+
+interface SettingsNavigationGroupProps {
+  destination: NavigationDestination;
+  routes: SettingsNavigationRoute[];
+  variant: 'desktop' | 'tablet';
+  closeDrawer?: () => void;
+}
+
+const SettingsNavigationGroup = ({
+  destination,
+  routes,
+  variant,
+  closeDrawer,
+}: SettingsNavigationGroupProps) => {
+  const router = useRouter();
+  const intl = useIntl();
+  const settingsPath = isSettingsPath(router.pathname);
+  const [expanded, setExpanded] = useState(settingsPath);
+  const previousSettingsPathRef = useRef(settingsPath);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const submenuRef = useRef<HTMLUListElement>(null);
+  const activeItemRef = useRef<HTMLAnchorElement>(null);
+  const submenuId = `settings-navigation-submenu-${variant}`;
+  const SidebarIcon = destination.sidebarIcon ?? destination.icon;
+
+  useEffect(() => {
+    if (
+      !settingsPath &&
+      previousSettingsPathRef.current &&
+      submenuRef.current?.contains(document.activeElement)
+    ) {
+      buttonRef.current?.focus();
+    }
+    setExpanded((current) =>
+      synchronizeSettingsMenuExpansion({
+        expanded: current,
+        wasSettingsPath: previousSettingsPathRef.current,
+        settingsPath,
+      })
+    );
+    previousSettingsPathRef.current = settingsPath;
+  }, [settingsPath]);
+
+  useEffect(() => {
+    if (!expanded) {
+      return;
+    }
+
+    const animationFrame = window.requestAnimationFrame(() => {
+      activeItemRef.current?.scrollIntoView({
+        block: 'nearest',
+        inline: 'nearest',
+      });
+    });
+
+    return () => window.cancelAnimationFrame(animationFrame);
+  }, [expanded, router.pathname]);
+
+  const toggleExpanded = () => {
+    if (
+      expanded &&
+      submenuRef.current?.contains(document.activeElement) &&
+      document.activeElement !== buttonRef.current
+    ) {
+      buttonRef.current?.focus();
+    }
+    setExpanded((current) => !current);
+  };
+
+  return (
+    <div data-testid={`sidebar-settings-group-${variant}`}>
+      <button
+        ref={buttonRef}
+        type="button"
+        aria-expanded={expanded}
+        aria-controls={submenuId}
+        onClick={toggleExpanded}
+        className={`group flex w-full items-center rounded-md px-2 py-2 font-medium leading-6 text-white transition duration-150 ease-in-out focus:outline-none ${
+          variant === 'desktop' ? 'text-lg' : 'text-base'
+        } ${
+          settingsPath
+            ? 'bg-gradient-to-br from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500'
+            : 'hover:bg-gray-700 focus:bg-gray-700'
+        }`}
+        data-testid={`sidebar-menu-settings${
+          variant === 'tablet' ? '-mobile' : ''
+        }`}
+      >
+        <SidebarIcon className="mr-3 h-6 w-6 flex-shrink-0" />
+        <span className="min-w-0 flex-1 text-left">
+          {intl.formatMessage(menuMessages.settings)}
+        </span>
+        <ChevronDownIcon
+          aria-hidden="true"
+          className={`ml-2 h-5 w-5 flex-shrink-0 transition-transform motion-reduce:transition-none ${
+            expanded ? 'rotate-180' : ''
+          }`}
+        />
+      </button>
+      {expanded && (
+        <ul
+          ref={submenuRef}
+          id={submenuId}
+          className="mt-1 space-y-1 pl-9"
+          data-testid={`settings-submenu-${variant}`}
+        >
+          {routes.map((route) => {
+            const active = route.regex.test(router.pathname);
+            return (
+              <li key={route.id}>
+                <Link
+                  ref={active ? activeItemRef : undefined}
+                  href={route.route}
+                  aria-current={active ? 'page' : undefined}
+                  onClick={closeDrawer}
+                  className={`block rounded-md px-3 py-2 text-sm font-medium leading-5 transition duration-150 ease-in-out focus:outline-none ${
+                    active
+                      ? 'bg-gray-700 text-indigo-300'
+                      : 'text-gray-300 hover:bg-gray-700 hover:text-white focus:bg-gray-700 focus:text-white'
+                  }`}
+                  data-testid={`settings-submenu-${route.id}-${variant}`}
+                >
+                  {route.text}
+                </Link>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+};
 
 const Sidebar = ({
   open,
@@ -39,6 +180,7 @@ const Sidebar = ({
   const intl = useIntl();
   const { currentSettings } = useSettings();
   const { hasPermission } = useUser();
+  const settingsRoutes = useSettingsNavigation();
   const visibleDestinations = getVisibleNavigationDestinations({
     freshEnabled: currentSettings.freshEnabled,
     hasPermission,
@@ -141,6 +283,17 @@ const Sidebar = ({
                       {visibleDestinations.map((sidebarLink) => {
                         const SidebarIcon =
                           sidebarLink.sidebarIcon ?? sidebarLink.icon;
+                        if (sidebarLink.id === 'settings') {
+                          return (
+                            <SettingsNavigationGroup
+                              key="tablet-settings"
+                              destination={sidebarLink}
+                              routes={settingsRoutes}
+                              variant="tablet"
+                              closeDrawer={setClosed}
+                            />
+                          );
+                        }
                         return (
                           <Link
                             key={`mobile-${sidebarLink.messagesKey}`}
@@ -200,6 +353,16 @@ const Sidebar = ({
                 {visibleDestinations.map((sidebarLink) => {
                   const SidebarIcon =
                     sidebarLink.sidebarIcon ?? sidebarLink.icon;
+                  if (sidebarLink.id === 'settings') {
+                    return (
+                      <SettingsNavigationGroup
+                        key="desktop-settings"
+                        destination={sidebarLink}
+                        routes={settingsRoutes}
+                        variant="desktop"
+                      />
+                    );
+                  }
                   return (
                     <Link
                       key={`desktop-${sidebarLink.messagesKey}`}

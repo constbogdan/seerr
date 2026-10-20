@@ -12,6 +12,10 @@ describe('Settings jobs and navigation presentation', () => {
     path.join(__dirname, 'SettingsLayout.tsx'),
     'utf8'
   );
+  const navigation = readFileSync(
+    path.join(__dirname, 'settingsNavigation.ts'),
+    'utf8'
+  );
 
   it('gives every downstream job a concise user-facing description', () => {
     for (const description of [
@@ -21,11 +25,16 @@ describe('Settings jobs and navigation presentation', () => {
       'Keeps Fresh results up to date as media becomes available or changes.',
       'Finds media eligible for scheduled removal.',
       'Processes scheduled removals when their deadlines arrive.',
+      'Automatically relocates eligible Series between storage volumes.',
       'Adds missing genre information to Watchlist items.',
       "Updates watched status and progress for each user's Watchlist.",
     ]) {
       assert.ok(jobs.includes(description), description);
     }
+    assert.doesNotMatch(
+      jobs,
+      /Moves at most one eligible whole Series from the default volume to the expansion volume\./
+    );
   });
 
   it('sorts by the localized displayed name with a deterministic tie-break', () => {
@@ -37,19 +46,91 @@ describe('Settings jobs and navigation presentation', () => {
     );
   });
 
+  it('uses the status column as the only configurable-job enabled-state presentation', () => {
+    assert.doesNotMatch(jobs, /<SlideCheckbox/);
+    assert.doesNotMatch(jobs, /setJobEnabled/);
+    assert.doesNotMatch(jobs, /messages\.enabled/);
+    assert.match(
+      jobs,
+      /'watchlist-roulette-movies': 'Watchlist Roulette Movies'/
+    );
+    assert.match(
+      jobs,
+      /'watchlist-roulette-series': 'Watchlist Roulette Series'/
+    );
+    assert.match(jobs, /'series-relocation': 'Series Relocation'/);
+    assert.match(
+      jobs,
+      /!job\.enabled \? \([\s\S]*?intl\.formatMessage\(messages\.disabled\)/
+    );
+    assert.match(
+      jobs,
+      /job\.type === 'process' \? 'primary' : 'warning'[\s\S]*?messages\.process/
+    );
+    assert.match(
+      jobs,
+      /onClick=\{\(\) => dispatch\(\{ type: 'open', job \}\)\}/
+    );
+    assert.match(
+      jobs,
+      /disabled=\{!job\.enabled \|\| !job\.manualExecutionAllowed\}/
+    );
+  });
+
+  it('uses the standard interval-based Modify Job editor', () => {
+    assert.match(
+      jobs,
+      /interval: 'seconds' \| 'minutes' \| 'hours' \| 'days' \| 'fixed'/
+    );
+    assert.match(jobs, /\[1, 2, 3, 4, 5, 6, 7, 10, 14, 21, 30\]/);
+    assert.doesNotMatch(jobs, /interval === 'weekly'/);
+    assert.doesNotMatch(jobs, /interval === 'monthly'/);
+    assert.doesNotMatch(
+      jobs,
+      /scheduleWeekday|scheduleDayOfMonth|scheduleHourOfDay/
+    );
+  });
+
   it('places Removal immediately after Discovery Sources and before Notifications', () => {
-    const discovery = layout.indexOf(
+    const discovery = navigation.indexOf(
       "route: '/settings/discovery-sources/fresh'"
     );
-    const removal = layout.indexOf("route: '/settings/removal'");
-    const notifications = layout.indexOf(
+    const removal = navigation.indexOf("route: '/settings/removal'");
+    const notifications = navigation.indexOf(
       "route: '/settings/notifications/email'"
     );
     assert.ok(discovery > -1);
     assert.ok(removal > discovery);
     assert.ok(notifications > removal);
     assert.equal(
-      (layout.match(/route: '\/settings\/removal'/g) ?? []).length,
+      (navigation.match(/route: '\/settings\/removal'/g) ?? []).length,
+      1
+    );
+  });
+
+  it('exposes the administrator Storage page after Services', () => {
+    const services = navigation.indexOf("route: '/settings/services'");
+    const storage = navigation.indexOf("route: '/settings/storage'");
+    const network = navigation.indexOf("route: '/settings/network'");
+    assert.ok(services > -1);
+    assert.ok(storage > services);
+    assert.ok(network > storage);
+    assert.equal(
+      (navigation.match(/route: '\/settings\/storage'/g) ?? []).length,
+      1
+    );
+  });
+
+  it('uses the shared Settings inventory and renders only the compact page selector', () => {
+    assert.match(layout, /useSettingsNavigation\(\)/);
+    assert.match(
+      layout,
+      /<SettingsNavigationSelector routes=\{settingsRoutes\}/
+    );
+    assert.doesNotMatch(layout, /<SettingsTabs/);
+    assert.equal(
+      (navigation.match(/route: '\/settings\/notifications\/email'/g) ?? [])
+        .length,
       1
     );
   });

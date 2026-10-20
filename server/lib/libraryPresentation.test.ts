@@ -57,6 +57,33 @@ const waitForSettled = async (
 };
 
 describe('LibraryPresentationCoordinator', () => {
+  it('scopes non-administrator status access to the granted user and batch', () => {
+    let now = 0;
+    const coordinator = new LibraryPresentationCoordinator({
+      cache: new MemoryCache(),
+      now: () => now,
+      batchTtlMs: 10,
+      fetchPresentation: async () =>
+        new Promise<LibraryPresentation>(() => undefined),
+    });
+    const prepared = coordinator.prepare(
+      [{ mediaType: LibraryMediaType.MOVIE, tmdbId: 100 }],
+      'en'
+    );
+    const grantedBatchId = prepared.status.batchId as string;
+
+    assert.equal(coordinator.grantStatusAccess(grantedBatchId, 7), true);
+    assert.equal(coordinator.statusFor(grantedBatchId, 8), null);
+    assert.equal(
+      coordinator.statusFor('22222222-2222-4222-8222-222222222222', 7),
+      null
+    );
+    assert.equal(coordinator.statusFor(grantedBatchId, 7)?.state, 'pending');
+    now = 11;
+    assert.equal(coordinator.statusFor(grantedBatchId, 7), null);
+    coordinator.shutdown();
+  });
+
   it('coalesces cold identities and serves localized Collection presentation from cache', async () => {
     let calls = 0;
     let release!: (presentation: LibraryPresentation) => void;

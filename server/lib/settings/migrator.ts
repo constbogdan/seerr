@@ -7,7 +7,8 @@ const migrationsDir = path.join(__dirname, 'migrations');
 
 export const runMigrations = async (
   settings: AllSettings,
-  SETTINGS_PATH: string
+  SETTINGS_PATH: string,
+  MIGRATIONS_PATH = migrationsDir
 ): Promise<AllSettings> => {
   let migrated = settings;
 
@@ -22,7 +23,7 @@ export const runMigrations = async (
     }
     await fs.writeFile(BACKUP_PATH, JSON.stringify(settings, undefined, ' '));
 
-    const migrations = (await fs.readdir(migrationsDir)).filter(
+    const migrations = (await fs.readdir(MIGRATIONS_PATH)).filter(
       (file) => file.endsWith('.js') || file.endsWith('.ts')
     );
 
@@ -34,7 +35,7 @@ export const runMigrations = async (
           label: 'Settings Migrator',
         });
         const { default: migrationFn } = await import(
-          path.join(migrationsDir, migration)
+          path.join(MIGRATIONS_PATH, migration)
         );
         const newSettings = await migrationFn(structuredClone(migrated));
         if (JSON.stringify(migrated) !== JSON.stringify(newSettings)) {
