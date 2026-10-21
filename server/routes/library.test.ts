@@ -5,6 +5,7 @@ import {
   ViewingCompletionClassification,
 } from '@server/constants/libraryHistory';
 import { MediaRequestStatus, MediaType } from '@server/constants/media';
+import { MediaServerType } from '@server/constants/server';
 import { UserType } from '@server/constants/user';
 import { getRepository } from '@server/datasource';
 import {
@@ -37,6 +38,7 @@ import historicalDataImport from '@server/lib/historicalDataImport';
 import {
   LibraryService,
   buildLibraryExternalLinks,
+  resolveLibraryJellyfinUrl,
   type PageFacts,
 } from '@server/lib/library';
 import {
@@ -235,6 +237,9 @@ const closeLibraryMedia = async (canonicalMediaId: number) => {
 };
 
 beforeEach(async () => {
+  getSettings().main.mediaServerType = MediaServerType.JELLYFIN;
+  getSettings().jellyfin.serverId = 'jf';
+  getSettings().jellyfin.externalHostname = 'https://jellyfin.example';
   getSettings().radarr = [
     {
       id: 1,
@@ -806,27 +811,277 @@ describe('Library factual administrator API', () => {
     media.serviceUrl4k = 'https://radarr-4k.example/movie/proven-slug';
     media.mediaUrl =
       'https://jellyfin.example/web/index.html#!/details?id=proven-id';
-    assert.deepEqual(buildLibraryExternalLinks(LibraryMediaType.MOVIE, media), [
-      {
-        service: 'radarr',
-        label: 'Radarr',
-        url: 'https://radarr.example/movie/proven-slug',
-      },
-      {
-        service: 'radarr',
-        label: 'Radarr 4K',
-        url: 'https://radarr-4k.example/movie/proven-slug',
-      },
-      {
-        service: 'jellyfin',
-        label: 'Jellyfin',
-        url: 'https://jellyfin.example/web/index.html#!/details?id=proven-id',
-      },
-    ]);
+    assert.deepEqual(
+      buildLibraryExternalLinks(
+        LibraryMediaType.MOVIE,
+        media,
+        'https://jellyfin.example/web/index.html#!/details?id=fallback-id'
+      ),
+      [
+        {
+          service: 'radarr',
+          label: 'Radarr',
+          url: 'https://radarr.example/movie/proven-slug',
+        },
+        {
+          service: 'radarr',
+          label: 'Radarr 4K',
+          url: 'https://radarr-4k.example/movie/proven-slug',
+        },
+        {
+          service: 'jellyfin',
+          label: 'Jellyfin',
+          url: 'https://jellyfin.example/web/index.html#!/details?id=proven-id',
+        },
+      ]
+    );
     assert.deepEqual(
       buildLibraryExternalLinks(LibraryMediaType.SERIES, null),
       []
     );
+  });
+
+  it('resolves one exact Jellyfin identity for the configured server and fails closed otherwise', () => {
+    const itemId = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const otherItemId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    assert.equal(
+      resolveLibraryJellyfinUrl({
+        identities: [
+          { sourceScope: 'other-server', value: otherItemId },
+          { sourceScope: 'jf', value: itemId },
+        ],
+        serverId: 'jf',
+        hostname: 'https://jellyfin.example',
+        pageName: 'details',
+      }),
+      `https://jellyfin.example/web/index.html#!/details?id=${itemId}&context=home&serverId=jf`
+    );
+    assert.equal(
+      resolveLibraryJellyfinUrl({
+        identities: [
+          { sourceScope: 'jf', value: itemId },
+          { sourceScope: 'jf', value: otherItemId },
+        ],
+        serverId: 'jf',
+        hostname: 'https://jellyfin.example',
+        pageName: 'details',
+      }),
+      null,
+      'multiple current IDs for one configured server are ambiguous'
+    );
+    assert.equal(
+      resolveLibraryJellyfinUrl({
+        identities: [{ sourceScope: 'jf', value: 'not-a-jellyfin-id' }],
+        serverId: 'jf',
+        hostname: 'https://jellyfin.example',
+        pageName: 'details',
+      }),
+      null
+    );
+    assert.equal(
+      resolveLibraryJellyfinUrl({
+        identities: [{ sourceScope: 'jf', value: itemId }],
+        serverId: 'jf',
+        hostname: 'https://user:secret@jellyfin.example',
+        pageName: 'details',
+      }),
+      null,
+      'credentials are never exposed in projected URLs'
+    );
+    assert.equal(
+      resolveLibraryJellyfinUrl({
+        identities: [{ sourceScope: 'jf', value: itemId }],
+        serverId: 'jf',
+        hostname: 'https://jellyfin.example/base?api_key=secret',
+        pageName: 'details',
+      }),
+      null,
+      'query parameters are never exposed in projected URLs'
+    );
+    assert.equal(
+      resolveLibraryJellyfinUrl({
+        identities: [{ sourceScope: 'jf', value: itemId }],
+        serverId: 'jf',
+        hostname: 'https://jellyfin.example/base#secret',
+        pageName: 'details',
+      }),
+      null,
+      'fragments are never exposed in projected URLs'
+    );
+    assert.equal(
+      resolveLibraryJellyfinUrl({
+        identities: [{ sourceScope: 'jf', value: itemId }],
+        serverId: 'jf',
+        hostname: 'https://jellyfin.example/base/',
+        pageName: 'details',
+      }),
+      `https://jellyfin.example/base/web/index.html#!/details?id=${itemId}&context=home&serverId=jf`,
+      'valid path-based base URLs remain supported'
+    );
+  });
+
+  it('projects current visible Jellyfin identities for Animation Movies and Series without guessing', async () => {
+    const seriesJellyfinId = jellyfinMovieId(80039);
+    await getRepository(CanonicalMediaIdentity).save(
+      new CanonicalMediaIdentity({
+        canonicalMediaId: seriesId,
+        mediaType: LibraryMediaType.SERIES,
+        provider: 'jellyfin',
+        sourceScope: 'jf',
+        value: seriesJellyfinId,
+      })
+    );
+    const nonAnimationMovie = await request(app)
+      .get('/library?animation=no&search=completed%20movie')
+      .set('x-test-role', 'admin');
+    const nonAnimationSeries = await request(app)
+      .get('/library?animation=no&search=underground%20railroad')
+      .set('x-test-role', 'admin');
+    for (const response of [nonAnimationMovie, nonAnimationSeries]) {
+      assert.equal(response.status, 200);
+      assert.equal(response.body.results.length, 1);
+      assert.equal(response.body.results[0].externalLinks.length, 1);
+      assert.equal(
+        response.body.results[0].externalLinks[0].service,
+        'jellyfin'
+      );
+    }
+
+    const movieRoot = await getRepository(StorageRoot).save(
+      new StorageRoot({
+        servarrType: 'radarr',
+        serviceId: 1,
+        sourceRootId: 901,
+        nameSnapshot: 'Animation Movies',
+        pathSnapshot: '/library/animation/movies',
+        isAnimation: true,
+      })
+    );
+    const seriesRoot = await getRepository(StorageRoot).save(
+      new StorageRoot({
+        servarrType: 'sonarr',
+        serviceId: 2,
+        sourceRootId: 902,
+        nameSnapshot: 'Animation Series',
+        pathSnapshot: '/library/animation/series',
+        isAnimation: true,
+      })
+    );
+    const moviePresence = await getRepository(LibraryPresence).findOneByOrFail({
+      canonicalMediaId: completedMovieId,
+      sourceSystem: 'radarr',
+      isCurrent: true,
+    });
+    moviePresence.storageRootId = movieRoot.id;
+    await getRepository(LibraryPresence).save(moviePresence);
+    const seriesPresence = await getRepository(LibraryPresence).findOneByOrFail(
+      {
+        canonicalMediaId: seriesId,
+        sourceSystem: 'sonarr',
+        isCurrent: true,
+      }
+    );
+    seriesPresence.storageRootId = seriesRoot.id;
+    await getRepository(LibraryPresence).save(seriesPresence);
+
+    const movie = await request(app)
+      .get('/library?animation=yes&search=completed%20movie')
+      .set('x-test-role', 'admin');
+    const series = await request(app)
+      .get('/library?animation=yes&search=underground%20railroad')
+      .set('x-test-role', 'admin');
+    for (const response of [movie, series]) {
+      assert.equal(response.status, 200);
+      assert.equal(response.body.results.length, 1);
+      assert.equal(
+        response.body.results[0].externalLinks.filter(
+          (link: { service: string }) => link.service === 'jellyfin'
+        ).length,
+        1
+      );
+      assert.equal(
+        JSON.stringify(response.body.results[0].externalLinks).includes(
+          'apiKey'
+        ),
+        false
+      );
+    }
+    assert.match(
+      movie.body.results[0].externalLinks[0].url,
+      new RegExp(jellyfinMovieId(101))
+    );
+    assert.match(
+      series.body.results[0].externalLinks[0].url,
+      new RegExp(seriesJellyfinId)
+    );
+
+    const otherServerItemId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    await getRepository(CanonicalMediaIdentity).save(
+      new CanonicalMediaIdentity({
+        canonicalMediaId: completedMovieId,
+        mediaType: LibraryMediaType.MOVIE,
+        provider: 'jellyfin',
+        sourceScope: 'other-server',
+        value: otherServerItemId,
+      })
+    );
+    await getRepository(LibraryPresence).save(
+      new LibraryPresence({
+        canonicalMediaId: completedMovieId,
+        sourceSystem: 'jellyfin',
+        sourceScope: 'other-server',
+        sourceItemId: `movie:${otherServerItemId}`,
+        jellyfinVisible: true,
+        isCurrent: true,
+      })
+    );
+    const multipleServers = await request(app)
+      .get('/library?search=completed%20movie')
+      .set('x-test-role', 'admin');
+    assert.match(
+      multipleServers.body.results[0].externalLinks[0].url,
+      new RegExp(jellyfinMovieId(101))
+    );
+
+    const ambiguousItemId = 'cccccccccccccccccccccccccccccccc';
+    await getRepository(CanonicalMediaIdentity).save(
+      new CanonicalMediaIdentity({
+        canonicalMediaId: completedMovieId,
+        mediaType: LibraryMediaType.MOVIE,
+        provider: 'jellyfin',
+        sourceScope: 'jf',
+        value: ambiguousItemId,
+      })
+    );
+    await getRepository(LibraryPresence).save(
+      new LibraryPresence({
+        canonicalMediaId: completedMovieId,
+        sourceSystem: 'jellyfin',
+        sourceScope: 'jf',
+        sourceItemId: `movie:${ambiguousItemId}`,
+        jellyfinVisible: true,
+        isCurrent: true,
+      })
+    );
+    const ambiguous = await request(app)
+      .get('/library?search=completed%20movie')
+      .set('x-test-role', 'admin');
+    assert.deepEqual(ambiguous.body.results[0].externalLinks, []);
+
+    const jellyfinPresences = await getRepository(LibraryPresence).findBy({
+      canonicalMediaId: completedMovieId,
+      sourceSystem: 'jellyfin',
+      isCurrent: true,
+    });
+    for (const presence of jellyfinPresences) {
+      presence.isCurrent = false;
+      presence.jellyfinVisible = false;
+    }
+    await getRepository(LibraryPresence).save(jellyfinPresences);
+    const servarrOnly = await request(app)
+      .get('/library?search=completed%20movie')
+      .set('x-test-role', 'admin');
+    assert.deepEqual(servarrOnly.body.results[0].externalLinks, []);
   });
 
   it('enforces administrator authorization', async () => {
@@ -922,6 +1177,139 @@ describe('Library factual administrator API', () => {
     assert.equal(archive.body.results[0].logicalSizeBytes, null);
     assert.deepEqual(archive.body.results[0].storageRoots, []);
     assert.deepEqual(archive.body.results[0].externalLinks, []);
+  });
+
+  it('filters durable Movie collection membership before totals, sorting, pagination, and presentation', async () => {
+    const canonicalRepository = getRepository(CanonicalMedia);
+    await canonicalRepository.update(completedMovieId, {
+      tmdbCollectionId: 501,
+      collectionMembershipHydratedAt: new Date('2026-10-01T00:00:00.000Z'),
+    });
+    await canonicalRepository.update(partialMovieId, {
+      tmdbCollectionId: null,
+      collectionMembershipHydratedAt: new Date('2026-10-01T00:00:00.000Z'),
+    });
+    const alphaMember = await addCurrentMovie(
+      'Alpha Collection Member',
+      104,
+      2 * 1024 ** 3,
+      '2026-03-01T00:00:00.000Z'
+    );
+    await canonicalRepository.update(alphaMember.id, {
+      tmdbCollectionId: 777,
+      collectionMembershipHydratedAt: new Date('2026-10-01T00:00:00.000Z'),
+    });
+    const unknown = await addCurrentMovie(
+      'Unknown Collection Movie',
+      105,
+      1024 ** 3,
+      '2026-03-02T00:00:00.000Z'
+    );
+
+    const any = await request(app)
+      .get('/library?collectionMembership=any&sort=title&sortDirection=asc')
+      .set('x-test-role', 'admin');
+    assert.equal(any.status, 200);
+    assert.equal(any.body.pageInfo.results, 5);
+    assert.equal('collectionMembershipUnknownCount' in any.body, false);
+
+    const inCollection = await request(app)
+      .get(
+        '/library?collectionMembership=in&mediaType=series&sort=title&sortDirection=asc&take=1&skip=1'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(inCollection.status, 200);
+    assert.equal(inCollection.body.pageInfo.results, 2);
+    assert.equal(inCollection.body.pageInfo.pages, 2);
+    assert.deepEqual(
+      inCollection.body.results.map(
+        (item: { canonicalMediaId: number; mediaType: string }) => [
+          item.canonicalMediaId,
+          item.mediaType,
+        ]
+      ),
+      [[completedMovieId, 'movie']]
+    );
+    assert.equal(inCollection.body.collectionMembershipUnknownCount, 1);
+
+    const noCollection = await request(app)
+      .get(
+        '/library?collectionMembership=none&mediaType=series&sort=title&sortDirection=asc'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(noCollection.status, 200);
+    assert.equal(noCollection.body.pageInfo.results, 1);
+    assert.deepEqual(
+      noCollection.body.results.map(
+        (item: { canonicalMediaId: number }) => item.canonicalMediaId
+      ),
+      [partialMovieId]
+    );
+    assert.equal(noCollection.body.collectionMembershipUnknownCount, 1);
+    assert.equal(
+      noCollection.body.results.some(
+        (item: { canonicalMediaId: number }) =>
+          item.canonicalMediaId === unknown.id ||
+          item.canonicalMediaId === seriesId
+      ),
+      false
+    );
+
+    const combined = await request(app)
+      .get(
+        '/library?collectionMembership=in&watchlist=yes&sort=title&sortDirection=asc'
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(combined.status, 200);
+    assert.deepEqual(
+      combined.body.results.map(
+        (item: { canonicalMediaId: number }) => item.canonicalMediaId
+      ),
+      [completedMovieId]
+    );
+    assert.equal(combined.body.collectionMembershipUnknownCount, 0);
+
+    const availableWithMember = await request(app)
+      .get(
+        `/library/user-availability?collectionMembership=in&watchlist=yes&userIds=${secondUser.id}`
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(
+      availableWithMember.body.users.find(
+        (user: { id: number }) => user.id === secondUser.id
+      )?.available,
+      true
+    );
+    const unavailableWithoutMember = await request(app)
+      .get(
+        `/library/user-availability?collectionMembership=none&watchlist=yes&userIds=${secondUser.id}`
+      )
+      .set('x-test-role', 'admin');
+    assert.equal(
+      unavailableWithoutMember.body.users.find(
+        (user: { id: number }) => user.id === secondUser.id
+      )?.available,
+      false
+    );
+
+    const candidate = await request(candidateApp)
+      .get('/library?collectionMembership=in&sort=title&sortDirection=asc')
+      .set('x-test-role', 'admin');
+    const legacy = await request(app)
+      .get('/library?collectionMembership=in&sort=title&sortDirection=asc')
+      .set('x-test-role', 'admin');
+    assert.equal(candidate.status, 200);
+    assert.deepEqual(candidate.body, legacy.body);
+
+    const seriesOnly = await request(app)
+      .get('/library?collectionMembership=any&mediaType=series')
+      .set('x-test-role', 'admin');
+    assert.deepEqual(
+      seriesOnly.body.results.map(
+        (item: { canonicalMediaId: number }) => item.canonicalMediaId
+      ),
+      [seriesId]
+    );
   });
 
   it('uses durable CONFIRMED Movie evidence in Archive while excluding stale current state', async () => {

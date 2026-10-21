@@ -11,6 +11,7 @@ import ActionStateGrid from '@app/components/TitleCard/ActionStateGrid';
 import TitleCardCornerBadge from '@app/components/TitleCard/CornerBadge';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
+import { resolveTitleCardRequestActionLabel } from '@app/components/TitleCard/requestActionLabel';
 import { buildTitleCardStateIndicators } from '@app/components/TitleCard/stateIndicators';
 import {
   beginCardPointerGesture,
@@ -54,8 +55,13 @@ interface TitleCardProps {
   watchState?: 'watched' | 'not_watched' | 'unknown';
   watchlistOwner?: LibraryUser;
   persistentMetadata?: React.ReactNode;
+  classificationBadge?: React.ReactNode;
   navigationHref?: string | null;
   actionsDisabled?: boolean;
+  requestActionEnabled?: boolean;
+  requestActionIcon?: React.ReactNode;
+  requestActionLabel?: string;
+  requestActionClassName?: string;
   cornerAction?: React.ReactNode;
 }
 
@@ -89,8 +95,13 @@ const TitleCard = ({
   watchState,
   watchlistOwner,
   persistentMetadata,
+  classificationBadge,
   navigationHref,
   actionsDisabled = false,
+  requestActionEnabled,
+  requestActionIcon,
+  requestActionLabel,
+  requestActionClassName,
   cornerAction,
 }: TitleCardProps) => {
   const isTouch = useIsTouch();
@@ -508,11 +519,16 @@ const TitleCard = ({
     ),
   }));
   const canRequestTitle =
-    !actionsDisabled &&
     showRequestButton &&
-    (!currentStatus ||
-      currentStatus === MediaStatus.UNKNOWN ||
-      currentStatus === MediaStatus.DELETED);
+    (requestActionEnabled ??
+      (!actionsDisabled &&
+        (!currentStatus ||
+          currentStatus === MediaStatus.UNKNOWN ||
+          currentStatus === MediaStatus.DELETED)));
+  const resolvedRequestActionLabel = resolveTitleCardRequestActionLabel(
+    requestActionLabel,
+    intl.formatMessage(globalMessages.request)
+  );
   const cardHref =
     navigationHref === undefined
       ? mediaType === 'movie'
@@ -712,19 +728,21 @@ const TitleCard = ({
                 className="col-start-1 row-start-1 flex min-w-0 self-start justify-self-start"
                 data-testid="title-card-classification-state"
               >
-                <TitleCardCornerBadge
-                  tone={
-                    mediaType === 'movie' || mediaType === 'collection'
-                      ? 'movie'
-                      : 'series'
-                  }
-                >
-                  {mediaType === 'movie'
-                    ? intl.formatMessage(globalMessages.movie)
-                    : mediaType === 'collection'
-                      ? intl.formatMessage(globalMessages.collection)
-                      : intl.formatMessage(globalMessages.tvshow)}
-                </TitleCardCornerBadge>
+                {classificationBadge ?? (
+                  <TitleCardCornerBadge
+                    tone={
+                      mediaType === 'movie' || mediaType === 'collection'
+                        ? 'movie'
+                        : 'series'
+                    }
+                  >
+                    {mediaType === 'movie'
+                      ? intl.formatMessage(globalMessages.movie)
+                      : mediaType === 'collection'
+                        ? intl.formatMessage(globalMessages.collection)
+                        : intl.formatMessage(globalMessages.tvshow)}
+                  </TitleCardCornerBadge>
+                )}
               </div>
               <div
                 className="col-start-2 row-start-1 self-start justify-self-end"
@@ -766,16 +784,18 @@ const TitleCard = ({
                     className="pointer-events-auto col-start-2 row-start-3 self-end justify-self-end"
                     data-testid="title-card-request-region"
                   >
-                    <Tooltip
-                      content={intl.formatMessage(globalMessages.request)}
-                    >
+                    <Tooltip content={resolvedRequestActionLabel}>
                       <RequestIconButton
-                        aria-label={intl.formatMessage(globalMessages.request)}
+                        aria-label={resolvedRequestActionLabel}
                         onClick={(e) => {
                           e.preventDefault();
+                          e.stopPropagation();
                           setShowRequestModal(true);
                         }}
-                        className="z-40 !h-8 !w-8 !p-1.5"
+                        icon={requestActionIcon}
+                        className={`z-40 !h-8 !w-8 !p-1.5 ${
+                          requestActionClassName ?? ''
+                        }`}
                       />
                     </Tooltip>
                   </div>

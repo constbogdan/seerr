@@ -463,6 +463,29 @@ describe('Library browsing and Watched presentation structure', () => {
     );
   });
 
+  it('keeps cached Library content tall enough for Next Back restoration', () => {
+    assert.match(
+      source,
+      /getInitialLibraryPreferenceState\(\{[\s\S]*?query: router\.query,[\s\S]*?routeReady: router\.isReady/
+    );
+    assert.match(
+      source,
+      /useState<LibraryPreferences>\([\s\S]*?initialPreferenceState\.preferences/
+    );
+    assert.match(source, /useState\([\s\S]*?initialPreferenceState\.ready/);
+    assert.match(results, /const retainedLibraryMountCounts = new Map/);
+    assert.match(
+      results,
+      /getInitialLibraryMountCount\([\s\S]*?retainedLibraryMountCounts\.get\(resetKey\)/
+    );
+    assert.match(
+      results,
+      /retainLibraryMountCount\([\s\S]*?retainedLibraryMountCounts,[\s\S]*?resetKey,[\s\S]*?mountedCount/
+    );
+    assert.doesNotMatch(source, /window\.scrollTo|history\.scrollRestoration/);
+    assert.doesNotMatch(results, /window\.scrollTo|setTimeout/);
+  });
+
   it('revalidates cold presentation once through a bounded status batch', () => {
     assert.match(source, /data\?\.presentation\?\.state !== 'pending'/);
     assert.match(
@@ -616,8 +639,13 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.match(filters, /lastActive: 'Last Active Date'/);
     assert.match(filters, /removalDue: 'Scheduled Removal Date'/);
     assert.match(filters, /removed: 'Removed Date'/);
-    assert.match(filters, /scheduled: 'Pending Removal'/);
+    assert.match(filters, /scheduled: 'Leaving Soon'/);
     assert.match(filters, /animation: 'Animation'/);
+    assert.match(filters, /collectionMembership: 'In Collection'/);
+    assert.doesNotMatch(
+      filters,
+      /Pending Removal|Movie collection membership|In a collection|Not in a collection/
+    );
     assert.match(filters, /activity: 'Has Activity'/);
     assert.match(
       filters,
@@ -629,6 +657,7 @@ describe('Library browsing and Watched presentation structure', () => {
     );
     assert.match(filters, /value=\{preferences\.scope\}/);
     assert.match(filters, /value=\{preferences\.animation\}/);
+    assert.match(filters, /value=\{preferences\.collectionMembership\}/);
     assert.match(
       filters,
       /<MediaStatusFilter[\s\S]*?messages\.scopeCurrent[\s\S]*?messages\.scopeArchive[\s\S]*?value=\{preferences\.scope\}[\s\S]*?update\(\{ scope \}\)/
@@ -672,7 +701,7 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.match(filters, /watched/);
     assert.match(filters, /requested/);
     assert.equal((filters.match(/<MediaStatusFilter\b/g) ?? []).length, 1);
-    assert.equal((filters.match(/<SegmentedFilter\b/g) ?? []).length, 6);
+    assert.equal((filters.match(/<SegmentedFilter\b/g) ?? []).length, 7);
     assert.equal(
       (filters.match(/grid grid-cols-1 gap-4 sm:grid-cols-2/g) ?? []).length,
       2
@@ -681,6 +710,9 @@ describe('Library browsing and Watched presentation structure', () => {
     const activity = filters.indexOf('name="activity"');
     const pendingRemoval = filters.indexOf('name="scheduled"');
     const animation = filters.indexOf('name="animation"');
+    const collectionMembership = filters.indexOf(
+      'name="collection-membership"'
+    );
     const groupDivider = filters.indexOf(
       'className="border-t border-gray-700" aria-hidden="true"'
     );
@@ -690,7 +722,8 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.ok(mediaStatus < activity);
     assert.ok(activity < pendingRemoval);
     assert.ok(pendingRemoval < animation);
-    assert.ok(animation < groupDivider);
+    assert.ok(animation < collectionMembership);
+    assert.ok(collectionMembership < groupDivider);
     assert.ok(groupDivider < watchlist);
     assert.ok(watchlist < watched);
     assert.ok(watched < requested);
@@ -702,6 +735,7 @@ describe('Library browsing and Watched presentation structure', () => {
       'requested',
       'activity',
       'animation',
+      'collection-membership',
     ])
       assert.match(filters, new RegExp(`name="${filter}"`));
     assert.match(filters, /type="checkbox"/);
@@ -726,6 +760,20 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.match(
       filters,
       /activityOptions = \[[\s\S]*?value: 'any'[\s\S]*?value: 'present'[\s\S]*?messages\.yes[\s\S]*?value: 'none'[\s\S]*?messages\.no/
+    );
+    assert.match(
+      filters,
+      /collectionMembershipOptions = \[[\s\S]*?value: 'any'[\s\S]*?messages\.any[\s\S]*?value: 'in'[\s\S]*?messages\.yes[\s\S]*?value: 'none'[\s\S]*?messages\.no/
+    );
+    assert.match(
+      filters,
+      /className="isolate inline-flex rounded-md shadow-sm"/
+    );
+    assert.match(filters, /inline-flex min-w-\[3\.25rem\]/);
+    assert.doesNotMatch(filters, /allCollections|inCollection|notInCollection/);
+    assert.match(
+      source,
+      /preferences\.collectionMembership !== 'any'[\s\S]*?data\?\.collectionMembershipUnknownCount[\s\S]*?messages\.collectionMembershipUnknown/
     );
     assert.match(
       filters,
@@ -1093,7 +1141,20 @@ describe('Library browsing and Watched presentation structure', () => {
     );
     assert.match(
       row,
-      /absolute right-0 top-0 z-20 flex[\s\S]*?rounded-bl-md rounded-tr-xl bg-gray-900\/90 px-2 py-1 text-center text-xs font-medium text-yellow-200 shadow-md/
+      /absolute right-0 top-0 z-20 flex[\s\S]*?data-testid="library-leaving-soon-badge"/
+    );
+    assert.match(
+      row,
+      /inline-flex h-4 max-w-full items-center whitespace-nowrap rounded-bl-md rounded-tr-xl bg-gray-900\/90 px-2 text-center text-\[0\.6875rem\] font-medium leading-none text-yellow-200 shadow-md/
+    );
+    assert.match(
+      row,
+      /className="flex min-w-0 flex-wrap items-center gap-2 self-center xl:w-16 xl:justify-end"[\s\S]*?data-testid="library-action-grid"/
+    );
+    assert.doesNotMatch(row, /pt-\[1\.0625rem\]/);
+    assert.doesNotMatch(
+      row,
+      /firstSchedule\s*\?\s*['"][^'"]*(?:pt-|mt-|translate-y)/
     );
     assert.match(row, /year: 'numeric'/);
     assert.doesNotMatch(row, /<XMarkIcon/);
@@ -1517,7 +1578,7 @@ describe('Library browsing and Watched presentation structure', () => {
   it('places the page-enriched Collection banner in the stable metadata-to-actions region', () => {
     const banner = row.indexOf('<LibraryCollectionBanner');
     const actions = row.indexOf(
-      'flex min-w-0 flex-wrap items-center gap-2 xl:max-w-[13rem] xl:justify-end'
+      'flex min-w-0 flex-wrap items-center gap-2 self-center xl:w-16 xl:justify-end'
     );
     assert.ok(banner > -1);
     assert.ok(actions > banner);
@@ -1541,11 +1602,23 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.doesNotMatch(row, /2xl:grid-cols-\[12rem_minmax\(0,1fr\)\]/);
     assert.match(
       row,
-      /hidden min-w-0 self-center 2xl:grid 2xl:place-items-center/
+      /hidden min-w-0 self-center 2xl:grid 2xl:items-center 2xl:justify-items-end/
     );
+    assert.doesNotMatch(row, /2xl:place-items-center/);
     assert.doesNotMatch(
       row,
       /item\.collection[\s\S]{0,120}xl:grid-cols-\[minmax\(15rem/
+    );
+  });
+
+  it('uses one edge-anchored Collection banner geometry for active and archived rows', () => {
+    assert.match(
+      row,
+      /\{item\.collection && \([\s\S]*?hidden min-w-0 self-center 2xl:grid 2xl:items-center 2xl:justify-items-end[\s\S]*?<LibraryCollectionBanner/
+    );
+    assert.doesNotMatch(
+      row,
+      /item\.libraryState[^\n]*\?[^\n]*(?:justify|place)-items/
     );
   });
 
@@ -1572,6 +1645,28 @@ describe('Library browsing and Watched presentation structure', () => {
     );
     assert.match(row, /<RequestIconButton/);
     assert.doesNotMatch(row, /\{intl\.formatMessage\(globalMessages\.view\)\}/);
+  });
+
+  it('loads complete Collection availability lazily without shifting banner content', () => {
+    assert.match(row, /useInView\(\{[\s\S]*?triggerOnce: true/);
+    assert.match(
+      row,
+      /inView \? `\/api\/v1\/collection\/\$\{collection\.id\}` : null/
+    );
+    assert.match(row, /dedupingInterval: 300_000/);
+    assert.match(row, /revalidateIfStale: false/);
+    assert.match(row, /revalidateOnFocus: false/);
+    assert.match(
+      row,
+      /collectionDetails && !collectionError[\s\S]*?getCollectionAvailability\(collectionDetails\)/
+    );
+    assert.match(row, /getCollectionAvailability\(collectionDetails\)/);
+    assert.match(row, /formatCollectionAvailability\(availability\)/);
+    assert.match(row, /data-testid="library-collection-availability"/);
+    assert.match(row, /truncate text-xs font-semibold/);
+    assert.match(row, /min-h-4 whitespace-nowrap text-\[0\.6875rem\]/);
+    assert.match(row, /\{availabilityLabel \?\? '\\u00a0'\}/);
+    assert.doesNotMatch(row, /focus-within:ring/);
   });
 
   it('standardizes icon-only Request actions without changing their dimensions', () => {
@@ -1604,7 +1699,7 @@ describe('Library browsing and Watched presentation structure', () => {
       'grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-5 text-sm'
     );
     const actionsRegion = row.indexOf(
-      'flex min-w-0 flex-wrap items-center gap-2 xl:max-w-[13rem] xl:justify-end'
+      'flex min-w-0 flex-wrap items-center gap-2 self-center xl:w-16 xl:justify-end'
     );
     assert.ok(identityRegion > -1);
     assert.ok(engagementRegion > -1);
@@ -1635,13 +1730,23 @@ describe('Library browsing and Watched presentation structure', () => {
       row,
       /<div className="flex h-5 min-w-0 items-center">[\s\S]*?resolutionLabel &&/
     );
-    assert.equal(
+    assert.ok(
       (
         row.match(
           /w-fit max-w-full justify-self-start(?: whitespace-nowrap)? text-gray-200/g
         ) ?? []
-      ).length,
-      2
+      ).length >= 3
+    );
+  });
+
+  it('keeps archived metadata and its tooltip triggers content-sized', () => {
+    assert.match(
+      row,
+      /className=\{`\$\{metadataRowClassName\} w-fit max-w-full justify-self-start whitespace-nowrap text-gray-200`\}/
+    );
+    assert.match(
+      row,
+      /<Badge[\s\S]*?badgeType="light"[\s\S]*?className="w-fit max-w-full justify-self-start"/
     );
   });
 
@@ -1677,11 +1782,12 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.match(row, /link\.service === 'jellyfin' \? 'h-6 w-6'/);
     assert.match(row, /className=\{iconClassName\}/);
     assert.match(row, /inline-flex h-7 w-7/);
-    assert.match(row, /canRequestTitle \? 'grid-cols-3' : 'grid-cols-2'/);
     assert.ok(
-      (row.match(/className="grid grid-cols-2 gap-1\.5"/g) ?? []).length >= 1
+      (row.match(/className="grid grid-cols-2 gap-1\.5"/g) ?? []).length >= 2
     );
-    assert.match(row, /className="grid gap-2"/);
+    assert.match(row, /className="grid w-16 gap-2"/);
+    assert.match(row, /item\.externalLinks\.length % 2 === 0/);
+    assert.match(row, /'col-span-2 justify-self-center'/);
     assert.ok(
       row.indexOf('item.externalLinks.map') < row.indexOf('{mainSchedule ?')
     );
@@ -1691,6 +1797,16 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.doesNotMatch(row, /ring-1 ring-gray-600/);
     assert.match(row, /focus:ring-2 focus:ring-blue-300/);
     assert.match(row, /border-transparent/);
+  });
+
+  it('centers a lone archived Request action inside the shared two-column action geometry', () => {
+    assert.match(row, /className="grid w-16 gap-2"/);
+    assert.match(row, /className="grid grid-cols-2 gap-1\.5"/);
+    assert.match(
+      row,
+      /item\.externalLinks\.length % 2 === 0[\s\S]*?'col-span-2 justify-self-center'/
+    );
+    assert.doesNotMatch(row, /grid-cols-3/);
   });
 
   it('keeps pagination outside the sticky control bar and pins it above results', () => {

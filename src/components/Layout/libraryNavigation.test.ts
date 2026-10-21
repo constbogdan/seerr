@@ -15,14 +15,16 @@ const navigationPresentation = readFileSync(
 const assertLibraryOrder = (source: string) => {
   const requests = source.indexOf("href: '/requests'");
   const library = source.indexOf("href: '/library'");
+  const collections = source.indexOf("href: '/collections'");
   const blocklist = source.indexOf("href: '/blocklist'");
   assert.ok(requests >= 0);
   assert.ok(library > requests);
-  assert.ok(blocklist > library);
+  assert.ok(collections > library);
+  assert.ok(blocklist > collections);
 };
 
 describe('Library navigation placement', () => {
-  it('places the admin-only Library directly between Requests and Blocklist', () => {
+  it('places the admin-only Library and Collections destinations before Blocklist', () => {
     assertLibraryOrder(navigation);
     assert.match(
       navigation,
@@ -31,6 +33,10 @@ describe('Library navigation placement', () => {
     assert.match(
       navigationPresentation,
       /library: \{[\s\S]*?icon: FolderOpenIcon,[\s\S]*?selectedIcon: FilledFolderOpenIcon,[\s\S]*?sidebarIcon: FilledFolderOpenIcon/
+    );
+    assert.match(
+      navigation,
+      /id: 'collections',[\s\S]*?href: '\/collections',[\s\S]*?requiredPermission: Permission\.ADMIN/
     );
   });
 });

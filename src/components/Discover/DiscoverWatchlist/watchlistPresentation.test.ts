@@ -5,6 +5,8 @@ import path from 'node:path';
 import { describe, it } from 'node:test';
 // Client unit tests execute under the server test tsconfig, which has no @app alias.
 // eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import { resolveTitleCardRequestActionLabel } from '../../TitleCard/requestActionLabel';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
 import { buildTitleCardStateIndicators } from '../../TitleCard/stateIndicators';
 import {
   WATCHLIST_PREFERENCE_KEY,
@@ -451,18 +453,17 @@ describe('Watchlist page and navigation integration', () => {
   });
 
   it('uses the existing Request modal flow from an accessible compact action', () => {
-    assert.match(
-      titleCard,
-      /Tooltip[\s\S]*?content=\{intl\.formatMessage\(globalMessages\.request\)\}/
+    assert.equal(
+      resolveTitleCardRequestActionLabel(undefined, 'Request'),
+      'Request'
     );
-    assert.match(
-      titleCard,
-      /aria-label=\{intl\.formatMessage\(globalMessages\.request\)\}/
-    );
+    assert.equal(resolveTitleCardRequestActionLabel('View', 'Request'), 'View');
+    assert.match(titleCard, /<Tooltip content=\{resolvedRequestActionLabel\}>/);
+    assert.match(titleCard, /aria-label=\{resolvedRequestActionLabel\}/);
     assert.match(titleCard, /setShowRequestModal\(true\)/);
     assert.match(titleCard, /data-testid="title-card-request-region"/);
     assert.match(titleCard, /<RequestIconButton/);
-    assert.match(titleCard, /className="z-40 !h-8 !w-8 !p-1\.5"/);
+    assert.match(titleCard, /z-40 !h-8 !w-8 !p-1\.5/);
     assert.doesNotMatch(titleCard, /!bg-orange-500\/90/);
     assert.doesNotMatch(titleCard, /className="h-7 w-full"/);
   });

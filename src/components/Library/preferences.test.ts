@@ -4,6 +4,7 @@ import {
   clearLibraryDrawerFilters,
   countActiveLibraryFilters,
   defaultLibraryPreferences,
+  getInitialLibraryPreferenceState,
   hasLibraryUserAssociationFilter,
   isLibraryScopeSelected,
   libraryPreferencesToQuery,
@@ -114,6 +115,7 @@ describe('Library browsing preferences', () => {
       ...defaultLibraryPreferences,
       scope: 'all',
       mediaType: 'series',
+      collectionMembership: 'in',
       animation: 'yes',
       storageRootIds: [4, 2, 4],
       watchlist: 'yes',
@@ -157,6 +159,39 @@ describe('Library browsing preferences', () => {
     );
   });
 
+  it('makes canonical history entries render-ready before Next restores scroll', () => {
+    const query = {
+      ...libraryPreferencesToQuery({
+        ...defaultLibraryPreferences,
+        mediaType: 'movie',
+        collectionMembership: 'none',
+        sort: 'title',
+      }),
+      page: '3',
+      search: 'dune',
+    };
+    const initial = getInitialLibraryPreferenceState({
+      query,
+      routeReady: true,
+    });
+
+    assert.equal(initial.ready, true);
+    assert.equal(initial.preferences.mediaType, 'movie');
+    assert.equal(initial.preferences.collectionMembership, 'none');
+    assert.equal(initial.preferences.sort, 'title');
+    assert.equal(
+      getInitialLibraryPreferenceState({ query, routeReady: false }).ready,
+      false
+    );
+    assert.equal(
+      getInitialLibraryPreferenceState({
+        query: { page: '3', search: 'dune' },
+        routeReady: true,
+      }).ready,
+      false
+    );
+  });
+
   it('does not persist transient search, page, or expanded row state', () => {
     const query = libraryPreferencesToQuery(defaultLibraryPreferences);
     assert.equal('search' in query, false);
@@ -192,6 +227,13 @@ describe('Library browsing preferences', () => {
       }),
       1
     );
+    assert.equal(
+      countActiveLibraryFilters({
+        ...defaultLibraryPreferences,
+        collectionMembership: 'in',
+      }),
+      1
+    );
     const inactiveUsers = normalizeLibraryPreferences({
       ...defaultLibraryPreferences,
       userIds: [1],
@@ -220,6 +262,7 @@ describe('Library browsing preferences', () => {
       ...defaultLibraryPreferences,
       scope: 'all',
       mediaType: 'movie',
+      collectionMembership: 'none',
       watched: 'yes',
       addedFrom: '2024-01-01',
       addedTo: '2024-01-31',
@@ -235,6 +278,7 @@ describe('Library browsing preferences', () => {
     const cleared = clearLibraryDrawerFilters(original);
     assert.equal(cleared.scope, defaultLibraryPreferences.scope);
     assert.equal(cleared.mediaType, 'movie');
+    assert.equal(cleared.collectionMembership, 'any');
     assert.equal(cleared.animation, 'any');
     assert.equal(cleared.sort, 'title');
     assert.equal(cleared.pageSize, 100);
@@ -266,6 +310,12 @@ describe('Library browsing preferences', () => {
     assert.equal(
       readLibraryPreferences(JSON.stringify({ pageSize: 999 })).pageSize,
       25
+    );
+    assert.equal(
+      readLibraryPreferences(
+        JSON.stringify({ collectionMembership: 'unknown' })
+      ).collectionMembership,
+      'any'
     );
   });
 });

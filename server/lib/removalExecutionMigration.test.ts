@@ -21,7 +21,10 @@ describe('removal execution migration', () => {
     try {
       await database.initialize();
       const applied = await database.runMigrations();
-      assert.equal(applied.at(-1)?.name, 'AddSeriesRelocation1790000000044');
+      assert.equal(
+        applied.at(-1)?.name,
+        'AddTmdbCollectionMembership1790000000046'
+      );
       const runner = database.createQueryRunner();
       const execution = await runner.getTable('removal_execution');
       const claim = await runner.getTable('removal_execution_claim');
@@ -47,6 +50,13 @@ describe('removal execution migration', () => {
       assert.deepEqual(await runner.query('PRAGMA foreign_key_check'), []);
       await runner.release();
 
+      await database.undoLastMigration();
+      assert.equal(
+        await database
+          .createQueryRunner()
+          .hasColumn('canonical_media', 'tmdbCollectionId'),
+        false
+      );
       await database.undoLastMigration();
       assert.equal(
         await database
@@ -104,6 +114,7 @@ describe('removal execution migration', () => {
       await database.undoLastMigration();
       await database.undoLastMigration();
       await database.undoLastMigration();
+      await database.undoLastMigration();
       await database.query(
         `INSERT INTO "canonical_media" ("id", "mediaType", "titleSnapshot") VALUES (7001, 'movie', 'Preserved schedule')`
       );
@@ -120,6 +131,7 @@ describe('removal execution migration', () => {
           'AddHydrationRunLeases1790000000040',
           'AddCurrentEpisodeIdentityGeneration1790000000042',
           'AddSeriesRelocation1790000000044',
+          'AddTmdbCollectionMembership1790000000046',
         ]
       );
       assert.deepEqual(

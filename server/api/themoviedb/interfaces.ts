@@ -11,6 +11,13 @@ interface TmdbMediaResult {
   original_language: string;
 }
 
+export interface TmdbMovieCollection {
+  id: number;
+  name: string;
+  poster_path?: string;
+  backdrop_path?: string;
+}
+
 export interface TmdbMovieResult extends TmdbMediaResult {
   media_type: 'movie';
   title: string;
@@ -18,6 +25,7 @@ export interface TmdbMovieResult extends TmdbMediaResult {
   release_date: string;
   adult: boolean;
   video: boolean;
+  belongs_to_collection?: TmdbMovieCollection | null;
 }
 
 export interface TmdbTvResult extends TmdbMediaResult {
@@ -176,12 +184,7 @@ export interface TmdbMovieDetails {
     cast: TmdbCreditCast[];
     crew: TmdbCreditCrew[];
   };
-  belongs_to_collection?: {
-    id: number;
-    name: string;
-    poster_path?: string;
-    backdrop_path?: string;
-  };
+  belongs_to_collection?: TmdbMovieCollection | null;
   external_ids: TmdbExternalIds;
   videos: TmdbVideoResult;
   'watch/providers'?: {

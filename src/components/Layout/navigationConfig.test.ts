@@ -19,6 +19,7 @@ const expectedFullInventory = [
   'leaving-soon',
   'requests',
   'library',
+  'collections',
   'blocklist',
   'issues',
   'users',
@@ -148,6 +149,13 @@ describe('shared application navigation', () => {
       isNavigationDestinationActive(
         destination('settings'),
         '/settings/removal'
+      ),
+      true
+    );
+    assert.equal(
+      isNavigationDestinationActive(
+        destination('collections'),
+        '/collection/42'
       ),
       true
     );

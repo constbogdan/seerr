@@ -1,6 +1,7 @@
 import type {
   LibraryActivityFilter,
   LibraryAnimationFilter,
+  LibraryCollectionMembershipFilter,
   LibraryMediaTypeFilter,
   LibraryRemovalSource,
   LibraryRequestedFilter,
@@ -21,6 +22,7 @@ export const getLibraryPreferenceKey = (userId: number): string =>
 export interface LibraryPreferences {
   scope: LibraryScope;
   mediaType: LibraryMediaTypeFilter;
+  collectionMembership: LibraryCollectionMembershipFilter;
   animation: LibraryAnimationFilter;
   storageRootIds: number[];
   watchlist: LibraryWatchlistFilter;
@@ -46,6 +48,7 @@ export interface LibraryPreferences {
 export const defaultLibraryPreferences: LibraryPreferences = {
   scope: 'current',
   mediaType: 'all',
+  collectionMembership: 'any',
   animation: 'any',
   storageRootIds: [],
   watchlist: 'any',
@@ -101,6 +104,11 @@ const allowedMediaType = new Set<LibraryMediaTypeFilter>([
   'all',
   'movie',
   'series',
+]);
+const allowedCollectionMembership = new Set<LibraryCollectionMembershipFilter>([
+  'any',
+  'in',
+  'none',
 ]);
 const allowedTriState = new Set(['any', 'yes', 'no']);
 const allowedActivity = new Set<LibraryActivityFilter>([
@@ -185,6 +193,11 @@ export const normalizeLibraryPreferences = (
     mediaType: allowedMediaType.has(input.mediaType as LibraryMediaTypeFilter)
       ? (input.mediaType as LibraryMediaTypeFilter)
       : defaultLibraryPreferences.mediaType,
+    collectionMembership: allowedCollectionMembership.has(
+      input.collectionMembership as LibraryCollectionMembershipFilter
+    )
+      ? (input.collectionMembership as LibraryCollectionMembershipFilter)
+      : defaultLibraryPreferences.collectionMembership,
     animation: allowedTriState.has(input.animation ?? '')
       ? (input.animation as LibraryAnimationFilter)
       : 'any',
@@ -257,6 +270,7 @@ export const readLibraryPreferences = (
 const preferenceQueryKeys: (keyof LibraryPreferences)[] = [
   'scope',
   'mediaType',
+  'collectionMembership',
   'animation',
   'storageRootIds',
   'watchlist',
@@ -282,6 +296,31 @@ const preferenceQueryKeys: (keyof LibraryPreferences)[] = [
 export const hasExplicitLibraryPreferences = (query: ParsedUrlQuery): boolean =>
   preferenceQueryKeys.some((key) => query[key] !== undefined);
 
+export interface InitialLibraryPreferenceState {
+  preferences: LibraryPreferences;
+  ready: boolean;
+}
+
+export const getInitialLibraryPreferenceState = ({
+  query,
+  routeReady,
+}: {
+  query: ParsedUrlQuery;
+  routeReady: boolean;
+}): InitialLibraryPreferenceState => {
+  const ready = routeReady && hasExplicitLibraryPreferences(query);
+
+  return {
+    preferences: ready
+      ? resolveLibraryPreferences({
+          query,
+          stored: defaultLibraryPreferences,
+        })
+      : defaultLibraryPreferences,
+    ready,
+  };
+};
+
 export const resolveLibraryPreferences = ({
   query,
   stored,
@@ -299,6 +338,11 @@ export const resolveLibraryPreferences = ({
     }),
     ...(query.mediaType !== undefined && {
       mediaType: first(query.mediaType) as LibraryMediaTypeFilter,
+    }),
+    ...(query.collectionMembership !== undefined && {
+      collectionMembership: first(
+        query.collectionMembership
+      ) as LibraryCollectionMembershipFilter,
     }),
     ...(query.animation !== undefined && {
       animation: first(query.animation) as LibraryAnimationFilter,
@@ -366,6 +410,7 @@ export const libraryPreferencesToQuery = (
 ): Record<string, string | undefined> => ({
   scope: preferences.scope,
   mediaType: preferences.mediaType,
+  collectionMembership: preferences.collectionMembership,
   animation: preferences.animation,
   storageRootIds: preferences.storageRootIds.length
     ? preferences.storageRootIds.join(',')
@@ -401,6 +446,7 @@ export const clearLibraryDrawerFilters = (
   normalizeLibraryPreferences({
     ...preferences,
     scope: defaultLibraryPreferences.scope,
+    collectionMembership: 'any',
     animation: 'any',
     storageRootIds: [],
     watchlist: 'any',
@@ -425,6 +471,7 @@ export const countActiveLibraryFilters = (
 ): number => {
   let count = 0;
   if (preferences.scope !== defaultLibraryPreferences.scope) count++;
+  if (preferences.collectionMembership !== 'any') count++;
   if (preferences.animation !== 'any') count++;
   if (preferences.storageRootIds.length) count++;
   if (preferences.watchlist !== 'any') count++;

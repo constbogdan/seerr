@@ -79,7 +79,7 @@ import {
 } from './pagination';
 import {
   countActiveLibraryFilters,
-  defaultLibraryPreferences,
+  getInitialLibraryPreferenceState,
   getLibraryPreferenceKey,
   hasLibraryUserAssociationFilter,
   libraryPreferencesToQuery,
@@ -111,6 +111,8 @@ const messages = defineMessages('components.Library', {
   unableToLoad: 'Unable to load Library.',
   noItems: 'No Library items match these filters.',
   sourceWarning: 'Library data may be incomplete',
+  collectionMembershipUnknown:
+    '{count, plural, one {# Movie awaiting collection metadata is excluded from this filter.} other {# Movies awaiting collection metadata are excluded from this filter.}}',
   incompleteSources: 'Incomplete sources',
   libraryHydration: 'Library hydration',
   currentViewing: 'Current viewing',
@@ -242,10 +244,16 @@ const Library = () => {
   const { addToast } = useToasts();
   const updateQuery = useBatchUpdateQueryParams(emptyQueryParams);
   const { user: currentUser, hasPermission } = useUser();
+  const initialPreferenceState = getInitialLibraryPreferenceState({
+    query: router.query,
+    routeReady: router.isReady,
+  });
   const [preferences, setPreferences] = useState<LibraryPreferences>(
-    defaultLibraryPreferences
+    initialPreferenceState.preferences
   );
-  const [preferencesReady, setPreferencesReady] = useState(false);
+  const [preferencesReady, setPreferencesReady] = useState(
+    initialPreferenceState.ready
+  );
   const [showFilters, setShowFilters] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<
     ReadonlySet<LibrarySelectionKey>
@@ -326,6 +334,7 @@ const Library = () => {
       requested: preferences.requested,
       activity: preferences.activity,
       mediaType,
+      collectionMembership: preferences.collectionMembership,
       animation: preferences.animation,
       sort,
       sortDirection,
@@ -373,6 +382,7 @@ const Library = () => {
       requested: preferences.requested,
       activity: preferences.activity,
       mediaType,
+      collectionMembership: preferences.collectionMembership,
       animation: preferences.animation,
       scheduled: preferences.scheduled,
     });
@@ -1457,6 +1467,17 @@ const Library = () => {
         users={filterUsers}
         storageLocations={data?.storageLocations ?? []}
       />
+      {preferences.collectionMembership !== 'any' &&
+        Boolean(data?.collectionMembershipUnknownCount) && (
+          <div className="mb-4 inline-flex items-center gap-1.5 text-sm text-gray-300">
+            <InformationCircleIcon className="h-4 w-4" aria-hidden="true" />
+            <span>
+              {intl.formatMessage(messages.collectionMembershipUnknown, {
+                count: data?.collectionMembershipUnknownCount,
+              })}
+            </span>
+          </div>
+        )}
       {sourceIncomplete && (
         <div className="mb-4 inline-flex items-center gap-1.5 rounded-md border border-yellow-500/40 bg-yellow-500/10 px-3 py-2 text-sm text-yellow-200">
           <span>{intl.formatMessage(messages.sourceWarning)}</span>

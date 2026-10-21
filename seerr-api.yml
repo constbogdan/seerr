@@ -776,8 +776,65 @@ components:
             historicalViewing: { type: string, enum: [current, incomplete] }
             historicalImport:
               $ref: '#/components/schemas/HistoricalImportStatus'
+        collectionMembershipUnknownCount:
+          type: integer
+          minimum: 0
+          description: Movies matching the other filters whose TMDB collection membership has not yet been hydrated. Present when collectionMembership is in or none.
         presentation:
           $ref: '#/components/schemas/LibraryPresentationBatchStatus'
+    LibraryCollectionItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - overview
+        - posterPath
+        - backdropPath
+        - availableMovies
+        - totalMovies
+        - completeness
+      properties:
+        id: { type: integer, minimum: 1 }
+        name: { type: string }
+        overview: { type: string, nullable: true }
+        posterPath: { type: string, nullable: true }
+        backdropPath: { type: string, nullable: true }
+        availableMovies: { type: integer, minimum: 0, nullable: true }
+        totalMovies: { type: integer, minimum: 0, nullable: true }
+        completeness:
+          type: string
+          enum: [complete, incomplete, unknown]
+    LibraryCollectionsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - pageInfo
+        - results
+        - status
+        - stale
+        - discoveredCollections
+        - failedCollections
+        - refreshedAt
+      properties:
+        pageInfo:
+          type: object
+          required: [pages, page, results, pageSize]
+          properties:
+            pages: { type: integer }
+            page: { type: integer }
+            results: { type: integer }
+            pageSize: { type: integer }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryCollectionItem' }
+        status:
+          type: string
+          enum: [pending, complete, partial, unavailable]
+        stale: { type: boolean }
+        discoveredCollections: { type: integer, minimum: 0 }
+        failedCollections: { type: integer, minimum: 0 }
+        refreshedAt: { type: string, format: date-time, nullable: true }
     LibraryPresentationStatus:
       type: object
       additionalProperties: false
@@ -7768,6 +7825,10 @@ paths:
           name: mediaType
           schema: { type: string, enum: [all, movie, series], default: all }
         - in: query
+          name: collectionMembership
+          description: Confirmed TMDB Movie collection membership. Active values restrict results to Movies without changing the stored mediaType preference.
+          schema: { type: string, enum: [any, in, none], default: any }
+        - in: query
           name: animation
           description: Whether an item belongs to an administrator-designated Animation storage root in the selected Library scope.
           schema: { type: string, enum: [any, 'yes', 'no'], default: any }
@@ -7871,6 +7932,41 @@ paths:
               schema: { $ref: '#/components/schemas/LibraryPresentationStatus' }
         '400': { description: Invalid presentation batch identity }
         '403': { description: Administrator permission required }
+  /library/collections:
+    get:
+      summary: Browse TMDB collections represented in the current Library
+      description: Discovers confirmed collection identities from current Library Movies, then returns a bounded cached collection projection with strict availability counts.
+      tags: [library]
+      parameters:
+        - in: query
+          name: take
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: skip
+          schema: { type: integer, minimum: 0, default: 0 }
+        - in: query
+          name: completeness
+          schema:
+            { type: string, enum: [all, complete, incomplete], default: all }
+        - in: query
+          name: sort
+          schema:
+            {
+              type: string,
+              enum: [name, completeness, available],
+              default: name,
+            }
+        - in: query
+          name: sortDirection
+          schema: { type: string, enum: [asc, desc], default: asc }
+      responses:
+        '200':
+          description: Current Library collection discovery snapshot
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/LibraryCollectionsResponse' }
+        '403': { description: Administrator permission required }
   /library/user-availability:
     get:
       summary: Get Library filter-user availability
@@ -7887,6 +7983,10 @@ paths:
         - in: query
           name: mediaType
           schema: { type: string, enum: [all, movie, series], default: all }
+        - in: query
+          name: collectionMembership
+          description: Confirmed TMDB Movie collection membership. Active values restrict candidates to Movies.
+          schema: { type: string, enum: [any, in, none], default: any }
         - in: query
           name: animation
           description: Whether an item belongs to an administrator-designated Animation storage root in the selected Library scope.

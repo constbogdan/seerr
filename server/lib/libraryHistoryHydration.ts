@@ -37,6 +37,10 @@ import { LibrarySourceObservation } from '@server/entity/LibraryHydration';
 import Media from '@server/entity/Media';
 import { ViewingEvidence } from '@server/entity/ViewingEvidence';
 import backgroundDatabaseWriteCoordinator from '@server/lib/backgroundDatabaseWriteCoordinator';
+import {
+  parseTmdbCollectionMembership,
+  persistMovieQueryMetadata,
+} from '@server/lib/libraryCollectionMembership';
 import libraryHydrationEpoch from '@server/lib/libraryHydrationEpoch';
 import {
   LibraryHydrationRunCoordinator,
@@ -136,10 +140,12 @@ interface JellyfinHydrationClient {
 }
 
 interface QueryMetadataClient {
-  getMovieForScan(input: {
-    movieId: number;
-    language?: string;
-  }): Promise<{ id: number; title: string; release_date?: string }>;
+  getMovieForScan(input: { movieId: number; language?: string }): Promise<{
+    id: number;
+    title: string;
+    release_date?: string;
+    belongs_to_collection?: { id: number } | null;
+  }>;
   getTvShowForScan(input: {
     tvId: number;
     language?: string;
@@ -1949,11 +1955,22 @@ export class LibraryHistoryHydrationService {
               movieId: tmdbId,
               language: 'en',
             });
+            const collectionMembership = Object.prototype.hasOwnProperty.call(
+              details,
+              'belongs_to_collection'
+            )
+              ? parseTmdbCollectionMembership(
+                  details.belongs_to_collection,
+                  this.dependencies.now()
+                )
+              : undefined;
+            if (!collectionMembership) summary.failures++;
             return {
               target,
               tmdbId: details.id,
               title: details.title,
               year: providerYear(details.release_date),
+              collectionMembership,
             };
           }
           const details = await client.getTvShowForScan({
@@ -2007,9 +2024,18 @@ export class LibraryHistoryHydrationService {
         );
         summary.aliasesCreated++;
       }
-      result.target.media.titleSnapshot = title;
-      result.target.media.year = result.year;
-      await canonicalRepository.save(result.target.media);
+      if (result.target.media.mediaType === LibraryMediaType.MOVIE) {
+        await persistMovieQueryMetadata(canonicalRepository, {
+          canonicalMediaId: result.target.media.id,
+          titleSnapshot: title,
+          year: result.year,
+          collectionMembership: result.collectionMembership,
+        });
+      } else {
+        result.target.media.titleSnapshot = title;
+        result.target.media.year = result.year;
+        await canonicalRepository.save(result.target.media);
+      }
       summary.enriched++;
     }
     summary.durationMs = this.dependencies.now().getTime() - started;

@@ -4,6 +4,9 @@ import type {
   LibraryActivityFilter,
   LibraryAnimationFilter,
   LibraryBulkActionRequest,
+  LibraryCollectionCompletenessFilter,
+  LibraryCollectionMembershipFilter,
+  LibraryCollectionSort,
   LibraryMediaTypeFilter,
   LibraryRequestedFilter,
   LibraryScheduledFilter,
@@ -18,6 +21,9 @@ import libraryBulkActions, {
   LibraryBulkActionValidationError,
   type LibraryBulkActionService,
 } from '@server/lib/libraryBulkActions';
+import libraryCollections, {
+  type LibraryCollectionsService,
+} from '@server/lib/libraryCollections';
 import libraryPresentation, {
   type LibraryPresentationCoordinator,
 } from '@server/lib/libraryPresentation';
@@ -47,12 +53,21 @@ const commaSeparatedRemovalSources = z
 
 const dateBound = z.string().date().optional();
 
+const collectionsQuery = z.object({
+  take: z.coerce.number().int().min(1).max(100).default(20),
+  skip: z.coerce.number().int().nonnegative().default(0),
+  completeness: z.enum(['all', 'complete', 'incomplete']).default('all'),
+  sort: z.enum(['name', 'completeness', 'available']).default('name'),
+  sortDirection: z.enum(['asc', 'desc']).default('asc'),
+});
+
 const listQuery = z.object({
   take: z.coerce.number().int().min(1).max(100).default(25),
   skip: z.coerce.number().int().nonnegative().default(0),
   scope: z.enum(['current', 'archive', 'all']).default('current'),
   search: z.string().trim().max(300).optional(),
   mediaType: z.enum(['all', 'movie', 'series']).default('all'),
+  collectionMembership: z.enum(['any', 'in', 'none']).default('any'),
   animation: z.enum(['any', 'yes', 'no']).default('any'),
   storageRootId: z.coerce.number().int().positive().optional(),
   storageRootIds: commaSeparatedPositiveIntegers,
@@ -198,7 +213,11 @@ export const createLibraryRouter = (
   presentationCoordinator: Pick<
     LibraryPresentationCoordinator,
     'status'
-  > = libraryPresentation
+  > = libraryPresentation,
+  collectionsService: Pick<
+    LibraryCollectionsService,
+    'query'
+  > = libraryCollections
 ) => {
   const router = Router();
 
@@ -211,6 +230,8 @@ export const createLibraryRouter = (
           locale: req.locale ?? 'en',
           scope: query.scope as LibraryScope,
           mediaType: query.mediaType as LibraryMediaTypeFilter,
+          collectionMembership:
+            query.collectionMembership as LibraryCollectionMembershipFilter,
           animation: query.animation as LibraryAnimationFilter,
           requested: query.requested as LibraryRequestedFilter,
           activity: query.activity as LibraryActivityFilter,
@@ -230,6 +251,28 @@ export const createLibraryRouter = (
   });
 
   router.get(
+    '/collections',
+    isAuthenticated(Permission.ADMIN),
+    async (req, res, next) => {
+      try {
+        const query = collectionsQuery.parse(req.query);
+        return res.status(200).json(
+          await collectionsService.query({
+            ...query,
+            locale: req.locale ?? 'en',
+            completeness:
+              query.completeness as LibraryCollectionCompletenessFilter,
+            sort: query.sort as LibraryCollectionSort,
+            sortDirection: query.sortDirection as LibrarySortDirection,
+          })
+        );
+      } catch (error) {
+        return next(error);
+      }
+    }
+  );
+
+  router.get(
     '/user-availability',
     isAuthenticated(Permission.ADMIN),
     async (req, res, next) => {
@@ -241,6 +284,8 @@ export const createLibraryRouter = (
             locale: req.locale ?? 'en',
             scope: query.scope as LibraryScope,
             mediaType: query.mediaType as LibraryMediaTypeFilter,
+            collectionMembership:
+              query.collectionMembership as LibraryCollectionMembershipFilter,
             animation: query.animation as LibraryAnimationFilter,
             requested: query.requested as LibraryRequestedFilter,
             activity: query.activity as LibraryActivityFilter,

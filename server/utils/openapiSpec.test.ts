@@ -87,12 +87,37 @@ describe('OpenAPI runtime schema', () => {
         ({ name }) => name === 'scope'
       )
     );
-    for (const pathName of ['/library', '/library/user-availability'])
+    for (const pathName of ['/library', '/library/user-availability']) {
       assert.ok(
         spec.paths[pathName].get?.parameters?.some(
           ({ name }) => name === 'animation'
         )
       );
+      assert.ok(
+        spec.paths[pathName].get?.parameters?.some(
+          ({ name }) => name === 'collectionMembership'
+        )
+      );
+    }
+    assert.ok(
+      spec.components.schemas.LibraryResponse.properties
+        ?.collectionMembershipUnknownCount
+    );
+    for (const parameter of [
+      'take',
+      'skip',
+      'completeness',
+      'sort',
+      'sortDirection',
+    ]) {
+      assert.ok(
+        spec.paths['/library/collections'].get?.parameters?.some(
+          ({ name }) => name === parameter
+        )
+      );
+    }
+    assert.ok(spec.components.schemas.LibraryCollectionsResponse);
+    assert.ok(spec.components.schemas.LibraryCollectionItem);
     assert.ok(
       spec.components.schemas.StorageRootDisplayNameInput.properties
         ?.isAnimation

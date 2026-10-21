@@ -10,6 +10,7 @@ export type NavigationDestinationId =
   | 'leaving-soon'
   | 'requests'
   | 'library'
+  | 'collections'
   | 'blocklist'
   | 'issues'
   | 'users'
@@ -24,6 +25,7 @@ export type NavigationMessageKey =
   | 'leavingSoon'
   | 'requests'
   | 'library'
+  | 'collections'
   | 'blocklist'
   | 'issues'
   | 'users'
@@ -99,6 +101,13 @@ export const navigationDestinationRules: NavigationDestinationRule[] = [
     activeRegExp: /^\/library(?:\/|$)/,
     requiredPermission: Permission.ADMIN,
     bottomNavigationOrder: { admin: 1 },
+  },
+  {
+    id: 'collections',
+    href: '/collections',
+    messagesKey: 'collections',
+    activeRegExp: /^\/collections(?:\/|$)|^\/collection(?:\/|$)/,
+    requiredPermission: Permission.ADMIN,
   },
   {
     id: 'blocklist',

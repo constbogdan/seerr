@@ -10,9 +10,11 @@ import {
   MediaType,
 } from '@server/constants/media';
 import { RemovalScheduleStatus } from '@server/constants/removal';
+import { MediaServerType } from '@server/constants/server';
 import dataSource, { getRepository } from '@server/datasource';
 import {
   CanonicalMedia,
+  CanonicalMediaIdentity,
   CanonicalSeason,
   CanonicalSeasonIdentity,
 } from '@server/entity/CanonicalMedia';
@@ -36,6 +38,7 @@ import { Watchlist } from '@server/entity/Watchlist';
 import type {
   LibraryActivityFilter,
   LibraryAnimationFilter,
+  LibraryCollectionMembershipFilter,
   LibraryExternalLink,
   LibraryFilterUser,
   LibraryFilterUsersResponse,
@@ -64,10 +67,14 @@ import {
   loadActiveCurrentViewingStatesForMedia,
 } from '@server/lib/currentViewingTargets';
 import { historicalImportStatus } from '@server/lib/historicalDataInspection';
-import { normalizeJellyfinActivityDate } from '@server/lib/jellyfinViewingSource';
+import {
+  normalizeExactJellyfinId,
+  normalizeJellyfinActivityDate,
+} from '@server/lib/jellyfinViewingSource';
 import {
   currentLibraryAddedSql,
   currentLibraryLastActiveSql,
+  currentLibraryPresenceSql,
   isQualifyingLibraryEvidence,
   normalizeLibraryDatabaseDate,
 } from '@server/lib/libraryActivity';
@@ -76,7 +83,9 @@ import libraryPresentation, {
   type LibraryPresentation,
   type LibraryPresentationCoordinator,
 } from '@server/lib/libraryPresentation';
+import { getSettings } from '@server/lib/settings';
 import { storageRootDisplayLabel } from '@server/lib/storageRootDisplayNames';
+import { getHostname } from '@server/utils/getHostname';
 import { In, type SelectQueryBuilder } from 'typeorm';
 
 export interface LibraryQuery {
@@ -85,6 +94,7 @@ export interface LibraryQuery {
   scope?: LibraryScope;
   search?: string;
   mediaType?: LibraryMediaTypeFilter;
+  collectionMembership?: LibraryCollectionMembershipFilter;
   animation?: LibraryAnimationFilter;
   storageRootId?: number;
   storageRootIds?: number[];
@@ -247,12 +257,7 @@ interface RawLibraryRequester {
   seasonUpdatedAt: Date | string | null;
 }
 
-const currentPresenceSql = (alias: string) =>
-  `(${alias}."isCurrent" = :current AND ((` +
-  `${alias}."sourceSystem" IN ('radarr', 'sonarr') AND ` +
-  `${alias}."servarrHasFile" = :current) OR (` +
-  `${alias}."sourceSystem" = 'jellyfin' AND ` +
-  `${alias}."jellyfinVisible" = :current)))`;
+const currentPresenceSql = currentLibraryPresenceSql;
 
 const historicalPresenceSql = (alias: string) =>
   `${alias}."isCurrent" = :notCurrent`;
@@ -896,29 +901,89 @@ const dateString = (value: string | Date | null | undefined): string | null => {
 
 export const buildLibraryExternalLinks = (
   mediaType: LibraryMediaType,
-  media?: Media | null
+  media?: Media | null,
+  canonicalJellyfinUrl?: string | null
 ): LibraryExternalLink[] => {
-  if (!media) return [];
   const links: LibraryExternalLink[] = [];
   const service = mediaType === LibraryMediaType.MOVIE ? 'radarr' : 'sonarr';
   const serviceLabel = service === 'radarr' ? 'Radarr' : 'Sonarr';
-  if (media.serviceUrl)
+  if (media?.serviceUrl)
     links.push({ service, label: serviceLabel, url: media.serviceUrl });
-  if (media.serviceUrl4k && media.serviceUrl4k !== media.serviceUrl)
+  if (media?.serviceUrl4k && media.serviceUrl4k !== media.serviceUrl)
     links.push({
       service,
       label: `${serviceLabel} 4K`,
       url: media.serviceUrl4k,
     });
-  if (media.mediaUrl)
+  if (media?.mediaUrl)
     links.push({ service: 'jellyfin', label: 'Jellyfin', url: media.mediaUrl });
-  if (media.mediaUrl4k && media.mediaUrl4k !== media.mediaUrl)
+  if (media?.mediaUrl4k && media.mediaUrl4k !== media.mediaUrl)
     links.push({
       service: 'jellyfin',
       label: 'Jellyfin 4K',
       url: media.mediaUrl4k,
     });
+  if (
+    canonicalJellyfinUrl &&
+    !links.some((link) => link.service === 'jellyfin')
+  )
+    links.push({
+      service: 'jellyfin',
+      label: 'Jellyfin',
+      url: canonicalJellyfinUrl,
+    });
   return links;
+};
+
+interface LibraryJellyfinIdentity {
+  sourceScope: string;
+  value: string;
+}
+
+interface LibraryJellyfinUrlOptions {
+  identities: readonly LibraryJellyfinIdentity[];
+  serverId: string;
+  hostname: string;
+  pageName: 'details' | 'item';
+}
+
+export const resolveLibraryJellyfinUrl = ({
+  identities,
+  serverId,
+  hostname,
+  pageName,
+}: LibraryJellyfinUrlOptions): string | null => {
+  const configuredScope = normalizeExactJellyfinId(serverId) ?? serverId.trim();
+  if (!configuredScope) return null;
+  const matchingIds = new Set(
+    identities.flatMap((identity) => {
+      const identityScope =
+        normalizeExactJellyfinId(identity.sourceScope) ??
+        identity.sourceScope.trim();
+      const itemId = normalizeExactJellyfinId(identity.value);
+      return identityScope === configuredScope && itemId ? [itemId] : [];
+    })
+  );
+  if (matchingIds.size !== 1) return null;
+  let parsedHostname: URL;
+  try {
+    parsedHostname = new URL(hostname);
+  } catch {
+    return null;
+  }
+  if (
+    !['http:', 'https:'].includes(parsedHostname.protocol) ||
+    parsedHostname.username ||
+    parsedHostname.password ||
+    parsedHostname.search ||
+    parsedHostname.hash
+  )
+    return null;
+  const normalizedHostname = parsedHostname.toString().replace(/\/$/, '');
+  const [itemId] = matchingIds;
+  return `${normalizedHostname}/web/index.html#!/${pageName}?id=${itemId}&context=home&serverId=${encodeURIComponent(
+    serverId
+  )}`;
 };
 
 const safeUser = (user?: User | null): LibraryUser | null => {
@@ -1501,7 +1566,19 @@ export class LibraryService {
       { current: true, notCurrent: false }
     );
 
-    if (input.mediaType && input.mediaType !== 'all')
+    const collectionMembership = input.collectionMembership ?? 'any';
+    if (collectionMembership !== 'any') {
+      query
+        .andWhere('canonical.mediaType = :collectionMediaType', {
+          collectionMediaType: LibraryMediaType.MOVIE,
+        })
+        .andWhere('canonical.collectionMembershipHydratedAt IS NOT NULL')
+        .andWhere(
+          collectionMembership === 'in'
+            ? 'canonical.tmdbCollectionId IS NOT NULL'
+            : 'canonical.tmdbCollectionId IS NULL'
+        );
+    } else if (input.mediaType && input.mediaType !== 'all')
       query.andWhere('canonical.mediaType = :mediaType', {
         mediaType: input.mediaType,
       });
@@ -1885,6 +1962,8 @@ export class LibraryService {
       freshRows,
       seasonRows,
       canonicalRows,
+      jellyfinIdentityRows,
+      jellyfinPresenceRows,
       fileSummaries,
       requestMediaRows,
     ] = await Promise.all([
@@ -1982,6 +2061,24 @@ export class LibraryService {
         ? getRepository(CanonicalMedia).find({
             where: { id: In(currentIds) },
             relations: { currentMedia: true },
+          })
+        : Promise.resolve([]),
+      currentIds.length
+        ? getRepository(CanonicalMediaIdentity).find({
+            where: {
+              canonicalMediaId: In(currentIds),
+              provider: 'jellyfin',
+            },
+          })
+        : Promise.resolve([]),
+      currentIds.length
+        ? getRepository(LibraryPresence).find({
+            where: {
+              canonicalMediaId: In(currentIds),
+              sourceSystem: 'jellyfin',
+              isCurrent: true,
+              jellyfinVisible: true,
+            },
           })
         : Promise.resolve([]),
       this.loadFileSummaries(
@@ -2143,11 +2240,48 @@ export class LibraryService {
     for (const summaries of seasonSummaries.values())
       summaries.sort((left, right) => left.seasonNumber - right.seasonNumber);
 
+    const currentJellyfinPresenceKeys = new Set(
+      jellyfinPresenceRows.map(
+        (presence) =>
+          `${presence.canonicalMediaId}:${presence.sourceScope}:${presence.sourceItemId}`
+      )
+    );
+    const jellyfinIdentities = new Map<number, LibraryJellyfinIdentity[]>();
+    for (const identity of jellyfinIdentityRows) {
+      if (
+        !currentJellyfinPresenceKeys.has(
+          `${identity.canonicalMediaId}:${identity.sourceScope}:${identity.mediaType}:${identity.value}`
+        )
+      )
+        continue;
+      const identities =
+        jellyfinIdentities.get(identity.canonicalMediaId) ?? [];
+      identities.push(identity);
+      jellyfinIdentities.set(identity.canonicalMediaId, identities);
+    }
+    const settings = getSettings();
+    const jellyfinPageName =
+      settings.main.mediaServerType === MediaServerType.EMBY
+        ? 'item'
+        : 'details';
+    const configuredJellyfinHost =
+      settings.jellyfin.externalHostname?.trim() || getHostname();
     const externalLinks = new Map<number, LibraryExternalLink[]>();
     for (const canonical of canonicalRows) {
+      const canonicalJellyfinUrl =
+        settings.main.mediaServerType === MediaServerType.JELLYFIN ||
+        settings.main.mediaServerType === MediaServerType.EMBY
+          ? resolveLibraryJellyfinUrl({
+              identities: jellyfinIdentities.get(canonical.id) ?? [],
+              serverId: settings.jellyfin.serverId,
+              hostname: configuredJellyfinHost,
+              pageName: jellyfinPageName,
+            })
+          : null;
       const links = buildLibraryExternalLinks(
         canonical.mediaType,
-        canonical.currentMedia
+        canonical.currentMedia,
+        canonicalJellyfinUrl
       );
       if (links.length) externalLinks.set(canonical.id, links);
     }
@@ -2384,11 +2518,32 @@ export class LibraryService {
   ): Promise<LibraryResultsResponse> {
     const scope = input.scope ?? 'current';
     const pageQuery = this.buildPageQuery(input, strategy);
-    const [rows, total, sourceStatus, storageLocations] = await Promise.all([
+    const collectionMembership = input.collectionMembership ?? 'any';
+    const unknownCount =
+      collectionMembership === 'any'
+        ? Promise.resolve(undefined)
+        : this.buildBase(
+            {
+              ...input,
+              mediaType: LibraryMediaType.MOVIE,
+              collectionMembership: 'any',
+            },
+            strategy
+          )
+            .andWhere('canonical.collectionMembershipHydratedAt IS NULL')
+            .getCount();
+    const [
+      rows,
+      total,
+      sourceStatus,
+      storageLocations,
+      collectionMembershipUnknownCount,
+    ] = await Promise.all([
       pageQuery.getRawMany<RawLibraryRow>(),
       this.buildBase(input, strategy).getCount(),
       this.sourceStatus(),
       this.storageLocations(scope),
+      unknownCount,
     ]);
     if (rows.length === 0) {
       return {
@@ -2401,6 +2556,7 @@ export class LibraryService {
         results: [],
         storageLocations,
         sourceStatus,
+        collectionMembershipUnknownCount,
       };
     }
     const canonicalIds = rows.map((row) => Number(row.canonicalMediaId));
@@ -2599,6 +2755,7 @@ export class LibraryService {
       results,
       storageLocations,
       sourceStatus,
+      collectionMembershipUnknownCount,
       presentation: presentationStatus,
     };
   }

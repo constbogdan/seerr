@@ -163,10 +163,11 @@ describe('Library factual presentation', () => {
       watchlist: 'yes',
       watched: 'yes',
       sort: 'lastActive',
+      collectionMembership: 'none',
     });
     assert.equal(
       serializeLibraryQuery(params),
-      'scope=archive&search=a%20spy%20among%20friends&sort=lastActive&watched=yes&watchlist=yes'
+      'collectionMembership=none&scope=archive&search=a%20spy%20among%20friends&sort=lastActive&watched=yes&watchlist=yes'
     );
     assert.equal(
       serializeLibraryQuery(new URLSearchParams({ search: 'a + spy' })),
