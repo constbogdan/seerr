@@ -12,6 +12,7 @@ import {
   LIBRARY_PROGRESSIVE_BATCH_SIZE,
   getInitialLibraryMountCount,
   getNextLibraryMountCount,
+  retainLibraryMountCount,
 } from './progressiveRendering';
 import {
   getLibraryItemSelectionState,
@@ -44,6 +45,8 @@ interface MountState {
   count: number;
 }
 
+const retainedLibraryMountCounts = new Map<string, number>();
+
 const LibraryResults = ({
   items,
   resetKey,
@@ -62,12 +65,20 @@ const LibraryResults = ({
   });
   const [mountState, setMountState] = useState<MountState>({
     resetKey,
-    count: getInitialLibraryMountCount(items.length),
+    count: getInitialLibraryMountCount(
+      items.length,
+      LIBRARY_PROGRESSIVE_BATCH_SIZE,
+      retainedLibraryMountCounts.get(resetKey)
+    ),
   });
   const mountedCount =
     mountState.resetKey === resetKey
       ? Math.min(mountState.count, items.length)
-      : getInitialLibraryMountCount(items.length);
+      : getInitialLibraryMountCount(
+          items.length,
+          LIBRARY_PROGRESSIVE_BATCH_SIZE,
+          retainedLibraryMountCounts.get(resetKey)
+        );
   const mounting = mountedCount < items.length;
   const expandedCanonicalMediaId =
     expansion.resetKey === resetKey ? expansion.canonicalMediaId : null;
@@ -81,6 +92,10 @@ const LibraryResults = ({
   }, [resetKey]);
 
   useEffect(() => {
+    retainLibraryMountCount(retainedLibraryMountCounts, resetKey, mountedCount);
+  }, [mountedCount, resetKey]);
+
+  useEffect(() => {
     if (!mounting) return;
 
     const frame = window.requestAnimationFrame(() => {
@@ -89,7 +104,11 @@ const LibraryResults = ({
           const currentCount =
             current.resetKey === resetKey
               ? Math.min(current.count, items.length)
-              : getInitialLibraryMountCount(items.length);
+              : getInitialLibraryMountCount(
+                  items.length,
+                  LIBRARY_PROGRESSIVE_BATCH_SIZE,
+                  retainedLibraryMountCounts.get(resetKey)
+                );
           return {
             resetKey,
             count: getNextLibraryMountCount(currentCount, items.length),

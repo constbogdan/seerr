@@ -49,6 +49,12 @@ describe('shared Tooltip lazy lifecycle', () => {
     assert.match(tooltip, /triggerProps\.onPointerEnter/);
     assert.match(tooltip, /event\.pointerType === 'touch'/);
     assert.match(tooltip, /triggerProps\.onFocus/);
+    assert.match(tooltip, /matches\(':focus-visible'\)/);
+    assert.match(tooltip, /if \(!hasTrigger\('click'\)\)/);
+    assert.match(
+      tooltip,
+      /callChildHandler\('onClick', event\);[\s\S]*?dismiss\(\)/
+    );
     assert.match(tooltip, /event\.key === 'Escape'\) dismiss\(\)/);
     assert.match(
       tooltip,

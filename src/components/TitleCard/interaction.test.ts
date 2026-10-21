@@ -2,9 +2,14 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { resolveTitleCardRequestActionLabel } from './requestActionLabel';
 
 describe('TitleCard interaction contracts', () => {
   const source = readFileSync(path.join(__dirname, 'index.tsx'), 'utf8');
+  const requestIconButton = readFileSync(
+    path.join(__dirname, '../Common/RequestIconButton.tsx'),
+    'utf8'
+  );
   const movieDetails = readFileSync(
     path.join(__dirname, '../MovieDetails/index.tsx'),
     'utf8'
@@ -39,6 +44,32 @@ describe('TitleCard interaction contracts', () => {
     assert.match(source, /event\.preventDefault\(\)/);
     assert.match(source, /setShowDetail\(true\)/);
     assert.match(source, /focus-visible:ring-indigo-400/);
+  });
+
+  it('keeps the Request action outside card navigation and opens the shared modal', () => {
+    const requestButtonStart = source.indexOf('<RequestIconButton');
+    const requestHandler = source.slice(
+      requestButtonStart,
+      source.indexOf('</Tooltip>', requestButtonStart)
+    );
+    assert.match(requestHandler, /e\.preventDefault\(\)/);
+    assert.match(requestHandler, /e\.stopPropagation\(\)/);
+    assert.match(requestHandler, /setShowRequestModal\(true\)/);
+    assert.match(source, /requestActionEnabled \?\?/);
+    assert.match(source, /!actionsDisabled/);
+    assert.match(source, /type=\{[\s\S]*?mediaType === 'collection'/);
+    assert.equal(
+      resolveTitleCardRequestActionLabel(undefined, 'Request'),
+      'Request'
+    );
+    assert.equal(resolveTitleCardRequestActionLabel('View', 'Request'), 'View');
+    assert.match(source, /resolveTitleCardRequestActionLabel\(/);
+    assert.match(source, /icon=\{requestActionIcon\}/);
+    assert.match(source, /requestActionClassName \?\? ''/);
+    assert.match(
+      requestIconButton,
+      /icon \?\? <ArrowDownTrayIcon className="h-4 w-4"/
+    );
   });
 
   it('changes Watchlist state only after confirmed successful mutations', () => {

@@ -1,6 +1,11 @@
 import type { ReactNode } from 'react';
 
-type TitleCardCornerBadgeTone = 'movie' | 'series';
+type TitleCardCornerBadgeTone =
+  | 'movie'
+  | 'series'
+  | 'complete'
+  | 'incomplete'
+  | 'neutral';
 
 type TitleCardCornerBadgeProps = {
   children: ReactNode;
@@ -11,6 +16,9 @@ type TitleCardCornerBadgeProps = {
 const toneClasses: Record<TitleCardCornerBadgeTone, string> = {
   movie: 'text-blue-400',
   series: 'text-purple-400',
+  complete: 'text-green-400',
+  incomplete: 'text-amber-300',
+  neutral: 'text-gray-300',
 };
 
 const TitleCardCornerBadge = ({

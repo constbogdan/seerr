@@ -5,6 +5,17 @@ import type { PaginatedResponse } from './common';
 export type LibraryMediaType = 'movie' | 'series';
 export type LibraryScope = 'current' | 'archive' | 'all';
 export type LibraryMediaTypeFilter = 'all' | LibraryMediaType;
+export type LibraryCollectionMembershipFilter = 'any' | 'in' | 'none';
+export type LibraryCollectionCompletenessFilter =
+  | 'all'
+  | 'complete'
+  | 'incomplete';
+export type LibraryCollectionSort = 'name' | 'completeness' | 'available';
+export type LibraryCollectionHydrationState =
+  | 'pending'
+  | 'complete'
+  | 'partial'
+  | 'unavailable';
 export type LibraryAnimationFilter = 'any' | 'yes' | 'no';
 export type LibraryWatchlistFilter = 'any' | 'yes' | 'no';
 export type LibraryWatchedFilter = 'any' | 'yes' | 'no';
@@ -165,7 +176,28 @@ export interface LibraryResultsResponse extends PaginatedResponse {
   results: LibraryItem[];
   storageLocations: { id: number; label: string }[];
   sourceStatus: LibrarySourceStatus;
+  collectionMembershipUnknownCount?: number;
   presentation?: LibraryPresentationBatchStatus;
+}
+
+export interface LibraryCollectionItem {
+  id: number;
+  name: string;
+  overview: string | null;
+  posterPath: string | null;
+  backdropPath: string | null;
+  availableMovies: number | null;
+  totalMovies: number | null;
+  completeness: 'complete' | 'incomplete' | 'unknown';
+}
+
+export interface LibraryCollectionsResponse extends PaginatedResponse {
+  results: LibraryCollectionItem[];
+  status: LibraryCollectionHydrationState;
+  stale: boolean;
+  discoveredCollections: number;
+  failedCollections: number;
+  refreshedAt: string | null;
 }
 
 export type LibraryPresentationState = 'complete' | 'pending' | 'partial';

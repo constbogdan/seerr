@@ -18,6 +18,10 @@ import {
 @Unique('UQ_canonical_media_id_type', ['id', 'mediaType'])
 @Unique('UQ_canonical_media_current_media', ['currentMediaId'])
 @Index('IDX_canonical_media_type_title', ['mediaType', 'titleSnapshot'])
+@Index('IDX_canonical_media_type_tmdb_collection', [
+  'mediaType',
+  'tmdbCollectionId',
+])
 export class CanonicalMedia {
   @PrimaryGeneratedColumn() public id: number;
 
@@ -32,6 +36,12 @@ export class CanonicalMedia {
 
   @Column({ type: 'int', nullable: true })
   public currentMediaId?: number | null;
+
+  @Column({ type: 'int', nullable: true })
+  public tmdbCollectionId?: number | null;
+
+  @DbAwareColumn({ type: 'datetime', nullable: true })
+  public collectionMembershipHydratedAt?: Date | null;
 
   @ManyToOne(() => Media, { nullable: true, onDelete: 'SET NULL' })
   @JoinColumn({

@@ -17,6 +17,10 @@ import LibraryResolutionBadge from '@app/components/Library/LibraryResolutionBad
 import LibrarySelectionCheckbox from '@app/components/Library/LibrarySelectionCheckbox';
 import SeriesDetail from '@app/components/Library/SeriesDetail';
 import {
+  formatCollectionAvailability,
+  getCollectionAvailability,
+} from '@app/components/Library/collectionAvailability';
+import {
   classifyLibrarySeasonAvailability,
   formatLibraryResolution,
   formatLibrarySize,
@@ -56,6 +60,7 @@ import type {
   LibraryItem as LibraryItemType,
   LibrarySeasonSummary,
 } from '@server/interfaces/api/libraryInterfaces';
+import type { Collection } from '@server/models/Collection';
 import axios from 'axios';
 import Link from 'next/link';
 import {
@@ -66,7 +71,9 @@ import {
   type ComponentType,
   type SVGProps,
 } from 'react';
+import { useInView } from 'react-intersection-observer';
 import { useIntl } from 'react-intl';
+import useSWR from 'swr';
 
 const messages = defineMessages('components.Library.Item', {
   added: 'Added',
@@ -147,7 +154,7 @@ const AbsoluteDate = ({
   return (
     <Tooltip content={`${label}: ${absolute}`}>
       <span
-        className={`${metadataRowClassName} whitespace-nowrap text-gray-200`}
+        className={`${metadataRowClassName} w-fit max-w-full justify-self-start whitespace-nowrap text-gray-200`}
         tabIndex={0}
         aria-label={`${label}: ${absolute}`}
       >
@@ -265,9 +272,25 @@ const LibraryCollectionBanner = ({
 }: LibraryCollectionBannerProps) => {
   const intl = useIntl();
   const artwork = collection.backdropPath ?? collection.posterPath;
+  const { ref, inView } = useInView({
+    triggerOnce: true,
+    rootMargin: '160px 0px',
+  });
+  const { data: collectionDetails, error: collectionError } =
+    useSWR<Collection>(inView ? `/api/v1/collection/${collection.id}` : null, {
+      dedupingInterval: 300_000,
+      revalidateIfStale: false,
+      revalidateOnFocus: false,
+    });
+  const availability =
+    collectionDetails && !collectionError
+      ? getCollectionAvailability(collectionDetails)
+      : undefined;
+  const availabilityLabel = formatCollectionAvailability(availability);
   return (
     <div
-      className="group relative h-16 w-full min-w-0 max-w-80 overflow-hidden rounded-md bg-gray-800 shadow-md transition focus-within:ring-2 focus-within:ring-blue-300"
+      ref={ref}
+      className="group relative h-16 w-full min-w-0 max-w-80 overflow-hidden rounded-md bg-gray-800 shadow-md transition"
       data-testid="library-collection-banner"
     >
       {artwork && (
@@ -303,12 +326,21 @@ const LibraryCollectionBanner = ({
         </span>
       </Link>
       <div className="pointer-events-none relative z-20 flex h-full min-w-0 items-center gap-2 px-2 py-1.5">
-        <span
-          className="min-w-0 flex-1 truncate text-xs font-medium text-gray-100"
-          title={collection.name}
-        >
-          {collection.name}
-        </span>
+        <div className="flex min-w-0 flex-1 flex-col justify-center leading-tight text-gray-100">
+          <span
+            className="min-w-0 truncate text-xs font-semibold"
+            title={collection.name}
+          >
+            {collection.name}
+          </span>
+          <span
+            className="min-h-4 whitespace-nowrap text-[0.6875rem] font-medium tabular-nums text-gray-300"
+            aria-live="polite"
+            data-testid="library-collection-availability"
+          >
+            {availabilityLabel ?? '\u00a0'}
+          </span>
+        </div>
         {canRequest && (
           <div className="pointer-events-auto flex-none">
             <Tooltip content={intl.formatMessage(messages.requestCollection)}>
@@ -530,7 +562,10 @@ const LibraryItem = ({
               count: item.removalSchedules?.length ?? 0,
             })}
           >
-            <span className="inline-flex max-w-full break-words rounded-bl-md rounded-tr-xl bg-gray-900/90 px-2 py-1 text-center text-xs font-medium text-yellow-200 shadow-md">
+            <span
+              className="inline-flex h-4 max-w-full items-center whitespace-nowrap rounded-bl-md rounded-tr-xl bg-gray-900/90 px-2 text-center text-[0.6875rem] font-medium leading-none text-yellow-200 shadow-md"
+              data-testid="library-leaving-soon-badge"
+            >
               {intl.formatMessage(messages.scheduled, {
                 date: intl.formatDate(firstSchedule.removeAt, {
                   year: 'numeric',
@@ -756,7 +791,12 @@ const LibraryItem = ({
                     Icon={ArrowRightStartOnRectangleIcon}
                   />
                   {removalSource && (
-                    <Badge badgeType="light">{removalSource}</Badge>
+                    <Badge
+                      badgeType="light"
+                      className="w-fit max-w-full justify-self-start"
+                    >
+                      {removalSource}
+                    </Badge>
                   )}
                 </>
               ) : (
@@ -811,7 +851,7 @@ const LibraryItem = ({
           </div>
 
           {item.collection && (
-            <div className="hidden min-w-0 self-center 2xl:grid 2xl:place-items-center">
+            <div className="hidden min-w-0 self-center 2xl:grid 2xl:items-center 2xl:justify-items-end">
               <LibraryCollectionBanner
                 collection={item.collection}
                 canRequest={canRequestMovie}
@@ -829,16 +869,11 @@ const LibraryItem = ({
         </div>
 
         <div
-          className={`flex min-w-0 flex-wrap items-center gap-2 xl:max-w-[13rem] xl:justify-end ${
-            firstSchedule ? 'pt-[1.0625rem]' : ''
-          }`}
+          className="flex min-w-0 flex-wrap items-center gap-2 self-center xl:w-16 xl:justify-end"
+          data-testid="library-action-grid"
         >
-          <div className="grid gap-2">
-            <div
-              className={`grid gap-1.5 ${
-                canRequestTitle ? 'grid-cols-3' : 'grid-cols-2'
-              }`}
-            >
+          <div className="grid w-16 gap-2">
+            <div className="grid grid-cols-2 gap-1.5">
               {item.externalLinks.map((link) => (
                 <ExternalServiceLink
                   link={link}
@@ -850,6 +885,11 @@ const LibraryItem = ({
                   <RequestIconButton
                     aria-label={intl.formatMessage(globalMessages.request)}
                     data-testid="library-request-button"
+                    className={
+                      item.externalLinks.length % 2 === 0
+                        ? 'col-span-2 justify-self-center'
+                        : undefined
+                    }
                     onClick={(event) => {
                       event.preventDefault();
                       event.stopPropagation();

@@ -53,4 +53,35 @@ describe('TitleCard corner badges', () => {
     assert.doesNotMatch(movie, /bg-blue|border-blue/);
     assert.doesNotMatch(series, /bg-purple|border-purple/);
   });
+
+  it('supports collection completeness colors with the same badge geometry', () => {
+    const complete = renderToStaticMarkup(
+      createElement(TitleCardCornerBadge, {
+        children: '3/3',
+        tone: 'complete',
+      })
+    );
+    const incomplete = renderToStaticMarkup(
+      createElement(TitleCardCornerBadge, {
+        children: '2/3',
+        tone: 'incomplete',
+      })
+    );
+    const unknown = renderToStaticMarkup(
+      createElement(TitleCardCornerBadge, {
+        children: 'Availability unknown',
+        tone: 'neutral',
+      })
+    );
+
+    assert.match(complete, /text-green-400/);
+    assert.match(incomplete, /text-amber-300/);
+    assert.match(unknown, /text-gray-300/);
+    for (const markup of [complete, incomplete, unknown]) {
+      assert.match(markup, /rounded-md/);
+      assert.match(markup, /bg-gray-900\/90/);
+      assert.match(markup, /px-2/);
+      assert.match(markup, /py-1/);
+    }
+  });
 });

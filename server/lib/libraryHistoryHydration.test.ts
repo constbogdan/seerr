@@ -321,6 +321,10 @@ const dependencies = ({
   sonarrFailure = false,
   metadataFailure = false,
   radarrPath = '/media/movies',
+  movieCollection = null,
+  omitMovieCollectionField = false,
+  clockStart = '2026-10-01T00:00:00Z',
+  onMovieMetadataRequest = () => undefined,
 }: {
   movies?: RadarrMovie[];
   shows?: SonarrSeries[];
@@ -331,8 +335,12 @@ const dependencies = ({
   sonarrFailure?: boolean;
   metadataFailure?: boolean;
   radarrPath?: string;
+  movieCollection?: { id: number } | null;
+  omitMovieCollectionField?: boolean;
+  clockStart?: string;
+  onMovieMetadataRequest?: () => void;
 } = {}): LibraryHydrationDependencies => {
-  let time = Date.parse('2026-10-01T00:00:00Z');
+  let time = Date.parse(clockStart);
   return {
     radarrServers: () => [radarrServer],
     sonarrServers: () => [sonarrServer],
@@ -371,11 +379,15 @@ const dependencies = ({
     }),
     createQueryMetadataClient: () => ({
       getMovieForScan: async ({ movieId }) => {
+        onMovieMetadataRequest();
         if (metadataFailure) throw new Error('provider failure');
         return {
           id: movieId,
           title: movieId === 100 ? 'Exact Movie' : `English Movie ${movieId}`,
           release_date: '2025-01-01',
+          ...(omitMovieCollectionField
+            ? {}
+            : { belongs_to_collection: movieCollection }),
         };
       },
       getTvShowForScan: async ({ tvId }) => {
@@ -498,12 +510,18 @@ describe('Current Library Hydration', () => {
       })
     );
 
-    const service = new LibraryHistoryHydrationService(dependencies());
+    let movieMetadataRequests = 0;
+    const service = new LibraryHistoryHydrationService(
+      dependencies({
+        onMovieMetadataRequest: () => movieMetadataRequests++,
+      })
+    );
     const first = await service.run();
     assert.equal(first.complete, true);
     assert.equal(first.queryMetadata.uniqueProviderIdentities, 2);
     assert.equal(first.queryMetadata.enriched, 2);
     assert.equal(first.queryMetadata.concurrency, 4);
+    assert.equal(movieMetadataRequests, 1);
     assert.equal(await getRepository(StorageRoot).count(), 2);
     assert.equal(await getRepository(CanonicalMedia).count(), 2);
     assert.equal(await getRepository(CanonicalSeason).count(), 2);
@@ -546,8 +564,12 @@ describe('Current Library Hydration', () => {
     assert.equal(seriesCanonical.currentMediaId, currentSeries.id);
     assert.equal(movieCanonical.titleSnapshot, 'Exact Movie');
     assert.equal(movieCanonical.year, 2025);
+    assert.equal(movieCanonical.tmdbCollectionId, null);
+    assert.ok(movieCanonical.collectionMembershipHydratedAt);
     assert.equal(seriesCanonical.titleSnapshot, 'Exact Series');
     assert.equal(seriesCanonical.year, 2024);
+    assert.equal(seriesCanonical.tmdbCollectionId, null);
+    assert.equal(seriesCanonical.collectionMembershipHydratedAt, null);
     assert.ok(
       await getRepository(CanonicalMediaIdentity).findOneBy({
         canonicalMediaId: seriesCanonical.id,
@@ -594,6 +616,7 @@ describe('Current Library Hydration', () => {
     const before = await structuralCounts();
     const second = await service.run();
     assert.equal(second.complete, true);
+    assert.equal(movieMetadataRequests, 2);
     assert.deepEqual(await structuralCounts(), before);
   });
 
@@ -654,6 +677,160 @@ describe('Current Library Hydration', () => {
         })
       ).titleSnapshot,
       'Exact Series'
+    );
+  });
+
+  it('persists, changes, and clears Movie collection membership while preserving the last good observation on failures', async () => {
+    await new LibraryHistoryHydrationService(
+      dependencies({
+        movieCollection: { id: 501 },
+        clockStart: '2026-10-01T00:00:00Z',
+      })
+    ).run();
+    const repository = getRepository(CanonicalMedia);
+    const first = await repository.findOneByOrFail({
+      mediaType: LibraryMediaType.MOVIE,
+    });
+    assert.equal(first.tmdbCollectionId, 501);
+    assert.ok(first.collectionMembershipHydratedAt);
+
+    await new LibraryHistoryHydrationService(
+      dependencies({
+        movieCollection: { id: 502 },
+        clockStart: '2026-10-02T00:00:00Z',
+      })
+    ).run();
+    const changed = await repository.findOneByOrFail({ id: first.id });
+    assert.equal(changed.tmdbCollectionId, 502);
+    assert.ok(
+      changed.collectionMembershipHydratedAt!.getTime() >
+        first.collectionMembershipHydratedAt!.getTime()
+    );
+
+    await new LibraryHistoryHydrationService(
+      dependencies({
+        metadataFailure: true,
+        clockStart: '2026-10-03T00:00:00Z',
+      })
+    ).run();
+    const afterFailure = await repository.findOneByOrFail({ id: first.id });
+    assert.equal(afterFailure.tmdbCollectionId, 502);
+    assert.equal(
+      afterFailure.collectionMembershipHydratedAt?.getTime(),
+      changed.collectionMembershipHydratedAt?.getTime()
+    );
+
+    const invalid = await new LibraryHistoryHydrationService(
+      dependencies({
+        movieCollection: { id: 0 },
+        clockStart: '2026-10-04T00:00:00Z',
+      })
+    ).run();
+    assert.equal(invalid.queryMetadata.failures, 1);
+    const afterInvalid = await repository.findOneByOrFail({ id: first.id });
+    assert.equal(afterInvalid.tmdbCollectionId, 502);
+    assert.equal(
+      afterInvalid.collectionMembershipHydratedAt?.getTime(),
+      changed.collectionMembershipHydratedAt?.getTime()
+    );
+
+    const missing = await new LibraryHistoryHydrationService(
+      dependencies({
+        omitMovieCollectionField: true,
+        clockStart: '2026-10-05T00:00:00Z',
+      })
+    ).run();
+    assert.equal(missing.queryMetadata.failures, 1);
+    const afterMissing = await repository.findOneByOrFail({ id: first.id });
+    assert.equal(afterMissing.tmdbCollectionId, 502);
+    assert.equal(
+      afterMissing.collectionMembershipHydratedAt?.getTime(),
+      changed.collectionMembershipHydratedAt?.getTime()
+    );
+
+    await new LibraryHistoryHydrationService(
+      dependencies({
+        movieCollection: null,
+        clockStart: '2026-10-06T00:00:00Z',
+      })
+    ).run();
+    const cleared = await repository.findOneByOrFail({ id: first.id });
+    assert.equal(cleared.tmdbCollectionId, null);
+    assert.ok(
+      cleared.collectionMembershipHydratedAt!.getTime() >
+        changed.collectionMembershipHydratedAt!.getTime()
+    );
+  });
+
+  it('backfills an unknown historical Movie through the existing bounded metadata pass and retries interruption safely', async () => {
+    const canonical = await getRepository(CanonicalMedia).save(
+      new CanonicalMedia({
+        mediaType: LibraryMediaType.MOVIE,
+        titleSnapshot: 'Historical Movie',
+        year: 1984,
+      })
+    );
+    await getRepository(CanonicalMediaIdentity).save(
+      new CanonicalMediaIdentity({
+        canonicalMediaId: canonical.id,
+        mediaType: LibraryMediaType.MOVIE,
+        provider: 'tmdb',
+        sourceScope: '',
+        value: '844',
+      })
+    );
+    let requests = 0;
+    const emptySources = {
+      movies: [],
+      shows: [],
+      sonarrEpisodes: [],
+      files: [],
+      jellyfin: [],
+    };
+
+    await new LibraryHistoryHydrationService(
+      dependencies({
+        ...emptySources,
+        metadataFailure: true,
+        onMovieMetadataRequest: () => requests++,
+      })
+    ).run();
+    let stored = await getRepository(CanonicalMedia).findOneByOrFail({
+      id: canonical.id,
+    });
+    assert.equal(stored.tmdbCollectionId, null);
+    assert.equal(stored.collectionMembershipHydratedAt, null);
+    assert.equal(requests, 1);
+
+    const successful = await new LibraryHistoryHydrationService(
+      dependencies({
+        ...emptySources,
+        movieCollection: { id: 900 },
+        clockStart: '2026-10-02T00:00:00Z',
+        onMovieMetadataRequest: () => requests++,
+      })
+    ).run();
+    stored = await getRepository(CanonicalMedia).findOneByOrFail({
+      id: canonical.id,
+    });
+    assert.equal(successful.queryMetadata.uniqueProviderIdentities, 1);
+    assert.equal(successful.queryMetadata.concurrency, 4);
+    assert.equal(stored.tmdbCollectionId, 900);
+    assert.ok(stored.collectionMembershipHydratedAt);
+    assert.equal(requests, 2);
+
+    await new LibraryHistoryHydrationService(
+      dependencies({
+        ...emptySources,
+        movieCollection: { id: 900 },
+        clockStart: '2026-10-03T00:00:00Z',
+        onMovieMetadataRequest: () => requests++,
+      })
+    ).run();
+    assert.equal(requests, 3);
+    assert.equal(
+      await getRepository(CanonicalMedia).countBy({ id: canonical.id }),
+      1
     );
   });
 

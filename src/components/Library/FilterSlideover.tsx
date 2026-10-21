@@ -37,8 +37,9 @@ const messages = defineMessages('components.Library.FilterSlideover', {
   added: 'Added Date',
   activity: 'Has Activity',
   lastActive: 'Last Active Date',
-  scheduled: 'Pending Removal',
+  scheduled: 'Leaving Soon',
   animation: 'Animation',
+  collectionMembership: 'In Collection',
   removalDue: 'Scheduled Removal Date',
   archive: 'Archive',
   removed: 'Removed Date',
@@ -282,6 +283,11 @@ const FilterSlideover = ({
     { value: 'present', label: intl.formatMessage(messages.yes) },
     { value: 'none', label: intl.formatMessage(messages.no) },
   ] as const;
+  const collectionMembershipOptions = [
+    { value: 'any', label: intl.formatMessage(messages.any) },
+    { value: 'in', label: intl.formatMessage(messages.yes) },
+    { value: 'none', label: intl.formatMessage(messages.no) },
+  ] as const;
   const removalSourceOptions: {
     value: LibraryRemovalSource;
     label: string;
@@ -335,6 +341,15 @@ const FilterSlideover = ({
             value={preferences.animation}
             options={triStateOptions}
             onChange={(animation) => update({ animation })}
+          />
+          <SegmentedFilter
+            name="collection-membership"
+            label={intl.formatMessage(messages.collectionMembership)}
+            value={preferences.collectionMembership}
+            options={collectionMembershipOptions}
+            onChange={(collectionMembership) =>
+              update({ collectionMembership })
+            }
           />
         </div>
 

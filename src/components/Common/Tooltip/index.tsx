@@ -211,7 +211,9 @@ const Tooltip = ({
     };
     triggerProps.onFocus = (event: React.FocusEvent<HTMLElement>) => {
       callChildHandler('onFocus', event);
-      scheduleVisibility(true);
+      if (event.currentTarget.matches(':focus-visible')) {
+        scheduleVisibility(true);
+      }
     };
   }
 
@@ -234,6 +236,13 @@ const Tooltip = ({
     triggerProps.onDoubleClick = (event: React.MouseEvent<HTMLElement>) => {
       callChildHandler('onDoubleClick', event);
       scheduleVisibility(!visible);
+    };
+  }
+
+  if (!hasTrigger('click')) {
+    triggerProps.onClick = (event: React.MouseEvent<HTMLElement>) => {
+      callChildHandler('onClick', event);
+      dismiss();
     };
   }
 

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { getCollectionBackdropUrl } from './collectionRequestPresentation';
 
 describe('Collection Request modal partial outcomes', () => {
   const source = readFileSync(
@@ -32,5 +33,36 @@ describe('Collection Request modal partial outcomes', () => {
     assert.match(source, /requestOutcomeAlreadyRequested/);
     assert.match(source, /requestOutcomeFailed/);
     assert.match(source, /result\.retryable/);
+  });
+
+  it('keeps submission disabled when no collection Movies are eligible or selected', () => {
+    assert.match(
+      source,
+      /okDisabled=\{isUpdating \|\| selectedParts\.length === 0\}/
+    );
+    assert.match(source, /getAllRequestedParts\(\)\.includes\(tmdbId\)/);
+    assert.match(source, /MediaStatus\.BLOCKLISTED/);
+    assert.match(source, /currentlyRemaining <= 0/);
+  });
+
+  it('only constructs a normalized collection backdrop URL when artwork exists', () => {
+    assert.equal(getCollectionBackdropUrl(undefined), undefined);
+    assert.equal(getCollectionBackdropUrl(null), undefined);
+    assert.equal(
+      getCollectionBackdropUrl('/backdrop.jpg'),
+      'https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/backdrop.jpg'
+    );
+    assert.equal(
+      getCollectionBackdropUrl('backdrop.jpg'),
+      'https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/backdrop.jpg'
+    );
+    assert.equal(
+      (source.match(/backdrop=\{collectionBackdrop\}/g) ?? []).length,
+      2
+    );
+    assert.doesNotMatch(
+      source,
+      /backdrop=\{`https:\/\/image\.tmdb\.org\/t\/p\/w1920_and_h800_multi_faces\/\$\{data\?\.backdropPath\}`\}/
+    );
   });
 });

@@ -1,6 +1,6 @@
 import Button from '@app/components/Common/Button';
 import { ArrowDownTrayIcon } from '@heroicons/react/24/solid';
-import type { ComponentPropsWithoutRef } from 'react';
+import type { ComponentPropsWithoutRef, ReactNode } from 'react';
 import { twMerge } from 'tailwind-merge';
 
 type RequestIconButtonProps = Omit<
@@ -8,11 +8,13 @@ type RequestIconButtonProps = Omit<
   'children'
 > & {
   buttonSize?: 'default' | 'lg' | 'md' | 'sm';
+  icon?: ReactNode;
 };
 
 const RequestIconButton = ({
   buttonSize = 'sm',
   className,
+  icon,
   ...props
 }: RequestIconButtonProps) => (
   <Button
@@ -24,7 +26,7 @@ const RequestIconButton = ({
     )}
     {...props}
   >
-    <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />
+    {icon ?? <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />}
   </Button>
 );
 

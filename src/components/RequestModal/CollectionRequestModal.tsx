@@ -11,6 +11,7 @@ import {
   reconcileCollectionRequestRetryability,
   type CollectionRequestOutcome,
 } from '@app/components/RequestModal/collectionRequestOutcomes';
+import { getCollectionBackdropUrl } from '@app/components/RequestModal/collectionRequestPresentation';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -81,6 +82,7 @@ const CollectionRequestModal = ({
   });
   const intl = useIntl();
   const { user, hasPermission } = useUser();
+  const collectionBackdrop = getCollectionBackdropUrl(data?.backdropPath);
   const {
     data: quota,
     error: quotaError,
@@ -359,11 +361,7 @@ const CollectionRequestModal = ({
         onCancel={onCancel}
         onRetry={() => void retryLoad()}
         retrying={isRetryingLoad}
-        backdrop={
-          data?.backdropPath
-            ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
-            : undefined
-        }
+        backdrop={collectionBackdrop}
       />
     );
   }
@@ -381,7 +379,6 @@ const CollectionRequestModal = ({
     [Permission.MANAGE_BLOCKLIST, Permission.VIEW_BLOCKLIST],
     { type: 'or' }
   );
-
   return (
     <Modal
       loading={(!data && !error) || !quota}
@@ -409,7 +406,7 @@ const CollectionRequestModal = ({
       okDisabled={isUpdating || selectedParts.length === 0}
       cancelButtonProps={{ disabled: isUpdating }}
       okButtonType={'primary'}
-      backdrop={`https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data?.backdropPath}`}
+      backdrop={collectionBackdrop}
     >
       {hasAutoApprove && !quota?.movie.restricted && (
         <div className="mt-6">

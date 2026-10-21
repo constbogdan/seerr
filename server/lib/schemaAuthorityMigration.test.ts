@@ -72,7 +72,7 @@ describe('migration/entity schema authority', () => {
       const currentApplied = await current.runMigrations();
       assert.equal(
         currentApplied.at(-1)?.name,
-        'AddSeriesRelocation1790000000044'
+        'AddTmdbCollectionMembership1790000000046'
       );
 
       assert.deepEqual(
