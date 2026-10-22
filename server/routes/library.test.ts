@@ -644,7 +644,7 @@ beforeEach(async () => {
       sourceItemId: 'removed-movie',
       firstObservedAt: new Date('2025-01-01T00:00:00.000Z'),
       removedAt: new Date('2026-01-01T00:00:00.000Z'),
-      servarrHasFile: false,
+      servarrHasFile: true,
       isCurrent: false,
     })
   );
@@ -1177,6 +1177,39 @@ describe('Library factual administrator API', () => {
     assert.equal(archive.body.results[0].logicalSizeBytes, null);
     assert.deepEqual(archive.body.results[0].storageRoots, []);
     assert.deepEqual(archive.body.results[0].externalLinks, []);
+  });
+
+  it('excludes closed inventory that never had physical media from Archive and All', async () => {
+    const fileless = await getRepository(CanonicalMedia).save(
+      new CanonicalMedia({
+        mediaType: LibraryMediaType.MOVIE,
+        titleSnapshot: 'Always Fileless Historical Movie',
+        year: 2021,
+      })
+    );
+    await getRepository(LibraryPresence).save(
+      new LibraryPresence({
+        canonicalMediaId: fileless.id,
+        sourceSystem: 'radarr',
+        sourceScope: 'fileless-history',
+        sourceItemId: 'fileless-history',
+        firstObservedAt: new Date('2025-01-01T00:00:00.000Z'),
+        removedAt: new Date('2026-01-01T00:00:00.000Z'),
+        servarrHasFile: false,
+        isCurrent: false,
+      })
+    );
+
+    for (const scope of ['archive', 'all']) {
+      const response = await request(app)
+        .get(
+          `/library?scope=${scope}&search=always%20fileless%20historical%20movie`
+        )
+        .set('x-test-role', 'admin');
+      assert.equal(response.status, 200);
+      assert.equal(response.body.pageInfo.results, 0);
+      assert.deepEqual(response.body.results, []);
+    }
   });
 
   it('filters durable Movie collection membership before totals, sorting, pagination, and presentation', async () => {
@@ -1786,7 +1819,7 @@ describe('Library factual administrator API', () => {
     assert.equal(page.body.results[0].logicalSizeBytes, null);
   });
 
-  it('projects generic imported history through the same Archive facts without origin-specific state', async () => {
+  it('does not infer physical Archive membership from imported viewing history alone', async () => {
     secondUser.jellyfinUserId = 'private-second-id';
     await getRepository(User).save(secondUser);
     await historicalDataImport.import(
@@ -1841,23 +1874,8 @@ describe('Library factual administrator API', () => {
     const archive = await request(app)
       .get('/library?scope=archive&search=imported archive movie')
       .set('x-test-role', 'admin');
-    assert.equal(archive.body.results.length, 1);
-    assert.equal(archive.body.results[0].addedAt, '2019-02-03T00:00:00.000Z');
-    assert.equal(archive.body.results[0].removedAt, null);
-    assert.equal(archive.body.results[0].removalSource, null);
-    assert.equal(
-      archive.body.results[0].lastActiveAt,
-      '2020-01-01T01:30:00.000Z'
-    );
-    assert.deepEqual(
-      archive.body.results[0].watchedUsers.map(
-        (viewer: { displayName: string; watchedPercentage: number }) => [
-          viewer.displayName,
-          viewer.watchedPercentage,
-        ]
-      ),
-      [['Bogdan', 100]]
-    );
+    assert.equal(archive.body.pageInfo.results, 0);
+    assert.deepEqual(archive.body.results, []);
   });
 
   it('returns current physical Movie facts without Retention or private source data', async () => {

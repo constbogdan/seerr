@@ -30,7 +30,6 @@ import {
   ensureActiveWatchlistIntentOccurrences,
   getSeriesSeasonWatchlistScope,
   getWatchlistHistory,
-  satisfyConfirmedMovieWatchlistIntents,
 } from '@server/lib/watchlistLifecycle';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
@@ -165,7 +164,7 @@ describe('Watchlist lifecycle occurrences', () => {
     assert.equal(await getRepository(Watchlist).count(), 1);
   });
 
-  it('satisfies only from exact confirmed Movie completion and is idempotent', async () => {
+  it('retains Movie membership and the active intent after confirmed viewing', async () => {
     const user = await admin();
     await add(MediaType.MOVIE, 8102);
     const occurrence = await getRepository(
@@ -177,53 +176,58 @@ describe('Watchlist lifecycle occurrences', () => {
       tmdbId: 8102,
       state: UserMediaIntentState.ACTIVE,
     });
-    const evidence = await addCompletion({
+    await addCompletion({
       tmdbId: 8102,
       classification: ViewingCompletionClassification.CONFIRMED,
       observedAt: new Date(occurrence.startedAt.getTime() + 1_000),
     });
-    assert.equal(await satisfyConfirmedMovieWatchlistIntents(), 1);
-    assert.equal(await satisfyConfirmedMovieWatchlistIntents(), 0);
-    assert.equal(await getRepository(Watchlist).count(), 0);
-    const satisfied = await getRepository(
+    assert.equal(await ensureActiveWatchlistIntentOccurrences(), 0);
+    assert.equal(await ensureActiveWatchlistIntentOccurrences(), 0);
+    assert.equal(await getRepository(Watchlist).count(), 1);
+    const retained = await getRepository(
       UserMediaIntentOccurrence
     ).findOneByOrFail({ id: occurrence.id });
-    assert.equal(satisfied.state, UserMediaIntentState.SATISFIED);
-    assert.equal(satisfied.completionEvidenceId, evidence.id);
+    assert.equal(retained.state, UserMediaIntentState.ACTIVE);
+    assert.equal(retained.endedAt, null);
+    assert.equal(retained.completionEvidenceId, null);
   });
 
-  it('does not irreversibly satisfy from LIKELY evidence', async () => {
+  it('preserves historical satisfied occurrences and their evidence', async () => {
     const user = await admin();
     await add(MediaType.MOVIE, 8103);
-    const occurrence = await getRepository(
+    const active = await getRepository(
       UserMediaIntentOccurrence
     ).findOneByOrFail({ userId: user.id, tmdbId: 8103 });
-    await addCompletion({
+    const evidence = await addCompletion({
       tmdbId: 8103,
-      classification: ViewingCompletionClassification.LIKELY,
-      observedAt: new Date(occurrence.startedAt.getTime() + 1_000),
-    });
-    assert.equal(await satisfyConfirmedMovieWatchlistIntents(), 0);
-    assert.equal(await getRepository(Watchlist).count(), 1);
-  });
-
-  it('does not satisfy a new intent from completion before it began', async () => {
-    const user = await admin();
-    await add(MediaType.MOVIE, 8105);
-    const occurrence = await getRepository(
-      UserMediaIntentOccurrence
-    ).findOneByOrFail({ userId: user.id, tmdbId: 8105 });
-    await addCompletion({
-      tmdbId: 8105,
       classification: ViewingCompletionClassification.CONFIRMED,
-      observedAt: new Date(occurrence.startedAt.getTime() - 1_000),
+      observedAt: new Date(active.startedAt.getTime() - 1_000),
     });
-    assert.equal(await satisfyConfirmedMovieWatchlistIntents(), 0);
-    assert.equal(await getRepository(Watchlist).count(), 1);
+    const historical = await getRepository(UserMediaIntentOccurrence).save(
+      new UserMediaIntentOccurrence({
+        userId: user.id,
+        user,
+        intentType: UserMediaIntentType.WATCHLIST,
+        mediaType: MediaType.MOVIE,
+        tmdbId: 8103,
+        state: UserMediaIntentState.SATISFIED,
+        startedAt: new Date(evidence.observedAt!.getTime() - 1_000),
+        endedAt: evidence.observedAt!,
+        endReason: 'confirmed_viewing',
+        completionEvidenceId: evidence.id,
+      })
+    );
+
+    assert.equal(await ensureActiveWatchlistIntentOccurrences(), 0);
+    const preserved = await getRepository(
+      UserMediaIntentOccurrence
+    ).findOneByOrFail({ id: historical.id });
+    assert.equal(preserved.state, UserMediaIntentState.SATISFIED);
+    assert.equal(preserved.completionEvidenceId, evidence.id);
     assert.equal(
       (
         await getRepository(UserMediaIntentOccurrence).findOneByOrFail({
-          id: occurrence.id,
+          id: active.id,
         })
       ).state,
       UserMediaIntentState.ACTIVE
@@ -233,7 +237,6 @@ describe('Watchlist lifecycle occurrences', () => {
   it('never satisfies a whole Series occurrence from viewing evidence', async () => {
     const user = await admin();
     await add(MediaType.TV, 8104);
-    assert.equal(await satisfyConfirmedMovieWatchlistIntents(), 0);
     const active = await getRepository(UserMediaIntentOccurrence).findOneBy({
       userId: user.id,
       mediaType: MediaType.TV,
@@ -375,7 +378,6 @@ describe('Watchlist lifecycle occurrences', () => {
         airedCaughtUp: false,
       }
     );
-    assert.equal(await satisfyConfirmedMovieWatchlistIntents(), 0);
     assert.ok(
       await getRepository(UserMediaIntentOccurrence).findOneBy({
         userId: user.id,

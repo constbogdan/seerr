@@ -1,7 +1,7 @@
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import { MediaStatus } from '@server/constants/media';
-import { useEffect } from 'react';
+import { useCallback, useEffect } from 'react';
 import { useIntl } from 'react-intl';
 import useSWRInfinite from 'swr/infinite';
 import useSettings from './useSettings';
@@ -33,7 +33,18 @@ interface DiscoverResult<T, S> {
   titles: T[];
   firstResultData?: BaseSearchResult<T> & S;
   mutate?: () => void;
+  pageCount: number;
+  setPageCount: (pageCount: number) => void;
 }
+
+interface DiscoverBehaviorOptions {
+  hideAvailable?: boolean;
+  hideBlocklisted?: boolean;
+  hideRequested?: boolean;
+  initialSize?: number;
+}
+
+export const DEFAULT_DISCOVER_PAGE_COUNT = 3;
 
 const extraEncodes: [RegExp, string][] = [
   [/\(/g, '%28'],
@@ -59,7 +70,12 @@ const useDiscover = <
 >(
   endpoint: string | null,
   options?: O,
-  { hideAvailable = true, hideBlocklisted = true, hideRequested = true } = {}
+  {
+    hideAvailable = true,
+    hideBlocklisted = true,
+    hideRequested = true,
+    initialSize = DEFAULT_DISCOVER_PAGE_COUNT,
+  }: DiscoverBehaviorOptions = {}
 ): DiscoverResult<T, S> => {
   const settings = useSettings();
   const { hasPermission } = useUser();
@@ -92,7 +108,7 @@ const useDiscover = <
       return `${endpoint}?${finalQueryString}`;
     },
     {
-      initialSize: 3,
+      initialSize,
       revalidateFirstPage: false,
       dedupingInterval: 30000,
       revalidateOnFocus: false,
@@ -109,9 +125,16 @@ const useDiscover = <
       typeof data[size - 1] === 'undefined' &&
       isValidating);
 
-  const fetchMore = () => {
-    setSize(size + 1);
-  };
+  const fetchMore = useCallback(() => {
+    void setSize((currentSize) => currentSize + 1);
+  }, [setSize]);
+
+  const setPageCount = useCallback(
+    (pageCount: number) => {
+      void setSize(Math.max(1, Math.floor(pageCount)));
+    },
+    [setSize]
+  );
 
   let titles = (data ?? []).reduce((a, v) => {
     const results: T[] = [];
@@ -184,6 +207,8 @@ const useDiscover = <
     titles,
     firstResultData: data?.[0],
     mutate,
+    pageCount: size,
+    setPageCount,
   };
 };
 

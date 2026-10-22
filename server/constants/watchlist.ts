@@ -21,6 +21,15 @@ export const watchlistWatchedFilters = [
 ] as const;
 export type WatchlistWatchedFilter = (typeof watchlistWatchedFilters)[number];
 
+export const watchlistLibraryStatusFilters = [
+  'any',
+  'absent',
+  'active',
+  'archived',
+] as const;
+export type WatchlistLibraryStatusFilter =
+  (typeof watchlistLibraryStatusFilters)[number];
+
 export type WatchState = 'watched' | 'not_watched' | 'unknown';
 
 export enum UserMediaIntentType {

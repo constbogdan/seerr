@@ -212,8 +212,10 @@ scopes without an Archive table, flag, or state machine:
 - **Current** (the default) is current Radarr/Sonarr media with physical files
   and/or current Jellyfin-visible media. Managed-without-file media is not
   silently treated as present.
-- **Archive** has trustworthy historical membership through a closed presence
-  or retained physical file, but does not currently qualify for Current.
+- **Archive** has trustworthy historical physical membership through a
+  source-specific physical presence flag or retained physical file, but does
+  not currently qualify for Current. A closed Servarr observation that never
+  had a file and a non-visible Jellyfin observation do not qualify.
 - **All** is the distinct canonical union. Current wins when old history and a
   qualifying current presence coexist, so re-added media appears once with
   Current semantics.

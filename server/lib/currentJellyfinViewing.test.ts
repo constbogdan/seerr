@@ -6,7 +6,12 @@ import {
   SourceCheckpointStatus,
   ViewingCompletionClassification,
 } from '@server/constants/libraryHistory';
+import { MediaType } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
+import {
+  UserMediaIntentState,
+  UserMediaIntentType,
+} from '@server/constants/watchlist';
 import dataSource, { getRepository } from '@server/datasource';
 import {
   CanonicalEpisode,
@@ -26,8 +31,10 @@ import {
   SourceCheckpoint,
 } from '@server/entity/LibraryHydration';
 import { User } from '@server/entity/User';
+import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
 import { Viewer } from '@server/entity/Viewer';
 import { ViewingEvidence } from '@server/entity/ViewingEvidence';
+import { Watchlist } from '@server/entity/Watchlist';
 import { CurrentJellyfinViewingService } from '@server/lib/currentJellyfinViewing';
 import { CurrentViewingLibraryIncompleteError } from '@server/lib/currentViewingRunCoordinator';
 import {
@@ -336,7 +343,7 @@ describe('current Jellyfin viewing synchronization', () => {
         viewerId: viewer.id,
         sourceScope: SCOPE,
         sourceItemId: MOVIE_ID,
-        mediaType: 'movie',
+        mediaType: MediaType.MOVIE,
         canonicalMediaId: movie.id,
         played: true,
         playCount: 5,
@@ -391,6 +398,27 @@ describe('current Jellyfin viewing synchronization', () => {
 
   it('persists Movie/Episode state and idempotent confirmed evidence', async () => {
     const { movie, episode } = await createCurrentLibrary();
+    const user = await getRepository(User).findOneByOrFail({ id: 1 });
+    const watchlist = await getRepository(Watchlist).save(
+      new Watchlist({
+        ratingKey: 'viewing-retained-watchlist',
+        tmdbId: 44001,
+        mediaType: MediaType.MOVIE,
+        title: 'Retained after viewing',
+        requestedBy: user,
+      })
+    );
+    const occurrence = await getRepository(UserMediaIntentOccurrence).save(
+      new UserMediaIntentOccurrence({
+        userId: user.id,
+        user,
+        intentType: UserMediaIntentType.WATCHLIST,
+        mediaType: MediaType.MOVIE,
+        tmdbId: watchlist.tmdbId,
+        state: UserMediaIntentState.ACTIVE,
+        startedAt: new Date('2026-09-01T00:00:00.000Z'),
+      })
+    );
     const observed = new Date('2026-10-01T12:00:00.000Z');
     const service = new CurrentJellyfinViewingService({
       now: () => observed,
@@ -455,6 +483,15 @@ describe('current Jellyfin viewing synchronization', () => {
     assert.equal(second.partialEvidenceReused, 1);
     assert.equal(await getRepository(CurrentViewingState).count(), 3);
     assert.equal(await getRepository(ViewingEvidence).count(), 3);
+    assert.ok(await getRepository(Watchlist).findOneBy({ id: watchlist.id }));
+    assert.equal(
+      (
+        await getRepository(UserMediaIntentOccurrence).findOneByOrFail({
+          id: occurrence.id,
+        })
+      ).state,
+      UserMediaIntentState.ACTIVE
+    );
   });
 
   it('persists one strongest native partial observation and lets completion dominate', async () => {

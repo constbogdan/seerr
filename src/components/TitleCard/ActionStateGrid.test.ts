@@ -30,7 +30,7 @@ describe('TitleCard action and state grid', () => {
     assert.doesNotMatch(markup, /data-state-slot/);
   });
 
-  it('aligns Watched-only with the first action without an empty state row', () => {
+  it('keeps actions on the card edge and aligns Watched in the inner column', () => {
     const markup = renderToStaticMarkup(
       createElement(ActionStateGrid, {
         actions: [item('watchlist'), item('blocklist')],
@@ -41,11 +41,11 @@ describe('TitleCard action and state grid', () => {
     assert.match(markup, /grid-cols-\[1\.75rem_1\.75rem\]/);
     assert.match(
       markup,
-      /data-action-slot="watchlist"[^>]*grid-column:1;grid-row:1/
+      /data-action-slot="watchlist"[^>]*grid-column:2;grid-row:1/
     );
     assert.match(
       markup,
-      /data-state-slot="watched"[^>]*grid-column:2;grid-row:1/
+      /data-state-slot="watched"[^>]*grid-column:1;grid-row:1/
     );
   });
 
@@ -59,25 +59,25 @@ describe('TitleCard action and state grid', () => {
 
     assert.match(
       markup,
-      /data-action-slot="watchlist"[^>]*grid-column:1;grid-row:1/
+      /data-action-slot="watchlist"[^>]*grid-column:2;grid-row:1/
     );
     assert.match(
       markup,
-      /data-state-slot="availability"[^>]*grid-column:2;grid-row:1/
+      /data-state-slot="availability"[^>]*grid-column:1;grid-row:1/
     );
     assert.match(
       markup,
-      /data-action-slot="blocklist"[^>]*grid-column:1;grid-row:2/
+      /data-action-slot="blocklist"[^>]*grid-column:2;grid-row:2/
     );
     assert.match(
       markup,
-      /data-state-slot="watched"[^>]*grid-column:2;grid-row:2/
+      /data-state-slot="watched"[^>]*grid-column:1;grid-row:2/
     );
     assert.match(markup, /auto-rows-\[1\.75rem\]/);
     assert.ok(markup.indexOf('availability') < markup.indexOf('watched'));
   });
 
-  it('keeps the state column in place while hover actions are absent', () => {
+  it('keeps the inner state column in place while hover actions are absent', () => {
     const markup = renderToStaticMarkup(
       createElement(ActionStateGrid, {
         actions: [],
@@ -88,11 +88,11 @@ describe('TitleCard action and state grid', () => {
     assert.match(markup, /grid-cols-\[1\.75rem_1\.75rem\]/);
     assert.match(
       markup,
-      /data-state-slot="availability"[^>]*grid-column:2;grid-row:1/
+      /data-state-slot="availability"[^>]*grid-column:1;grid-row:1/
     );
     assert.match(
       markup,
-      /data-state-slot="watched"[^>]*grid-column:2;grid-row:2/
+      /data-state-slot="watched"[^>]*grid-column:1;grid-row:2/
     );
   });
 

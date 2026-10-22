@@ -1,8 +1,10 @@
 import {
   watchlistCategories,
+  watchlistLibraryStatusFilters,
   watchlistSorts,
   watchlistWatchedFilters,
   type WatchlistCategory,
+  type WatchlistLibraryStatusFilter,
   type WatchlistSort,
   type WatchlistWatchedFilter,
 } from '@server/constants/watchlist';
@@ -17,6 +19,7 @@ export interface WatchlistPreferences {
   category: WatchlistCategory;
   sort: WatchlistSort;
   watched: WatchlistWatchedFilter;
+  libraryStatus: WatchlistLibraryStatusFilter;
 }
 
 export const defaultWatchlistPreferences: WatchlistPreferences = {
@@ -24,6 +27,7 @@ export const defaultWatchlistPreferences: WatchlistPreferences = {
   category: 'all',
   sort: 'added_desc',
   watched: 'not_watched',
+  libraryStatus: 'absent',
 };
 
 export const readWatchlistPreferences = (
@@ -55,6 +59,11 @@ export const readWatchlistPreferences = (
       )
         ? (parsed.watched as WatchlistWatchedFilter)
         : defaultWatchlistPreferences.watched,
+      libraryStatus: watchlistLibraryStatusFilters.includes(
+        parsed.libraryStatus as WatchlistLibraryStatusFilter
+      )
+        ? (parsed.libraryStatus as WatchlistLibraryStatusFilter)
+        : defaultWatchlistPreferences.libraryStatus,
     };
   } catch {
     return defaultWatchlistPreferences;
@@ -66,12 +75,14 @@ export const resolveWatchlistPreferences = ({
   queryOwner,
   querySort,
   queryWatched,
+  queryLibraryStatus,
   stored,
 }: {
   queryCategory?: string;
   queryOwner?: string;
   querySort?: string;
   queryWatched?: string;
+  queryLibraryStatus?: string;
   stored: WatchlistPreferences;
 }): WatchlistPreferences => ({
   owner:
@@ -91,6 +102,11 @@ export const resolveWatchlistPreferences = ({
   )
     ? (queryWatched as WatchlistWatchedFilter)
     : stored.watched,
+  libraryStatus: watchlistLibraryStatusFilters.includes(
+    queryLibraryStatus as WatchlistLibraryStatusFilter
+  )
+    ? (queryLibraryStatus as WatchlistLibraryStatusFilter)
+    : stored.libraryStatus,
 });
 
 export const resolveEligibleWatchlistOwner = (

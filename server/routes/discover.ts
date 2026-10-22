@@ -904,6 +904,7 @@ discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
         source: 'local',
         supportsPresentation: true,
         supportsWatchState: true,
+        supportsLibraryStatus: true,
         hasUnclassifiedItems: false,
       });
     }
