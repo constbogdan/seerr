@@ -1,6 +1,18 @@
 import PlexTvAPI from '@server/api/plextv';
+import { LibraryMediaType } from '@server/constants/libraryHistory';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
+import {
+  CanonicalEpisode,
+  CanonicalMedia,
+  CanonicalMediaIdentity,
+  CanonicalSeason,
+} from '@server/entity/CanonicalMedia';
+import {
+  LibraryFile,
+  LibraryFileEpisode,
+  LibraryPresence,
+} from '@server/entity/LibraryHistory';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
 import { UserMediaState } from '@server/entity/UserMediaState';
@@ -12,6 +24,7 @@ import {
   parseWatchlistQuery,
 } from '@server/lib/watchlist';
 import { WatchlistMetadataBackfill } from '@server/lib/watchlistMetadata';
+import { loadWatchlistRouletteCandidates } from '@server/lib/watchlistRoulette';
 import { AddWatchlistGenres1790000000008 } from '@server/migration/sqlite/1790000000008-AddWatchlistGenres';
 import { AddWatchlistEnrichment1790000000014 } from '@server/migration/sqlite/1790000000014-AddWatchlistEnrichment';
 import { setupTestDb } from '@server/test/db';
@@ -122,6 +135,68 @@ const addRow = async ({
   return row;
 };
 
+const addCanonicalIdentity = async ({
+  tmdbId,
+  mediaType,
+}: {
+  tmdbId: number;
+  mediaType: MediaType;
+}): Promise<CanonicalMedia> => {
+  const media = await getRepository(Media).findOneByOrFail({
+    tmdbId,
+    mediaType,
+  });
+  const canonical = await getRepository(CanonicalMedia).save(
+    new CanonicalMedia({
+      mediaType:
+        mediaType === MediaType.TV
+          ? LibraryMediaType.SERIES
+          : LibraryMediaType.MOVIE,
+      currentMediaId: media.id,
+    })
+  );
+  await getRepository(CanonicalMediaIdentity).save(
+    new CanonicalMediaIdentity({
+      canonicalMediaId: canonical.id,
+      mediaType: canonical.mediaType,
+      provider: 'tmdb',
+      sourceScope: '',
+      value: String(tmdbId),
+    })
+  );
+  return canonical;
+};
+
+const addPresence = async ({
+  canonical,
+  sourceSystem,
+  isCurrent,
+  servarrHasFile,
+  jellyfinVisible,
+  sourceItemId,
+}: {
+  canonical: CanonicalMedia;
+  sourceSystem: 'radarr' | 'sonarr' | 'jellyfin';
+  isCurrent: boolean;
+  servarrHasFile?: boolean;
+  jellyfinVisible?: boolean;
+  sourceItemId: string;
+}): Promise<LibraryPresence> =>
+  getRepository(LibraryPresence).save(
+    new LibraryPresence({
+      canonicalMediaId: canonical.id,
+      sourceSystem,
+      sourceScope: 'watchlist-status-test',
+      sourceItemId,
+      sourceGeneration: '1',
+      firstObservedAt: new Date('2026-01-01T00:00:00Z'),
+      lastSeenAt: new Date('2026-01-02T00:00:00Z'),
+      isCurrent,
+      servarrHasFile,
+      jellyfinVisible,
+    })
+  );
+
 describe('local Watchlist query and ownership', () => {
   beforeEach(() => {
     tmdbFixtures = new Map();
@@ -136,6 +211,7 @@ describe('local Watchlist query and ownership', () => {
       category: 'all',
       sort: 'added_desc',
       watched: 'not_watched',
+      libraryStatus: 'absent',
     });
     assert.deepEqual(
       parseWatchlistQuery({
@@ -148,6 +224,7 @@ describe('local Watchlist query and ownership', () => {
         category: 'animation',
         sort: 'title_asc',
         watched: 'not_watched',
+        libraryStatus: 'absent',
       }
     );
     assert.deepEqual(
@@ -157,7 +234,16 @@ describe('local Watchlist query and ownership', () => {
         category: 'all',
         sort: 'added_desc',
         watched: 'not_watched',
+        libraryStatus: 'absent',
       }
+    );
+    assert.equal(
+      parseWatchlistQuery({ libraryStatus: 'archived' }).libraryStatus,
+      'archived'
+    );
+    assert.equal(
+      parseWatchlistQuery({ libraryStatus: 'invalid' }).libraryStatus,
+      'absent'
     );
   });
 
@@ -210,6 +296,238 @@ describe('local Watchlist query and ownership', () => {
     ]);
     assert.deepEqual(await getAggregatedWatchlistIdentities(MediaType.TV), [
       { mediaType: MediaType.TV, tmdbId: 903 },
+    ]);
+  });
+
+  it('classifies physical Library Status before totals and Roulette deduplication', async () => {
+    const user = await admin();
+    const secondUser = await getRepository(User).save(
+      new User({
+        email: 'watchlist-status-second@example.test',
+        avatar: '',
+        includeInUserMetrics: true,
+      })
+    );
+    const createdAt = new Date('2026-04-01T00:00:00Z');
+    const fixtures = [
+      [7000, MediaType.MOVIE, 'Absent'],
+      [7001, MediaType.MOVIE, 'Active Movie'],
+      [7002, MediaType.MOVIE, 'Archived Movie'],
+      [7003, MediaType.MOVIE, 'Closed Fileless'],
+      [7004, MediaType.MOVIE, 'Invisible Jellyfin'],
+      [7005, MediaType.MOVIE, 'Retained File'],
+      [7006, MediaType.MOVIE, 'Active Precedence'],
+      [7007, MediaType.TV, 'Season Four History'],
+      [7008, MediaType.TV, 'Active Series'],
+      [7009, MediaType.TV, 'Absent Series'],
+    ] as const;
+    for (const [tmdbId, mediaType, title] of fixtures) {
+      await addRow({
+        user,
+        tmdbId,
+        mediaType,
+        title,
+        genreIds: [],
+        createdAt,
+        jellyfinPlayed: tmdbId === 7001,
+      });
+    }
+    await addRow({
+      user: secondUser,
+      tmdbId: 7000,
+      mediaType: MediaType.MOVIE,
+      title: 'Absent Duplicate',
+      genreIds: [],
+      createdAt,
+    });
+
+    const activeMovie = await addCanonicalIdentity({
+      tmdbId: 7001,
+      mediaType: MediaType.MOVIE,
+    });
+    await addPresence({
+      canonical: activeMovie,
+      sourceSystem: 'radarr',
+      sourceItemId: '7001',
+      isCurrent: true,
+      servarrHasFile: true,
+    });
+
+    const archivedMovie = await addCanonicalIdentity({
+      tmdbId: 7002,
+      mediaType: MediaType.MOVIE,
+    });
+    await addPresence({
+      canonical: archivedMovie,
+      sourceSystem: 'radarr',
+      sourceItemId: '7002',
+      isCurrent: false,
+      servarrHasFile: true,
+    });
+
+    const closedFileless = await addCanonicalIdentity({
+      tmdbId: 7003,
+      mediaType: MediaType.MOVIE,
+    });
+    await addPresence({
+      canonical: closedFileless,
+      sourceSystem: 'radarr',
+      sourceItemId: '7003',
+      isCurrent: false,
+      servarrHasFile: false,
+    });
+
+    const invisibleJellyfin = await addCanonicalIdentity({
+      tmdbId: 7004,
+      mediaType: MediaType.MOVIE,
+    });
+    await addPresence({
+      canonical: invisibleJellyfin,
+      sourceSystem: 'jellyfin',
+      sourceItemId: 'movie:7004',
+      isCurrent: true,
+      jellyfinVisible: false,
+    });
+
+    const retainedFile = await addCanonicalIdentity({
+      tmdbId: 7005,
+      mediaType: MediaType.MOVIE,
+    });
+    const retainedPresence = await addPresence({
+      canonical: retainedFile,
+      sourceSystem: 'radarr',
+      sourceItemId: '7005',
+      isCurrent: false,
+      servarrHasFile: false,
+    });
+    await getRepository(LibraryFile).save(
+      new LibraryFile({
+        libraryPresenceId: retainedPresence.id,
+        sourceSystem: 'radarr',
+        sourceScope: 'watchlist-status-test',
+        sourceFileId: '7005-file',
+        sourceGeneration: '1',
+        firstObservedAt: createdAt,
+        isCurrent: false,
+      })
+    );
+
+    const activePrecedence = await addCanonicalIdentity({
+      tmdbId: 7006,
+      mediaType: MediaType.MOVIE,
+    });
+    await addPresence({
+      canonical: activePrecedence,
+      sourceSystem: 'radarr',
+      sourceItemId: '7006-old',
+      isCurrent: false,
+      servarrHasFile: true,
+    });
+    await addPresence({
+      canonical: activePrecedence,
+      sourceSystem: 'jellyfin',
+      sourceItemId: 'movie:7006',
+      isCurrent: true,
+      jellyfinVisible: true,
+    });
+
+    const historicalSeries = await addCanonicalIdentity({
+      tmdbId: 7007,
+      mediaType: MediaType.TV,
+    });
+    const seasonFour = await getRepository(CanonicalSeason).save(
+      new CanonicalSeason({
+        seriesId: historicalSeries.id,
+        seasonNumber: 4,
+      })
+    );
+    const episode = await getRepository(CanonicalEpisode).save(
+      new CanonicalEpisode({
+        seasonId: seasonFour.id,
+        episodeNumber: 1,
+      })
+    );
+    const historicalSeriesPresence = await addPresence({
+      canonical: historicalSeries,
+      sourceSystem: 'sonarr',
+      sourceItemId: '7007',
+      isCurrent: false,
+      servarrHasFile: false,
+    });
+    const historicalSeriesFile = await getRepository(LibraryFile).save(
+      new LibraryFile({
+        libraryPresenceId: historicalSeriesPresence.id,
+        sourceSystem: 'sonarr',
+        sourceScope: 'watchlist-status-test',
+        sourceFileId: '7007-s04e01',
+        sourceGeneration: '1',
+        firstObservedAt: createdAt,
+        isCurrent: false,
+      })
+    );
+    await getRepository(LibraryFileEpisode).save(
+      new LibraryFileEpisode({
+        libraryFileId: historicalSeriesFile.id,
+        canonicalEpisodeId: episode.id,
+      })
+    );
+
+    const activeSeries = await addCanonicalIdentity({
+      tmdbId: 7008,
+      mediaType: MediaType.TV,
+    });
+    await addPresence({
+      canonical: activeSeries,
+      sourceSystem: 'sonarr',
+      sourceItemId: '7008',
+      isCurrent: true,
+      servarrHasFile: true,
+    });
+
+    const query = async (
+      libraryStatus: 'any' | 'absent' | 'active' | 'archived',
+      watched: 'all' | 'watched' | 'not_watched' = 'all'
+    ) =>
+      getLocalWatchlist({
+        userId: user.id,
+        query: {
+          page: 1,
+          category: 'all',
+          sort: 'title_asc',
+          watched,
+          libraryStatus,
+        },
+      });
+
+    assert.deepEqual(
+      (await query('absent')).results.map((row) => row.title),
+      ['Absent', 'Absent Series', 'Closed Fileless', 'Invisible Jellyfin']
+    );
+    assert.deepEqual(
+      (await query('active')).results.map((row) => row.title),
+      ['Active Movie', 'Active Precedence', 'Active Series']
+    );
+    assert.deepEqual(
+      (await query('archived')).results.map((row) => row.title),
+      ['Archived Movie', 'Retained File', 'Season Four History']
+    );
+    assert.equal((await query('any')).totalResults, 10);
+    assert.deepEqual(
+      (await query('active', 'watched')).results.map((row) => row.title),
+      ['Active Movie']
+    );
+    assert.deepEqual(
+      (await loadWatchlistRouletteCandidates(MediaType.MOVIE)).sort(
+        (left, right) => left.tmdbId - right.tmdbId
+      ),
+      [
+        { mediaType: MediaType.MOVIE, tmdbId: 7000 },
+        { mediaType: MediaType.MOVIE, tmdbId: 7003 },
+        { mediaType: MediaType.MOVIE, tmdbId: 7004 },
+      ]
+    );
+    assert.deepEqual(await loadWatchlistRouletteCandidates(MediaType.TV), [
+      { mediaType: MediaType.TV, tmdbId: 7009 },
     ]);
   });
 
@@ -445,6 +763,7 @@ describe('local Watchlist query and ownership', () => {
     });
     assert.equal(all.totalResults, 3);
     assert.equal(all.supportsWatchState, true);
+    assert.equal(all.supportsLibraryStatus, true);
   });
 
   it('always selects Plex for a Plex user even when legacy local rows exist', async () => {
@@ -468,6 +787,7 @@ describe('local Watchlist query and ownership', () => {
     assert.equal(result.source, 'plex');
     assert.equal(result.supportsPresentation, false);
     assert.equal(result.supportsWatchState, false);
+    assert.equal(result.supportsLibraryStatus, false);
     assert.deepEqual(
       result.results.map((row) => row.title),
       ['Plex Canonical']

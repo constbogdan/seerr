@@ -29,5 +29,6 @@ export interface WatchlistResponse {
   source: 'local' | 'plex';
   supportsPresentation: boolean;
   supportsWatchState: boolean;
+  supportsLibraryStatus: boolean;
   hasUnclassifiedItems: boolean;
 }

@@ -75,8 +75,10 @@ import {
   currentLibraryAddedSql,
   currentLibraryLastActiveSql,
   currentLibraryPresenceSql,
+  everPhysicalLibraryMembershipSql,
   isQualifyingLibraryEvidence,
   normalizeLibraryDatabaseDate,
+  physicalLibraryPresenceSql,
 } from '@server/lib/libraryActivity';
 import libraryPresentation, {
   fetchLibraryPresentation,
@@ -259,11 +261,8 @@ interface RawLibraryRequester {
 
 const currentPresenceSql = currentLibraryPresenceSql;
 
-const historicalPresenceSql = (alias: string) =>
-  `${alias}."isCurrent" = :notCurrent`;
-
 const historicalStoragePresenceSql = (alias: string) =>
-  `(${historicalPresenceSql(alias)} OR EXISTS (` +
+  `(${physicalLibraryPresenceSql(alias)} OR EXISTS (` +
   `SELECT 1 FROM "library_file" historical_storage_file WHERE ` +
   `historical_storage_file."libraryPresenceId" = ${alias}.id))`;
 
@@ -289,13 +288,7 @@ const currentMembershipSql = () =>
   )})`;
 
 const historicalMembershipSql = () =>
-  `(EXISTS (SELECT 1 FROM "library_presence" library_historical_population WHERE ` +
-  `library_historical_population."canonicalMediaId" = canonical.id AND ${historicalPresenceSql(
-    'library_historical_population'
-  )}) OR EXISTS (SELECT 1 FROM "library_file" library_historical_file ` +
-  `INNER JOIN "library_presence" library_historical_file_presence ON ` +
-  `library_historical_file_presence.id = library_historical_file."libraryPresenceId" WHERE ` +
-  `library_historical_file_presence."canonicalMediaId" = canonical.id))`;
+  everPhysicalLibraryMembershipSql('canonical.id');
 
 const libraryStatusSql = (currentMembership = currentMembershipSql()) =>
   `CASE WHEN ${currentMembership} THEN 'current' ELSE 'archive' END`;
@@ -534,7 +527,7 @@ const historicalAddedFallbackSql =
   `INNER JOIN "library_presence" historical_file_presence ON historical_file_presence.id = historical_file."libraryPresenceId" ` +
   `WHERE historical_file_presence."canonicalMediaId" = canonical.id AND historical_file."importedAt" IS NOT NULL), ` +
   `(SELECT MIN(historical_presence."addedAt") FROM "library_presence" historical_presence WHERE ` +
-  `historical_presence."canonicalMediaId" = canonical.id AND ${historicalPresenceSql(
+  `historical_presence."canonicalMediaId" = canonical.id AND ${physicalLibraryPresenceSql(
     'historical_presence'
   )} AND historical_presence."addedAt" IS NOT NULL))`;
 
@@ -712,7 +705,9 @@ const candidateMembershipSql =
   `MAX(CASE WHEN ${currentPresenceSql(
     'candidate_presence'
   )} THEN 1 ELSE 0 END) AS "currentMembership", ` +
-  `MAX(CASE WHEN candidate_presence."isCurrent" = :notCurrent THEN 1 ELSE 0 END) AS "historicalPresenceMembership" ` +
+  `MAX(CASE WHEN ${physicalLibraryPresenceSql(
+    'candidate_presence'
+  )} THEN 1 ELSE 0 END) AS "historicalPresenceMembership" ` +
   `FROM "library_presence" candidate_presence GROUP BY candidate_presence."canonicalMediaId"), ` +
   `candidate_file_membership AS (` +
   `SELECT candidate_file_presence."canonicalMediaId" AS "canonicalMediaId", ` +

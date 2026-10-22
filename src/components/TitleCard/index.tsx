@@ -20,6 +20,7 @@ import {
   consumeCardNavigationClick,
   createCardNavigationGesture,
 } from '@app/components/TitleCard/touchNavigation';
+import WatchlistIcon from '@app/components/TitleCard/WatchlistIcon';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
@@ -27,8 +28,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { withProperties } from '@app/utils/typeHelpers';
 import { Transition } from '@headlessui/react';
-import { EyeIcon, NoSymbolIcon, StarIcon } from '@heroicons/react/24/outline';
-import { StarIcon as StarIconSolid } from '@heroicons/react/24/solid';
+import { EyeIcon, NoSymbolIcon } from '@heroicons/react/24/outline';
 import { MediaStatus } from '@server/constants/media';
 import type { Watchlist } from '@server/entity/Watchlist';
 import type { LibraryUser } from '@server/interfaces/api/libraryInterfaces';
@@ -78,8 +78,6 @@ const messages = defineMessages('components.TitleCard', {
   viewTitle: 'View {title}',
 });
 
-const watchlistIconClassName = '!h-[1.4375rem] !w-[1.4375rem] text-amber-300';
-
 const TitleCard = ({
   id,
   image,
@@ -114,6 +112,9 @@ const TitleCard = ({
   const { addToast } = useToasts();
   const [toggleWatchlist, setToggleWatchlist] =
     useState<boolean>(!isAddedToWatchlist);
+  const watchlistIconClassName = `!h-[1.4375rem] !w-[1.4375rem] ${
+    toggleWatchlist ? 'text-[#C0C0C0]' : 'text-[#FFC107]'
+  }`;
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const mountedRef = useRef(true);
@@ -415,12 +416,10 @@ const TitleCard = ({
     ? {
         label: intl.formatMessage(messages.addToWatchList),
         onClick: onClickWatchlistBtn,
-        icon: <StarIcon className={watchlistIconClassName} />,
       }
     : {
         label: intl.formatMessage(messages.removeFromWatchList),
         onClick: onClickDeleteWatchlistBtn,
-        icon: <StarIconSolid className={watchlistIconClassName} />,
       };
   const canAddToBlocklist =
     currentStatus !== MediaStatus.PROCESSING &&
@@ -467,7 +466,10 @@ const TitleCard = ({
                         onClick={watchlistAction.onClick}
                         disabled={isUpdating}
                       >
-                        {watchlistAction.icon}
+                        <WatchlistIcon
+                          isWatchlisted={!toggleWatchlist}
+                          className={watchlistIconClassName}
+                        />
                       </Button>
                     </Tooltip>
                   ),

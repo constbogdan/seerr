@@ -25,7 +25,7 @@ import { Permission } from '@server/lib/permissions';
 import { InvalidRequestSeasonsError } from '@server/lib/requestSeasonValidation';
 import { getSettings } from '@server/lib/settings';
 import {
-  getAggregatedWatchlistIdentities,
+  getAggregatedAbsentWatchlistIdentities,
   type WatchlistIdentity,
 } from '@server/lib/watchlist';
 import logger from '@server/logger';
@@ -165,10 +165,13 @@ export const createWatchlistRouletteRequest = (
     isAutoRequest: true,
   });
 
+export const loadWatchlistRouletteCandidates =
+  getAggregatedAbsentWatchlistIdentities;
+
 const defaultDependencies: WatchlistRouletteDependencies = {
   now: () => new Date(),
   randomIndex: (upperExclusive) => randomInt(upperExclusive),
-  getCandidates: getAggregatedWatchlistIdentities,
+  getCandidates: loadWatchlistRouletteCandidates,
   refreshAcquisitions: () => acquisitionMonitor.refresh('background'),
   findRequestOwner: defaultFindRequestOwner,
   isCandidateEligible: isWatchlistRouletteCandidateEligible,

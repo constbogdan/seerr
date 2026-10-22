@@ -208,6 +208,7 @@ export const createR11WatchlistPage = (page: number): WatchlistResponse => ({
   source: 'local',
   supportsPresentation: true,
   supportsWatchState: true,
+  supportsLibraryStatus: true,
   hasUnclassifiedItems: false,
   results: Array.from({ length: 20 }, (_, index) => {
     const id = (page - 1) * 20 + index + 1;

@@ -15,6 +15,8 @@ const ActionStateGrid = ({ actions, states }: ActionStateGridProps) => {
     return null;
   }
 
+  const actionColumn = states.length > 0 ? 2 : 1;
+
   return (
     <div
       className={`pointer-events-none grid auto-rows-[1.75rem] items-start gap-1 ${
@@ -29,7 +31,7 @@ const ActionStateGrid = ({ actions, states }: ActionStateGridProps) => {
           className="pointer-events-auto flex h-7 w-7 items-center justify-center"
           data-action-slot={action.id}
           key={action.id}
-          style={{ gridColumn: 1, gridRow: index + 1 }}
+          style={{ gridColumn: actionColumn, gridRow: index + 1 }}
         >
           {action.content}
         </div>
@@ -39,7 +41,7 @@ const ActionStateGrid = ({ actions, states }: ActionStateGridProps) => {
           className="flex h-7 w-7 items-center justify-center"
           data-state-slot={state.id}
           key={state.id}
-          style={{ gridColumn: 2, gridRow: index + 1 }}
+          style={{ gridColumn: 1, gridRow: index + 1 }}
         >
           {state.content}
         </div>

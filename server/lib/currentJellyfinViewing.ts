@@ -32,7 +32,6 @@ import {
   type JellyfinViewingClient,
 } from '@server/lib/jellyfinViewingSource';
 import { getSettings } from '@server/lib/settings';
-import { satisfyConfirmedMovieWatchlistIntents } from '@server/lib/watchlistLifecycle';
 import logger from '@server/logger';
 import { getHostname } from '@server/utils/getHostname';
 import { IsNull, type EntityManager } from 'typeorm';
@@ -387,7 +386,6 @@ export class CurrentJellyfinViewingService {
               ]
             : failures
         );
-        await satisfyConfirmedMovieWatchlistIntents();
       });
     } catch (error) {
       if (!(error instanceof CurrentViewingRunOwnershipLostError)) throw error;

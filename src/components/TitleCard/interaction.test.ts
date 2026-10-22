@@ -1,7 +1,15 @@
+import { MediaType } from '@server/constants/media';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+// Client unit tests execute under the server test tsconfig, which has no @app alias.
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import {
+  createDetailsWatchlistTarget,
+  DetailsWatchlistMutationTracker,
+  updateDetailsWatchlistMembership,
+} from '../../hooks/useDetailsWatchlist';
 import { resolveTitleCardRequestActionLabel } from './requestActionLabel';
 
 describe('TitleCard interaction contracts', () => {
@@ -10,15 +18,6 @@ describe('TitleCard interaction contracts', () => {
     path.join(__dirname, '../Common/RequestIconButton.tsx'),
     'utf8'
   );
-  const movieDetails = readFileSync(
-    path.join(__dirname, '../MovieDetails/index.tsx'),
-    'utf8'
-  );
-  const tvDetails = readFileSync(
-    path.join(__dirname, '../TvDetails/index.tsx'),
-    'utf8'
-  );
-
   it('uses one native navigation link instead of a link-like wrapper', () => {
     assert.match(source, /<Link\s+href=\{cardHref\}/);
     assert.match(
@@ -93,16 +92,43 @@ describe('TitleCard interaction contracts', () => {
     assert.match(source, /disabled=\{isUpdating\}/);
   });
 
-  it('uses the same confirmed-success rule on Movie and Series details', () => {
-    for (const details of [movieDetails, tvDetails]) {
-      assert.match(details, /if \(watchlistMutationRef\.current\) return/);
-      assert.match(details, /setToggleWatchlist\(false\)/);
-      assert.match(details, /setToggleWatchlist\(true\)/);
-      assert.doesNotMatch(
-        details,
-        /setToggleWatchlist\(\(prevState\) => !prevState\)/
-      );
-      assert.match(details, /disabled=\{isUpdating\}/);
+  it('applies confirmed Movie and Series detail mutations to their exact identities', () => {
+    for (const mediaType of [MediaType.MOVIE, MediaType.TV] as const) {
+      const target = createDetailsWatchlistTarget({
+        mediaType,
+        title: mediaType === MediaType.MOVIE ? 'Movie' : 'Series',
+        tmdbId: 42,
+        userId: 7,
+      });
+      assert.ok(target);
+
+      const tracker = new DetailsWatchlistMutationTracker();
+      tracker.setCurrentIdentity(target.identity);
+      let details = { id: target.tmdbId, onUserWatchlist: false };
+
+      const addToken = tracker.begin(target.identity);
+      assert.ok(addToken);
+      assert.equal(details.onUserWatchlist, false);
+      assert.equal(tracker.isCurrent(target.identity, addToken), true);
+      details =
+        updateDetailsWatchlistMembership(details, target, true) ?? details;
+      assert.equal(details.onUserWatchlist, true);
+      assert.equal(tracker.finish(target.identity, addToken), true);
+
+      const removeToken = tracker.begin(target.identity);
+      assert.ok(removeToken);
+      assert.equal(details.onUserWatchlist, true);
+      assert.equal(tracker.isCurrent(target.identity, removeToken), true);
+      details =
+        updateDetailsWatchlistMembership(details, target, false) ?? details;
+      assert.equal(details.onUserWatchlist, false);
+      assert.equal(tracker.finish(target.identity, removeToken), true);
+
+      const failedToken = tracker.begin(target.identity);
+      assert.ok(failedToken);
+      assert.equal(details.onUserWatchlist, false);
+      assert.equal(tracker.finish(target.identity, failedToken), true);
+      assert.equal(details.onUserWatchlist, false);
     }
   });
 });

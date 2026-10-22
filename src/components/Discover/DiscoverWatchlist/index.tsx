@@ -2,7 +2,9 @@ import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
 import PageTitle from '@app/components/Common/PageTitle';
-import useDiscover from '@app/hooks/useDiscover';
+import useDiscover, {
+  DEFAULT_DISCOVER_PAGE_COUNT,
+} from '@app/hooks/useDiscover';
 import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
 import ErrorPage from '@app/pages/_error';
@@ -10,10 +12,12 @@ import defineMessages from '@app/utils/defineMessages';
 import {
   BarsArrowDownIcon,
   CheckCircleIcon,
+  CircleStackIcon,
   UserGroupIcon,
 } from '@heroicons/react/24/solid';
 import type {
   WatchlistCategory,
+  WatchlistLibraryStatusFilter,
   WatchlistSort,
   WatchlistWatchedFilter,
 } from '@server/constants/watchlist';
@@ -21,9 +25,16 @@ import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import type { UserResultsResponse } from '@server/interfaces/api/userInterfaces';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
+import WatchlistItemCount from './WatchlistItemCount';
+import {
+  getInitialWatchlistPageCount,
+  getWatchlistQueryIdentity,
+  retainWatchlistPageCount,
+  retainWatchlistPreferences,
+} from './navigationState';
 import {
   defaultWatchlistPreferences,
   getWatchlistPreferenceKey,
@@ -32,6 +43,12 @@ import {
   resolveWatchlistPreferences,
   type WatchlistPreferences,
 } from './preferences';
+
+const retainedWatchlistPageCounts = new Map<string, number>();
+const retainedWatchlistPreferenceStates = new Map<
+  string,
+  WatchlistPreferences
+>();
 
 const messages = defineMessages('components.Discover.DiscoverWatchlist', {
   discoverwatchlist: 'Watchlist',
@@ -54,6 +71,12 @@ const messages = defineMessages('components.Discover.DiscoverWatchlist', {
   me: 'Me',
   allUsers: 'All',
   ownerFilter: 'Watchlist owner',
+  libraryStatusFilter: 'Library Status',
+  libraryStatusUnavailable:
+    'Library Status filtering is unavailable for Plex Watchlists.',
+  absent: 'Absent',
+  active: 'Active',
+  archived: 'Archived',
 });
 
 const DiscoverWatchlist = () => {
@@ -61,14 +84,26 @@ const DiscoverWatchlist = () => {
   const router = useRouter();
   const dedicatedPage = router.pathname === '/discover/watchlist';
   const updateQuery = useBatchUpdateQueryParams({});
-  const [preferences, setPreferences] = useState<WatchlistPreferences | null>(
-    dedicatedPage ? null : defaultWatchlistPreferences
-  );
   const { user } = useUser({
     id: Number(router.query.userId),
   });
   const { user: currentUser, hasPermission } = useUser();
   const canViewOthers = hasPermission(Permission.WATCHLIST_VIEW);
+  const preferenceKey = currentUser?.id
+    ? getWatchlistPreferenceKey(currentUser.id)
+    : undefined;
+  const [preferences, setPreferences] = useState<WatchlistPreferences | null>(
+    () =>
+      dedicatedPage
+        ? preferenceKey
+          ? (retainedWatchlistPreferenceStates.get(preferenceKey) ?? null)
+          : null
+        : defaultWatchlistPreferences
+  );
+  const [filteredTotal, setFilteredTotal] = useState<{
+    queryIdentity: string;
+    count: number;
+  } | null>(null);
   const owner = preferences?.owner ?? defaultWatchlistPreferences.owner;
   const { data: eligibleUsers, error: eligibleUsersError } =
     useSWR<UserResultsResponse>(
@@ -91,14 +126,46 @@ const DiscoverWatchlist = () => {
         })),
     ];
   }, [currentUser?.id, eligibleUsers?.results, intl]);
-  const preferenceKey = currentUser?.id
-    ? getWatchlistPreferenceKey(currentUser.id)
-    : undefined;
   const preferencesReady =
     !dedicatedPage ||
     Boolean(
       preferences && (!canViewOthers || eligibleUsers || eligibleUsersError)
     );
+
+  const watchlistEndpoint = preferencesReady
+    ? `/api/v1/${
+        router.pathname.startsWith('/profile')
+          ? `user/${currentUser?.id}`
+          : router.query.userId
+            ? `user/${router.query.userId}`
+            : 'discover'
+      }/watchlist`
+    : null;
+  const discoverOptions = useMemo(
+    () =>
+      dedicatedPage && preferences
+        ? {
+            category: preferences.category,
+            sort: preferences.sort,
+            watched: preferences.watched,
+            libraryStatus: preferences.libraryStatus,
+            ...(canViewOthers && { owner }),
+          }
+        : undefined,
+    [canViewOthers, dedicatedPage, owner, preferences]
+  );
+  const queryIdentity = useMemo(
+    () =>
+      watchlistEndpoint
+        ? getWatchlistQueryIdentity(watchlistEndpoint, discoverOptions)
+        : null,
+    [discoverOptions, watchlistEndpoint]
+  );
+  const initialPageCount = queryIdentity
+    ? getInitialWatchlistPageCount(
+        retainedWatchlistPageCounts.get(queryIdentity)
+      )
+    : DEFAULT_DISCOVER_PAGE_COUNT;
 
   const {
     isLoadingInitialData,
@@ -110,40 +177,71 @@ const DiscoverWatchlist = () => {
     error,
     mutate,
     firstResultData,
+    pageCount,
+    setPageCount,
   } = useDiscover<
     WatchlistItem,
     {
       source: 'local' | 'plex';
       supportsPresentation: boolean;
       supportsWatchState: boolean;
+      supportsLibraryStatus: boolean;
       hasUnclassifiedItems: boolean;
     },
     {
       category?: WatchlistCategory;
       sort?: WatchlistSort;
       watched?: WatchlistWatchedFilter;
+      libraryStatus?: WatchlistLibraryStatusFilter;
       owner?: string;
     }
-  >(
-    preferencesReady
-      ? `/api/v1/${
-          router.pathname.startsWith('/profile')
-            ? `user/${currentUser?.id}`
-            : router.query.userId
-              ? `user/${router.query.userId}`
-              : 'discover'
-        }/watchlist`
-      : null,
-    dedicatedPage && preferences
-      ? {
-          category: preferences.category,
-          sort: preferences.sort,
-          watched: preferences.watched,
-          ...(canViewOthers && { owner }),
-        }
-      : undefined,
-    { hideAvailable: false, hideBlocklisted: false, hideRequested: false }
-  );
+  >(watchlistEndpoint, discoverOptions, {
+    hideAvailable: false,
+    hideBlocklisted: false,
+    hideRequested: false,
+    initialSize: initialPageCount,
+  });
+  const restoredQueryIdentityRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!queryIdentity || restoredQueryIdentityRef.current === queryIdentity) {
+      return;
+    }
+
+    restoredQueryIdentityRef.current = queryIdentity;
+    const retainedPageCount = getInitialWatchlistPageCount(
+      retainedWatchlistPageCounts.get(queryIdentity)
+    );
+    if (retainedPageCount !== pageCount) {
+      setPageCount(retainedPageCount);
+    }
+  }, [pageCount, queryIdentity, setPageCount]);
+
+  useEffect(() => {
+    if (!queryIdentity) return;
+
+    retainWatchlistPageCount(
+      retainedWatchlistPageCounts,
+      queryIdentity,
+      pageCount
+    );
+  }, [pageCount, queryIdentity]);
+
+  useEffect(() => {
+    if (
+      !dedicatedPage ||
+      !queryIdentity ||
+      isLoadingInitialData ||
+      !firstResultData
+    ) {
+      return;
+    }
+
+    setFilteredTotal({
+      queryIdentity,
+      count: firstResultData.totalResults,
+    });
+  }, [dedicatedPage, firstResultData, isLoadingInitialData, queryIdentity]);
 
   useEffect(() => {
     if (
@@ -171,6 +269,10 @@ const DiscoverWatchlist = () => {
         typeof router.query.watched === 'string'
           ? router.query.watched
           : undefined,
+      queryLibraryStatus:
+        typeof router.query.libraryStatus === 'string'
+          ? router.query.libraryStatus
+          : undefined,
       stored,
     });
     const eligibleOwner = canViewOthers
@@ -181,6 +283,11 @@ const DiscoverWatchlist = () => {
       : 'me';
     const initialized = { ...resolved, owner: eligibleOwner };
     setPreferences(initialized);
+    retainWatchlistPreferences(
+      retainedWatchlistPreferenceStates,
+      preferenceKey,
+      initialized
+    );
     window.localStorage.setItem(preferenceKey, JSON.stringify(initialized));
   }, [
     canViewOthers,
@@ -194,6 +301,7 @@ const DiscoverWatchlist = () => {
     router.query.owner,
     router.query.sort,
     router.query.watched,
+    router.query.libraryStatus,
   ]);
 
   const updatePreference = useCallback(
@@ -203,13 +311,32 @@ const DiscoverWatchlist = () => {
         owner: string;
         sort: WatchlistSort;
         watched: WatchlistWatchedFilter;
+        libraryStatus: WatchlistLibraryStatusFilter;
       }>
     ) => {
       if (!preferences) return;
       const updated = { ...preferences, ...next };
+      setPageCount(DEFAULT_DISCOVER_PAGE_COUNT);
+      setFilteredTotal(null);
       setPreferences(updated);
       if (preferenceKey) {
+        retainWatchlistPreferences(
+          retainedWatchlistPreferenceStates,
+          preferenceKey,
+          updated
+        );
         window.localStorage.setItem(preferenceKey, JSON.stringify(updated));
+      }
+      if (watchlistEndpoint) {
+        retainedWatchlistPageCounts.delete(
+          getWatchlistQueryIdentity(watchlistEndpoint, {
+            category: updated.category,
+            sort: updated.sort,
+            watched: updated.watched,
+            libraryStatus: updated.libraryStatus,
+            ...(canViewOthers && { owner: updated.owner }),
+          })
+        );
       }
       updateQuery({
         category: updated.category === 'all' ? undefined : updated.category,
@@ -217,10 +344,21 @@ const DiscoverWatchlist = () => {
         sort: updated.sort === 'added_desc' ? undefined : updated.sort,
         watched:
           updated.watched === 'not_watched' ? undefined : updated.watched,
+        libraryStatus:
+          updated.libraryStatus === 'absent'
+            ? undefined
+            : updated.libraryStatus,
         page: undefined,
       });
     },
-    [preferenceKey, preferences, updateQuery]
+    [
+      canViewOthers,
+      preferenceKey,
+      preferences,
+      setPageCount,
+      updateQuery,
+      watchlistEndpoint,
+    ]
   );
 
   useEffect(() => {
@@ -253,6 +391,10 @@ const DiscoverWatchlist = () => {
   const title = intl.formatMessage(
     router.query.userId ? messages.watchlist : messages.discoverwatchlist
   );
+  const displayedTotal =
+    filteredTotal?.queryIdentity === queryIdentity
+      ? filteredTotal.count
+      : undefined;
 
   return (
     <>
@@ -272,7 +414,18 @@ const DiscoverWatchlist = () => {
               )
             }
           >
-            {title}
+            <span className="inline-flex flex-wrap items-baseline gap-x-3">
+              <span>{title}</span>
+              {dedicatedPage && (
+                <WatchlistItemCount
+                  count={displayedTotal}
+                  loading={
+                    isLoadingInitialData ||
+                    filteredTotal?.queryIdentity !== queryIdentity
+                  }
+                />
+              )}
+            </span>
           </Header>
           {dedicatedPage && firstResultData?.supportsPresentation && (
             <div className="relative z-50 mt-2 flex flex-wrap gap-2">
@@ -362,6 +515,45 @@ const DiscoverWatchlist = () => {
                   </select>
                 </div>
               )}
+              {firstResultData.supportsLibraryStatus && (
+                <div className="flex">
+                  <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
+                    <CircleStackIcon className="h-6 w-6" />
+                    <span className="sr-only">
+                      {intl.formatMessage(messages.libraryStatusFilter)}
+                    </span>
+                  </span>
+                  <select
+                    className="rounded-r-only"
+                    aria-label={intl.formatMessage(
+                      messages.libraryStatusFilter
+                    )}
+                    value={
+                      preferences?.libraryStatus ??
+                      defaultWatchlistPreferences.libraryStatus
+                    }
+                    onChange={(event) =>
+                      updatePreference({
+                        libraryStatus: event.target
+                          .value as WatchlistLibraryStatusFilter,
+                      })
+                    }
+                  >
+                    <option value="any">
+                      {intl.formatMessage(messages.all)}
+                    </option>
+                    <option value="absent">
+                      {intl.formatMessage(messages.absent)}
+                    </option>
+                    <option value="active">
+                      {intl.formatMessage(messages.active)}
+                    </option>
+                    <option value="archived">
+                      {intl.formatMessage(messages.archived)}
+                    </option>
+                  </select>
+                </div>
+              )}
               <div className="flex">
                 <span className="inline-flex items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3">
                   <BarsArrowDownIcon className="h-6 w-6" />
@@ -397,6 +589,13 @@ const DiscoverWatchlist = () => {
           )}
         </div>
       </div>
+      {dedicatedPage &&
+        firstResultData &&
+        !firstResultData.supportsLibraryStatus && (
+          <p className="mb-4 text-sm text-gray-400">
+            {intl.formatMessage(messages.libraryStatusUnavailable)}
+          </p>
+        )}
       {dedicatedPage &&
       firstResultData?.supportsPresentation &&
       isEmpty &&

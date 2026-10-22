@@ -63,9 +63,12 @@ Bulk Edit dialog. Bulk Edit presents the same single boolean checkbox: checked
 includes every selected account and unchecked excludes every selected account.
 There is deliberately no third unchanged state. People-oriented
 Watchlist selectors and the **All** scope include only opted-in accounts; no
-username or email inference is used. Owner, media type, watch status, and sort
-preferences are browser-local and safely fall back when stored values become
-invalid.
+username or email inference is used. Owner, media type, watch status, Library
+Status, and sort preferences are browser-local and safely fall back when stored
+values become invalid. Library Status defaults to **Absent**: no confirmed
+current or historical physical Library presence. **Active** means current
+physical presence, **Archived** means physical history without current physical
+presence, and **Any** removes only the Library Status restriction.
 
 An identically titled Jellyfin item is not completion evidence for another
 typed TMDB identity. For example, a Watchlist Movie with TMDB `1050035` remains
@@ -77,21 +80,21 @@ The active `Watchlist` row remains the compatibility projection used by current
 pages and request flows. Durable `UserMediaIntentOccurrence` rows preserve each
 exact intent cycle independently:
 
-- `ACTIVE` is current outstanding consumption intent;
-- `REMOVED` closes only the occurrence explicitly abandoned by the user; and
-- `SATISFIED` closes a Movie occurrence only when exact `CONFIRMED` viewing
-  evidence for the same Seerr user and typed TMDB Movie occurs after that
-  occurrence began.
+- `ACTIVE` is current retained consumption interest; and
+- `REMOVED` closes only the occurrence explicitly abandoned by the user.
+
+Confirmed viewing updates Watched state independently. It does not remove the
+active Watchlist row or transition its occurrence to `SATISFIED`. Historical
+`SATISFIED` occurrences and their evidence remain durable records from the
+earlier lifecycle, but no new automatic satisfaction occurs.
 
 Removing and later re-adding an item creates a new occurrence rather than
-reviving the old one. `LIKELY` historical completion remains useful to viewing
-projections but cannot perform the irreversible lifecycle transition. A Series
-Watchlist remains `ACTIVE` after an individual Season is completed because the
-foundation cannot prove the Series has ended or that no future desired Season
-will appear. Exact Season/Episode viewing projections can still establish that
-the user's intent is satisfied for a particular physical Season without closing
-the Series occurrence. The history API exposes only the authenticated user's
-occurrences unless `WATCHLIST_VIEW` authorizes another user.
+reviving the old one. Movie and Series Watchlists remain `ACTIVE` after viewing
+until the user explicitly removes them. Exact Season/Episode viewing
+projections can still establish that the user's intent is satisfied for a
+particular physical Season without closing the Series occurrence. The history
+API exposes only the authenticated user's occurrences unless `WATCHLIST_VIEW`
+authorizes another user.
 
 ## Reconciliation and reusable Jellyfin boundary
 
@@ -123,8 +126,13 @@ progress, and preference work can reuse the client and projection without
 exposing another user's state or broadening Watchlist storage.
 
 Plex Watchlists remain upstream-owned remote projections. They report that
-Jellyfin completion filtering is unsupported rather than pretending a remote
-page was fully filtered locally.
+Jellyfin completion and Library Status filtering are unsupported rather than
+pretending an externally paginated page was fully filtered locally.
+
+Watchlist Roulette reads only opted-in users' current local Watchlist entries
+whose shared physical Library Status is **Absent**, then keeps its existing
+typed-identity deduplication, shuffle, request eligibility, and submission
+workflow. Active and Archived items never enter its candidate pool.
 
 Watchlist and Blocklist are compact secondary card actions with transparent
 circular hit targets, accessible names, and hover/focus tooltips. Request is

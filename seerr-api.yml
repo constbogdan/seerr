@@ -7258,6 +7258,17 @@ paths:
               - not_watched
               - watched
               - all
+        - in: query
+          name: libraryStatus
+          description: Local physical Library Status filter. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: absent
+            enum:
+              - any
+              - absent
+              - active
+              - archived
       responses:
         '200':
           description: Watchlist data returned
@@ -7280,6 +7291,8 @@ paths:
                   supportsPresentation:
                     type: boolean
                   supportsWatchState:
+                    type: boolean
+                  supportsLibraryStatus:
                     type: boolean
                   hasUnclassifiedItems:
                     type: boolean
@@ -9749,6 +9762,17 @@ paths:
               - watched
               - all
         - in: query
+          name: libraryStatus
+          description: Local physical Library Status filter. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: absent
+            enum:
+              - any
+              - absent
+              - active
+              - archived
+        - in: query
           name: owner
           description: Watchlist owner scope. `all` and another user's numeric ID require `WATCHLIST_VIEW`; omitted or `me` selects the authenticated user.
           schema:
@@ -9781,6 +9805,8 @@ paths:
                   supportsPresentation:
                     type: boolean
                   supportsWatchState:
+                    type: boolean
+                  supportsLibraryStatus:
                     type: boolean
                   hasUnclassifiedItems:
                     type: boolean

@@ -53,6 +53,7 @@ describe('Watchlist presentation preferences', () => {
           category: 'movies',
           sort: 'added_asc',
           watched: 'not_watched',
+          libraryStatus: 'absent',
         },
       }),
       {
@@ -60,6 +61,7 @@ describe('Watchlist presentation preferences', () => {
         category: 'animation',
         sort: 'title_desc',
         watched: 'watched',
+        libraryStatus: 'absent',
       }
     );
     assert.deepEqual(
@@ -73,6 +75,7 @@ describe('Watchlist presentation preferences', () => {
           category: 'series',
           sort: 'added_asc',
           watched: 'all',
+          libraryStatus: 'archived',
         },
       }),
       {
@@ -80,7 +83,29 @@ describe('Watchlist presentation preferences', () => {
         category: 'series',
         sort: 'added_asc',
         watched: 'all',
+        libraryStatus: 'archived',
       }
+    );
+  });
+
+  it('round-trips Library Status and defaults stale preferences to Absent', () => {
+    assert.equal(defaultWatchlistPreferences.libraryStatus, 'absent');
+    assert.equal(
+      readWatchlistPreferences(JSON.stringify({ libraryStatus: 'active' }))
+        .libraryStatus,
+      'active'
+    );
+    assert.equal(
+      readWatchlistPreferences(JSON.stringify({ libraryStatus: 'missing' }))
+        .libraryStatus,
+      'absent'
+    );
+    assert.equal(
+      resolveWatchlistPreferences({
+        queryLibraryStatus: 'any',
+        stored: defaultWatchlistPreferences,
+      }).libraryStatus,
+      'any'
     );
   });
 
@@ -107,6 +132,10 @@ describe('Watchlist page and navigation integration', () => {
   );
   const titleCard = readFileSync(
     path.join(__dirname, '../../TitleCard/index.tsx'),
+    'utf8'
+  );
+  const watchlistIcon = readFileSync(
+    path.join(__dirname, '../../TitleCard/WatchlistIcon.tsx'),
     'utf8'
   );
   const statusBadgeMini = readFileSync(
@@ -161,6 +190,12 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(page, /value="not_watched"/);
     assert.match(page, /value="watched"/);
     assert.match(page, /firstResultData\.supportsWatchState/);
+    assert.match(page, /firstResultData\.supportsLibraryStatus/);
+    assert.match(page, /value="any"/);
+    assert.match(page, /value="absent"/);
+    assert.match(page, /value="active"/);
+    assert.match(page, /value="archived"/);
+    assert.match(page, /libraryStatusUnavailable/);
     assert.match(page, /Permission\.WATCHLIST_VIEW/);
     assert.match(page, /includeInUserMetrics=true/);
     assert.match(page, /value: 'all'/);
@@ -215,9 +250,25 @@ describe('Watchlist page and navigation integration', () => {
   it('never hides Watchlist membership because of availability or request state', () => {
     assert.match(
       page,
-      /hideAvailable: false, hideBlocklisted: false, hideRequested: false/
+      /hideAvailable: false,[\s\S]*?hideBlocklisted: false,[\s\S]*?hideRequested: false/
     );
     assert.match(page, /plexItems=\{titles\}/);
+  });
+
+  it('restores bounded infinite pages without a custom scroll manager', () => {
+    assert.match(page, /getInitialWatchlistPageCount/);
+    assert.match(page, /retainWatchlistPageCount/);
+    assert.match(page, /retainedWatchlistPreferenceStates/);
+    assert.match(page, /initialSize: initialPageCount/);
+    assert.match(page, /setPageCount\(DEFAULT_DISCOVER_PAGE_COUNT\)/);
+    assert.doesNotMatch(page, /window\.scrollTo|setTimeout/);
+  });
+
+  it('renders the filtered API total only for the active query', () => {
+    assert.match(page, /firstResultData\.totalResults/);
+    assert.match(page, /filteredTotal\?\.queryIdentity === queryIdentity/);
+    assert.match(page, /<WatchlistItemCount/);
+    assert.match(page, /setFilteredTotal\(null\)/);
   });
 
   it('renders completion and the shared owner avatar without provider reads', () => {
@@ -378,7 +429,7 @@ describe('Watchlist page and navigation integration', () => {
     );
   });
 
-  it('uses one invariant Watchlist action slot for outline and filled stars', () => {
+  it('uses one invariant Watchlist action slot for outline and solid bookmarks', () => {
     const descriptorStart = titleCard.indexOf('const watchlistAction =');
     const descriptorEnd = titleCard.indexOf(
       'const canAddToBlocklist',
@@ -399,15 +450,10 @@ describe('Watchlist page and navigation integration', () => {
     assert.ok(descriptorEnd > descriptorStart);
     assert.ok(watchlistSlotStart > descriptorEnd);
     assert.ok(watchlistSlotEnd > watchlistSlotStart);
-    assert.match(descriptor, /<StarIcon className=/);
-    assert.match(descriptor, /<StarIconSolid className=/);
-    assert.equal(
-      (descriptor.match(/className=\{watchlistIconClassName\}/g) ?? []).length,
-      2
-    );
+    assert.doesNotMatch(descriptor, /<WatchlistIcon/);
     assert.match(
       titleCard,
-      /const watchlistIconClassName =\s*'!h-\[1\.4375rem\] !w-\[1\.4375rem\] text-amber-300'/
+      /toggleWatchlist \? 'text-\[#C0C0C0\]' : 'text-\[#FFC107\]'/
     );
     assert.match(descriptor, /onClick: onClickWatchlistBtn/);
     assert.match(descriptor, /onClick: onClickDeleteWatchlistBtn/);
@@ -415,20 +461,29 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(watchlistSlot, /content=\{watchlistAction\.label\}/);
     assert.match(watchlistSlot, /aria-label=\{watchlistAction\.label\}/);
     assert.match(watchlistSlot, /onClick=\{watchlistAction\.onClick\}/);
-    assert.match(watchlistSlot, /\{watchlistAction\.icon\}/);
+    assert.match(watchlistSlot, /<WatchlistIcon/);
+    assert.match(watchlistSlot, /isWatchlisted=\{!toggleWatchlist\}/);
+    assert.match(watchlistSlot, /className=\{watchlistIconClassName\}/);
   });
 
-  it('uses accessible outline and filled stars for Watchlist membership', () => {
-    for (const source of [titleCard, movieDetails, tvDetails]) {
-      assert.match(source, /aria-label=\{intl\.formatMessage\(/);
-      assert.match(source, /StarIcon/);
-      assert.doesNotMatch(source, /MinusCircleIcon/);
-    }
-    assert.match(titleCard, /StarIcon as StarIconSolid/);
+  it('uses accessible bookmarks on cards and details pages', () => {
+    assert.match(titleCard, /aria-label=\{watchlistAction\.label\}/);
+    assert.match(titleCard, /WatchlistIcon/);
+    assert.doesNotMatch(titleCard, /StarIcon/);
+    assert.match(watchlistIcon, /BookmarkIcon as BookmarkIconOutline/);
+    assert.match(watchlistIcon, /BookmarkIcon as BookmarkIconSolid/);
+    assert.match(watchlistIcon, /isWatchlisted \? BookmarkIconSolid/);
     assert.match(titleCard, /messages\.addToWatchList/);
     assert.match(titleCard, /messages\.removeFromWatchList/);
-    assert.match(movieDetails, /StarIcon as StarIconSolid/);
-    assert.match(tvDetails, /StarIcon as StarIconOutline/);
+    for (const source of [movieDetails, tvDetails]) {
+      assert.match(source, /aria-label=\{intl\.formatMessage\(/);
+      assert.match(source, /WatchlistIcon/);
+      assert.match(source, /isWatchlisted=\{false\}/);
+      assert.match(source, /className="text-\[#C0C0C0\]"/);
+      assert.match(source, /className="text-\[#FFC107\]"/);
+      assert.doesNotMatch(source, /StarIcon/);
+      assert.doesNotMatch(source, /MinusCircleIcon/);
+    }
   });
 
   it('keeps Watchlist and Blocklist actions compact and accessible', () => {

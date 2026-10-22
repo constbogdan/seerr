@@ -2,10 +2,12 @@ import PlexTvAPI from '@server/api/plextv';
 import { MediaType } from '@server/constants/media';
 import {
   watchlistCategories,
+  watchlistLibraryStatusFilters,
   watchlistSorts,
   watchlistWatchedFilters,
   type WatchState,
   type WatchlistCategory,
+  type WatchlistLibraryStatusFilter,
   type WatchlistSort,
   type WatchlistWatchedFilter,
 } from '@server/constants/watchlist';
@@ -14,6 +16,7 @@ import type { User } from '@server/entity/User';
 import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
+import { applyWatchlistLibraryStatusFilter } from '@server/lib/watchlistLibraryStatus';
 import type { SelectQueryBuilder } from 'typeorm';
 
 export const WATCHLIST_PAGE_SIZE = 20;
@@ -24,10 +27,11 @@ export interface WatchlistIdentity {
   tmdbId: number;
 }
 
-export const getAggregatedWatchlistIdentities = async (
-  mediaType: MediaType
+const getAggregatedWatchlistIdentitiesForStatus = async (
+  mediaType: MediaType,
+  libraryStatus: WatchlistLibraryStatusFilter
 ): Promise<WatchlistIdentity[]> => {
-  const rows = await getRepository(Watchlist)
+  const query = getRepository(Watchlist)
     .createQueryBuilder('watchlist')
     .innerJoin('watchlist.requestedBy', 'requestedBy')
     .select('watchlist.mediaType', 'mediaType')
@@ -35,8 +39,12 @@ export const getAggregatedWatchlistIdentities = async (
     .where('requestedBy.includeInUserMetrics = :included', { included: true })
     .andWhere('watchlist.mediaType = :mediaType', { mediaType })
     .andWhere('watchlist.tmdbId > 0')
-    .distinct(true)
-    .getRawMany<{ mediaType: MediaType; tmdbId: number | string }>();
+    .distinct(true);
+  applyWatchlistLibraryStatusFilter(query, libraryStatus);
+  const rows = await query.getRawMany<{
+    mediaType: MediaType;
+    tmdbId: number | string;
+  }>();
 
   return rows
     .map((row) => ({
@@ -51,11 +59,22 @@ export const getAggregatedWatchlistIdentities = async (
     );
 };
 
+export const getAggregatedWatchlistIdentities = (
+  mediaType: MediaType
+): Promise<WatchlistIdentity[]> =>
+  getAggregatedWatchlistIdentitiesForStatus(mediaType, 'any');
+
+export const getAggregatedAbsentWatchlistIdentities = (
+  mediaType: MediaType
+): Promise<WatchlistIdentity[]> =>
+  getAggregatedWatchlistIdentitiesForStatus(mediaType, 'absent');
+
 export interface WatchlistQuery {
   page: number;
   category: WatchlistCategory;
   sort: WatchlistSort;
   watched?: WatchlistWatchedFilter;
+  libraryStatus?: WatchlistLibraryStatusFilter;
 }
 
 export const parseWatchlistQuery = (query: {
@@ -63,6 +82,7 @@ export const parseWatchlistQuery = (query: {
   category?: unknown;
   sort?: unknown;
   watched?: unknown;
+  libraryStatus?: unknown;
 }): WatchlistQuery => {
   const parsedPage = Number(query.page ?? 1);
   const page =
@@ -80,8 +100,13 @@ export const parseWatchlistQuery = (query: {
   )
     ? (query.watched as WatchlistWatchedFilter)
     : 'not_watched';
+  const libraryStatus = watchlistLibraryStatusFilters.includes(
+    query.libraryStatus as WatchlistLibraryStatusFilter
+  )
+    ? (query.libraryStatus as WatchlistLibraryStatusFilter)
+    : 'absent';
 
-  return { page, category, sort, watched };
+  return { page, category, sort, watched, libraryStatus };
 };
 
 export const toWatchState = (played?: boolean | null): WatchState =>
@@ -138,6 +163,11 @@ export const getLocalWatchlist = async ({
   } else {
     queryBuilder.where('watchlist.requestedById = :userId', { userId });
   }
+
+  applyWatchlistLibraryStatusFilter(
+    queryBuilder,
+    query.libraryStatus ?? 'absent'
+  );
 
   if (query.watched === 'watched') {
     queryBuilder.andWhere('userMediaState.jellyfinPlayed = :played', {
@@ -236,6 +266,7 @@ export const getLocalWatchlist = async ({
     source: 'local',
     supportsPresentation: true,
     supportsWatchState: true,
+    supportsLibraryStatus: true,
     hasUnclassifiedItems,
   };
 };
@@ -269,6 +300,7 @@ export const getPlexWatchlist = async ({
     source: 'plex',
     supportsPresentation: false,
     supportsWatchState: false,
+    supportsLibraryStatus: false,
     hasUnclassifiedItems: false,
   };
 };

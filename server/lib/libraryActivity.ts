@@ -2,15 +2,38 @@ import { ViewingCompletionClassification } from '@server/constants/libraryHistor
 import type { ViewingEvidence } from '@server/entity/ViewingEvidence';
 import { normalizeJellyfinActivityDate } from '@server/lib/jellyfinViewingSource';
 
+export const physicalLibraryPresenceSql = (
+  alias: string,
+  trueExpression = ':current'
+) =>
+  `((` +
+  `${alias}."sourceSystem" IN ('radarr', 'sonarr') AND ` +
+  `${alias}."servarrHasFile" = ${trueExpression}) OR (` +
+  `${alias}."sourceSystem" = 'jellyfin' AND ` +
+  `${alias}."jellyfinVisible" = ${trueExpression}))`;
+
 export const currentLibraryPresenceSql = (
   alias: string,
   currentExpression = ':current'
 ) =>
-  `(${alias}."isCurrent" = ${currentExpression} AND ((` +
-  `${alias}."sourceSystem" IN ('radarr', 'sonarr') AND ` +
-  `${alias}."servarrHasFile" = ${currentExpression}) OR (` +
-  `${alias}."sourceSystem" = 'jellyfin' AND ` +
-  `${alias}."jellyfinVisible" = ${currentExpression})))`;
+  `(${alias}."isCurrent" = ${currentExpression} AND ${physicalLibraryPresenceSql(
+    alias,
+    currentExpression
+  )})`;
+
+export const everPhysicalLibraryMembershipSql = (
+  canonicalMediaIdExpression: string,
+  trueExpression = ':current'
+) =>
+  `(EXISTS (SELECT 1 FROM "library_presence" library_physical_history WHERE ` +
+  `library_physical_history."canonicalMediaId" = ${canonicalMediaIdExpression} AND ` +
+  `${physicalLibraryPresenceSql(
+    'library_physical_history',
+    trueExpression
+  )}) OR EXISTS (SELECT 1 FROM "library_file" library_physical_file ` +
+  `INNER JOIN "library_presence" library_physical_file_presence ON ` +
+  `library_physical_file_presence.id = library_physical_file."libraryPresenceId" WHERE ` +
+  `library_physical_file_presence."canonicalMediaId" = ${canonicalMediaIdExpression}))`;
 
 export const qualifyingLibraryEvidenceSql = (alias: string) =>
   `(${alias}."completionClassification" IN (` +

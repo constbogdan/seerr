@@ -1,9 +1,15 @@
+import { LibraryMediaType } from '@server/constants/libraryHistory';
 import { MediaType } from '@server/constants/media';
 import {
   UserMediaIntentState,
   UserMediaIntentType,
 } from '@server/constants/watchlist';
 import { getRepository } from '@server/datasource';
+import {
+  CanonicalMedia,
+  CanonicalMediaIdentity,
+} from '@server/entity/CanonicalMedia';
+import { LibraryPresence } from '@server/entity/LibraryHistory';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
 import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
@@ -169,6 +175,63 @@ describe('Watchlist privacy and admin scopes', () => {
       ).status,
       403
     );
+  });
+
+  it('applies all Library Status values through the HTTP query contract', async () => {
+    const media = await getRepository(Media).findOneByOrFail({
+      tmdbId: 7001,
+      mediaType: MediaType.MOVIE,
+    });
+    const canonical = await getRepository(CanonicalMedia).save(
+      new CanonicalMedia({
+        mediaType: LibraryMediaType.MOVIE,
+        currentMediaId: media.id,
+      })
+    );
+    await getRepository(CanonicalMediaIdentity).save(
+      new CanonicalMediaIdentity({
+        canonicalMediaId: canonical.id,
+        mediaType: LibraryMediaType.MOVIE,
+        provider: 'tmdb',
+        sourceScope: '',
+        value: '7001',
+      })
+    );
+    const presence = await getRepository(LibraryPresence).save(
+      new LibraryPresence({
+        canonicalMediaId: canonical.id,
+        sourceSystem: 'radarr',
+        sourceScope: 'watchlist-http-test',
+        sourceItemId: '7001',
+        sourceGeneration: '1',
+        firstObservedAt: new Date('2026-01-01T00:00:00Z'),
+        servarrHasFile: true,
+        isCurrent: true,
+      })
+    );
+
+    const get = (libraryStatus?: string) =>
+      request(app)
+        .get(
+          `/user/1/watchlist?watched=all${
+            libraryStatus ? `&libraryStatus=${libraryStatus}` : ''
+          }`
+        )
+        .set('x-test-user', '1');
+
+    const absent = await get();
+    assert.equal(absent.status, 200);
+    assert.equal(absent.body.totalResults, 0);
+    assert.equal(absent.body.supportsLibraryStatus, true);
+    assert.equal((await get('any')).body.totalResults, 1);
+    assert.equal((await get('active')).body.totalResults, 1);
+    assert.equal((await get('archived')).body.totalResults, 0);
+
+    presence.isCurrent = false;
+    await getRepository(LibraryPresence).save(presence);
+    assert.equal((await get('active')).body.totalResults, 0);
+    assert.equal((await get('archived')).body.totalResults, 1);
+    assert.equal((await get('absent')).body.totalResults, 0);
   });
 
   it('allows WATCHLIST_VIEW and admin scopes without exposing full users', async () => {
