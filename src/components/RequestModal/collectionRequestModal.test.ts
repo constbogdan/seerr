@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import {
+  collectionMovieHref,
+  handleCollectionMovieNavigation,
+} from './collectionMovieLink';
 import { getCollectionBackdropUrl } from './collectionRequestPresentation';
 
 describe('Collection Request modal partial outcomes', () => {
@@ -63,6 +67,36 @@ describe('Collection Request modal partial outcomes', () => {
     assert.doesNotMatch(
       source,
       /backdrop=\{`https:\/\/image\.tmdb\.org\/t\/p\/w1920_and_h800_multi_faces\/\$\{data\?\.backdropPath\}`\}/
+    );
+  });
+
+  it('builds typed Movie routes for poster and title links', () => {
+    assert.equal(collectionMovieHref(123), '/movie/123');
+    assert.equal(
+      (source.match(/href=\{collectionMovieHref\(part\.id\)\}/g) ?? []).length,
+      2
+    );
+    assert.match(source, /className="relative block h-auto w-10/);
+    assert.match(source, /aria-label=\{part\.title\}/);
+    assert.match(source, /focus-visible:ring-2/);
+  });
+
+  it('closes the modal and isolates link activation without toggling or submitting', () => {
+    let stopped = 0;
+    let closed = 0;
+    handleCollectionMovieNavigation(
+      { stopPropagation: () => (stopped += 1) } as never,
+      () => (closed += 1)
+    );
+    assert.equal(stopped, 1);
+    assert.equal(closed, 1);
+    assert.doesNotMatch(
+      source,
+      /handleCollectionMovieNavigation\([^)]*togglePart/
+    );
+    assert.doesNotMatch(
+      source,
+      /handleCollectionMovieNavigation\([^)]*sendRequest/
     );
   });
 });

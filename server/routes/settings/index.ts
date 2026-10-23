@@ -826,6 +826,23 @@ settingsRoutes.post<{ jobId: string }>('/jobs/:jobId/run', (req, res, next) => {
   return res.status(200).json(scheduledJobResponse(scheduledJob));
 });
 
+settingsRoutes.post<{ jobId: string }>(
+  '/jobs/:jobId/dry-run',
+  async (req, res, next) => {
+    const scheduledJob = scheduledJobs.find(
+      (job) => job.id === req.params.jobId
+    );
+    if (!scheduledJob?.dryRun) {
+      return next({ status: 404, message: 'Dry-run job not found.' });
+    }
+    try {
+      return res.status(200).json(await scheduledJob.dryRun());
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
+
 settingsRoutes.post<{ jobId: JobId }>(
   '/jobs/:jobId/enabled',
   async (req, res, next) => {

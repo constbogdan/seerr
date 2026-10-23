@@ -1,6 +1,12 @@
 import { MediaType } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import blocklistedTagsProcessor from '@server/job/blocklistedTagsProcessor';
+import nextSeason, {
+  nextSeasonJobEnabled,
+  runNextSeason,
+  runNextSeasonDryRun,
+  setNextSeasonJobEnabled,
+} from '@server/job/nextSeasonJob';
 import {
   removalJobEnabled,
   startRemovalProcessing,
@@ -58,6 +64,7 @@ export interface ScheduledJob {
   result?: () => unknown;
   cancelFn?: () => void;
   commissioningRun?: () => Promise<unknown>;
+  dryRun?: () => Promise<unknown>;
 }
 
 export const scheduledJobs: ScheduledJob[] = [];
@@ -74,6 +81,45 @@ const scheduleGuardedJob = (
   schedule.scheduleJob(cronSchedule, () =>
     synchronizationPolicy.executeScheduled(id, callback)
   );
+
+interface NextSeasonScheduledJobDependencies {
+  schedule: typeof scheduleGuardedJob;
+  run: typeof runNextSeason;
+  running: () => boolean;
+  enabled: typeof nextSeasonJobEnabled;
+  setEnabled: typeof setNextSeasonJobEnabled;
+  result: () => unknown;
+  cancel: () => void;
+  dryRun: typeof runNextSeasonDryRun;
+}
+
+export const createNextSeasonScheduledJob = (
+  cronSchedule: string,
+  dependencies: NextSeasonScheduledJobDependencies = {
+    schedule: scheduleGuardedJob,
+    run: runNextSeason,
+    running: () => nextSeason.running(),
+    enabled: nextSeasonJobEnabled,
+    setEnabled: setNextSeasonJobEnabled,
+    result: () => nextSeason.status(),
+    cancel: () => nextSeason.cancel(),
+    dryRun: runNextSeasonDryRun,
+  }
+): ScheduledJob => ({
+  id: 'next-season',
+  name: 'Next Season',
+  type: 'process',
+  interval: 'minutes',
+  cronSchedule,
+  job: dependencies.schedule('next-season', cronSchedule, dependencies.run),
+  running: dependencies.running,
+  enabled: dependencies.enabled,
+  configurableEnabled: true,
+  setEnabled: dependencies.setEnabled,
+  result: dependencies.result,
+  cancelFn: dependencies.cancel,
+  dryRun: dependencies.dryRun,
+});
 
 export const startJobs = async (): Promise<void> => {
   const jobs = getSettings().jobs;
@@ -527,6 +573,10 @@ export const startJobs = async (): Promise<void> => {
     running: () => freshService.running(),
     cancelFn: () => freshService.cancel(),
   });
+
+  scheduledJobs.push(
+    createNextSeasonScheduledJob(jobs['next-season'].schedule)
+  );
 
   scheduledJobs.push({
     id: 'series-relocation',

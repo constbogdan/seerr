@@ -436,6 +436,7 @@ export type JobId =
   | 'removal-candidate-selection'
   | 'scheduled-removal-processing'
   | 'series-relocation'
+  | 'next-season'
   | 'watchlist-roulette-movies'
   | 'watchlist-roulette-series';
 
@@ -769,6 +770,10 @@ class Settings {
         },
         'series-relocation': {
           schedule: '0 0 2 * * *',
+          enabled: false,
+        },
+        'next-season': {
+          schedule: '15 */5 * * * *',
           enabled: false,
         },
         'watchlist-roulette-movies': {

@@ -26,6 +26,7 @@ describe('Settings jobs and navigation presentation', () => {
       'Finds media eligible for scheduled removal.',
       'Processes scheduled removals when their deadlines arrive.',
       'Automatically relocates eligible Series between storage volumes.',
+      'Requests released next Seasons after a viewer watches at least 70% of a physically present Season.',
       'Adds missing genre information to Watchlist items.',
       "Updates watched status and progress for each user's Watchlist.",
     ]) {
@@ -89,6 +90,17 @@ describe('Settings jobs and navigation presentation', () => {
       jobs,
       /scheduleWeekday|scheduleDayOfMonth|scheduleHourOfDay/
     );
+  });
+
+  it('links the independent Next Season settings page after Watchlist Roulette', () => {
+    const roulette = navigation.indexOf(
+      "route: '/settings/watchlist-roulette'"
+    );
+    const nextSeason = navigation.indexOf("route: '/settings/next-season'");
+    const network = navigation.indexOf("route: '/settings/network'");
+    assert.ok(roulette > -1);
+    assert.ok(nextSeason > roulette);
+    assert.ok(network > nextSeason);
   });
 
   it('places Removal immediately after Discovery Sources and before Notifications', () => {

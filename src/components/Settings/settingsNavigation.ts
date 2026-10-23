@@ -12,6 +12,7 @@ const messages = defineMessages('components.Settings', {
   menuServices: 'Services',
   menuStorage: 'Storage',
   menuWatchlistRoulette: 'Watchlist Roulette',
+  menuNextSeason: 'Next Season',
   menuNetwork: 'Network',
   menuNotifications: 'Notifications',
   menuLogs: 'Logs',
@@ -84,6 +85,12 @@ export const useSettingsNavigation = (): SettingsNavigationRoute[] => {
       text: intl.formatMessage(messages.menuWatchlistRoulette),
       route: '/settings/watchlist-roulette',
       regex: /^\/settings\/watchlist-roulette/,
+    },
+    {
+      id: 'next-season',
+      text: intl.formatMessage(messages.menuNextSeason),
+      route: '/settings/next-season',
+      regex: /^\/settings\/next-season/,
     },
     {
       id: 'network',

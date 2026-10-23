@@ -7,6 +7,10 @@ import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
 import RequestModalLoadError from '@app/components/RequestModal/RequestModalLoadError';
 import {
+  collectionMovieHref,
+  handleCollectionMovieNavigation,
+} from '@app/components/RequestModal/collectionMovieLink';
+import {
   classifyCollectionRequestOutcomes,
   reconcileCollectionRequestRetryability,
   type CollectionRequestOutcome,
@@ -22,6 +26,7 @@ import type { QuotaResponse } from '@server/interfaces/api/userInterfaces';
 import { Permission } from '@server/lib/permissions';
 import type { Collection } from '@server/models/Collection';
 import axios from 'axios';
+import Link from 'next/link';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR, { mutate } from 'swr';
@@ -606,7 +611,14 @@ const CollectionRequestModal = ({
                               'pointer-events-none opacity-50'
                             }`}
                           >
-                            <div className="relative h-auto w-10 flex-shrink-0 overflow-hidden rounded-md">
+                            <Link
+                              href={collectionMovieHref(part.id)}
+                              aria-label={part.title}
+                              onClick={(event) =>
+                                handleCollectionMovieNavigation(event, onCancel)
+                              }
+                              className="relative block h-auto w-10 flex-shrink-0 overflow-hidden rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                            >
                               <CachedImage
                                 type="tmdb"
                                 src={
@@ -624,14 +636,23 @@ const CollectionRequestModal = ({
                                 width={600}
                                 height={900}
                               />
-                            </div>
+                            </Link>
                             <div className="flex flex-col justify-center pl-2">
                               <div className="text-xs font-medium">
                                 {part.releaseDate?.slice(0, 4)}
                               </div>
-                              <div className="text-base font-bold">
+                              <Link
+                                href={collectionMovieHref(part.id)}
+                                onClick={(event) =>
+                                  handleCollectionMovieNavigation(
+                                    event,
+                                    onCancel
+                                  )
+                                }
+                                className="text-base font-bold hover:underline focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"
+                              >
                                 {part.title}
-                              </div>
+                              </Link>
                             </div>
                           </td>
                           <td className="whitespace-nowrap py-4 pr-2 text-sm leading-5 text-gray-200 md:px-6">
