@@ -3,6 +3,10 @@ export const MAX_WATCHLIST_ROULETTE_ITEMS_PER_RUN = 100;
 
 export type WatchlistRouletteRunStatus = 'succeeded' | 'failed';
 
+export type WatchlistRouletteLimitReason =
+  | 'metadata-budget'
+  | 'metadata-deadline';
+
 export type WatchlistRouletteFailureCode =
   | 'request-owner-unavailable'
   | 'provider-not-configured'
@@ -19,6 +23,7 @@ export interface WatchlistRouletteRunSummary {
   examined: number;
   requestIds: number[];
   failureCode?: WatchlistRouletteFailureCode;
+  limitReason?: WatchlistRouletteLimitReason;
 }
 
 export interface WatchlistRouletteSettings {
@@ -72,6 +77,11 @@ const normalizeRunSummary = (
     examined: Number(candidate.examined),
     requestIds: [...candidate.requestIds],
     ...(candidate.failureCode && { failureCode: candidate.failureCode }),
+    ...(['metadata-budget', 'metadata-deadline'].includes(
+      candidate.limitReason ?? ''
+    ) && {
+      limitReason: candidate.limitReason as WatchlistRouletteLimitReason,
+    }),
   };
 };
 

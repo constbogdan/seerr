@@ -28,6 +28,12 @@ import {
   getAggregatedAbsentWatchlistIdentities,
   type WatchlistIdentity,
 } from '@server/lib/watchlist';
+import {
+  WatchlistRouletteCollectionResolver,
+  createWatchlistRouletteCollectionRunState,
+  type WatchlistRouletteCollectionRunState,
+  type WatchlistRouletteMovieResolution,
+} from '@server/lib/watchlistRouletteCollections';
 import logger from '@server/logger';
 import { randomInt } from 'crypto';
 
@@ -40,6 +46,10 @@ export interface WatchlistRouletteDependencies {
   refreshAcquisitions: () => Promise<{ authoritative: boolean }>;
   findRequestOwner: (userId: number) => Promise<User | null>;
   isCandidateEligible: (candidate: WatchlistIdentity) => Promise<boolean>;
+  resolveMovieCandidate: (
+    candidate: WatchlistIdentity,
+    state: WatchlistRouletteCollectionRunState
+  ) => Promise<WatchlistRouletteMovieResolution>;
   createRequest: (
     candidate: WatchlistIdentity,
     requestOwner: User
@@ -168,6 +178,8 @@ export const createWatchlistRouletteRequest = (
 export const loadWatchlistRouletteCandidates =
   getAggregatedAbsentWatchlistIdentities;
 
+const movieCollectionResolver = new WatchlistRouletteCollectionResolver();
+
 const defaultDependencies: WatchlistRouletteDependencies = {
   now: () => new Date(),
   randomIndex: (upperExclusive) => randomInt(upperExclusive),
@@ -175,6 +187,8 @@ const defaultDependencies: WatchlistRouletteDependencies = {
   refreshAcquisitions: () => acquisitionMonitor.refresh('background'),
   findRequestOwner: defaultFindRequestOwner,
   isCandidateEligible: isWatchlistRouletteCandidateEligible,
+  resolveMovieCandidate: (candidate, state) =>
+    movieCollectionResolver.resolve(candidate, state),
   createRequest: createWatchlistRouletteRequest,
   persistSummary,
   getConfiguration: () => getSettings().watchlistRoulette,
@@ -331,17 +345,47 @@ export class WatchlistRouletteService {
       let skipped = 0;
       let failed = 0;
       let examined = 0;
+      let limitReason: WatchlistRouletteRunSummary['limitReason'];
+      const collectionState =
+        this.mediaType === MediaType.MOVIE
+          ? createWatchlistRouletteCollectionRunState()
+          : undefined;
 
       for (const candidate of candidates) {
         if (requestIds.length >= requestedLimit) break;
         examined += 1;
-        if (!(await this.dependencies.isCandidateEligible(candidate))) {
+        let requestCandidate = candidate;
+        if (collectionState) {
+          const resolution = await this.dependencies.resolveMovieCandidate(
+            candidate,
+            collectionState
+          );
+          if (resolution.outcome === 'limit') {
+            limitReason = resolution.limitReason;
+            logger.warn('Watchlist Roulette stopped at a metadata limit', {
+              label: 'Watchlist Roulette',
+              mediaType: this.mediaType,
+              limitReason,
+              examined,
+              metadataCandidates: collectionState.candidatesResolved,
+              tmdbResolutions: collectionState.tmdbResolutions,
+              metadataElapsedMs: Math.round(collectionState.metadataElapsedMs),
+            });
+            break;
+          }
+          if (resolution.outcome === 'skip') {
+            skipped += 1;
+            continue;
+          }
+          requestCandidate = resolution.candidate;
+        }
+        if (!(await this.dependencies.isCandidateEligible(requestCandidate))) {
           skipped += 1;
           continue;
         }
         try {
           const request = await this.dependencies.createRequest(
-            candidate,
+            requestCandidate,
             requestOwner
           );
           if (request.status !== MediaRequestStatus.APPROVED) {
@@ -352,8 +396,8 @@ export class WatchlistRouletteService {
           requestIds.push(request.id);
           logger.info('Watchlist Roulette created an approved request', {
             label: 'Watchlist Roulette',
-            mediaType: candidate.mediaType,
-            tmdbId: candidate.tmdbId,
+            mediaType: requestCandidate.mediaType,
+            tmdbId: requestCandidate.tmdbId,
             requestId: request.id,
             requestOwnerUserId: requestOwner.id,
           });
@@ -362,8 +406,8 @@ export class WatchlistRouletteService {
             skipped += 1;
             logger.debug('Watchlist Roulette skipped an ineligible candidate', {
               label: 'Watchlist Roulette',
-              mediaType: candidate.mediaType,
-              tmdbId: candidate.tmdbId,
+              mediaType: requestCandidate.mediaType,
+              tmdbId: requestCandidate.tmdbId,
               errorMessage:
                 error instanceof Error ? error.message : String(error),
             });
@@ -371,8 +415,8 @@ export class WatchlistRouletteService {
             failed += 1;
             logger.warn('Watchlist Roulette request attempt failed', {
               label: 'Watchlist Roulette',
-              mediaType: candidate.mediaType,
-              tmdbId: candidate.tmdbId,
+              mediaType: requestCandidate.mediaType,
+              tmdbId: requestCandidate.tmdbId,
               errorMessage:
                 error instanceof Error ? error.message : String(error),
             });
@@ -387,6 +431,7 @@ export class WatchlistRouletteService {
         failed,
         examined,
         requestIds,
+        ...(limitReason && { limitReason }),
       });
     } catch (error) {
       logger.error('Watchlist Roulette run failed', {

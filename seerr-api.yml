@@ -1169,6 +1169,9 @@ components:
             - provider-not-configured
             - acquisition-state-unavailable
             - unexpected-error
+        limitReason:
+          type: string
+          enum: [metadata-budget, metadata-deadline]
     WatchlistRouletteSettings:
       type: object
       required: [requestOwnerUserId, movieItemsPerRun, seriesItemsPerRun]
