@@ -5171,6 +5171,28 @@ paths:
                 $ref: '#/components/schemas/Job'
         '409':
           description: Job execution is blocked by its feature gate, synchronization containment, or commissioning order.
+  /settings/jobs/{jobId}/dry-run:
+    post:
+      summary: Evaluate a supported job without mutations
+      description: Runs a supported administrator-only diagnostic without creating requests or invoking provider mutations.
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dry-run result returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Dry-run job not found
   /settings/jobs/{jobId}/cancel:
     post:
       summary: Cancel a specific job

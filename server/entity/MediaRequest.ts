@@ -48,6 +48,7 @@ export class InvalidMediaRequestError extends Error {}
 
 type MediaRequestOptions = {
   isAutoRequest?: boolean;
+  allowNonOverlappingAutoRequestSeasons?: boolean;
 };
 
 @Entity()
@@ -238,6 +239,7 @@ export class MediaRequest {
       .createQueryBuilder('request')
       .leftJoinAndSelect('request.media', 'media')
       .leftJoinAndSelect('request.requestedBy', 'user')
+      .leftJoinAndSelect('request.seasons', 'requestSeasons')
       .where('request.is4k = :is4k', { is4k: requestBody.is4k })
       .andWhere('media.tmdbId = :tmdbId', { tmdbId: tmdbMedia.id })
       .andWhere('media.mediaType = :mediaType', {
@@ -265,16 +267,32 @@ export class MediaRequest {
       }
 
       // If an existing auto-request for this media exists from the same user,
-      // don't allow a new one.
+      // don't allow a new one. Next Season may explicitly narrow this guard to
+      // persisted Season overlap so separate automatic Season requests remain
+      // possible without weakening the default Movie or Series behavior.
       const statusKey = requestBody.is4k ? 'status4k' : 'status';
-      if (
-        existing.find(
-          (r) =>
-            r.requestedBy.id === requestUser.id &&
-            r.isAutoRequest &&
-            r.media?.[statusKey] !== MediaStatus.DELETED
-        )
-      ) {
+      const existingAutoRequests = existing.filter(
+        (request) =>
+          request.requestedBy.id === requestUser.id &&
+          request.isAutoRequest &&
+          request.media?.[statusKey] !== MediaStatus.DELETED
+      );
+      const allowNonOverlappingAutoRequestSeasons =
+        options.isAutoRequest === true &&
+        options.allowNonOverlappingAutoRequestSeasons === true &&
+        requestBody.mediaType === MediaType.TV &&
+        Array.isArray(requestBody.seasons);
+      const requestedSeasonNumbers = allowNonOverlappingAutoRequestSeasons
+        ? new Set(requestBody.seasons as number[])
+        : undefined;
+      const duplicateAutoRequest = allowNonOverlappingAutoRequestSeasons
+        ? existingAutoRequests.some((request) =>
+            request.seasons.some((season) =>
+              requestedSeasonNumbers?.has(season.seasonNumber)
+            )
+          )
+        : existingAutoRequests.length > 0;
+      if (duplicateAutoRequest) {
         throw new DuplicateMediaRequestError(
           'Auto-request for this media and user already exists.'
         );

@@ -14,7 +14,12 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { formatBytes } from '@app/utils/numberHelpers';
 import { Transition } from '@headlessui/react';
-import { PlayIcon, StopIcon, TrashIcon } from '@heroicons/react/24/outline';
+import {
+  BeakerIcon,
+  PlayIcon,
+  StopIcon,
+  TrashIcon,
+} from '@heroicons/react/24/outline';
 import { PencilIcon } from '@heroicons/react/24/solid';
 import { MediaServerType } from '@server/constants/server';
 import type {
@@ -46,6 +51,10 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     canceljob: 'Cancel Job',
     jobstarted: '{jobname} started.',
     jobcancelled: '{jobname} canceled.',
+    jobUpdateFailed: 'Unable to update {jobname}.',
+    dryRun: 'Dry Run',
+    dryRunComplete:
+      'Dry run complete: {qualifying} qualifying; {candidates} requestable.',
     jobresult:
       'Moved {moved}; blocked {blocked}; reconciliation required {reconciliation}',
     rouletteJobResult:
@@ -113,6 +122,9 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'series-relocation': 'Series Relocation',
     'series-relocation-description':
       'Automatically relocates eligible Series between storage volumes.',
+    'next-season': 'Next Season',
+    'next-season-description':
+      'Requests released next Seasons after a viewer watches at least 70% of a physically present Season.',
     'watchlist-roulette-movies': 'Watchlist Roulette Movies',
     'watchlist-roulette-movies-description':
       "Automatically requests random Movies from users' Watchlists.",
@@ -256,6 +268,7 @@ const SettingsJobs = () => {
     scheduleSeconds: 30,
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [dryRunningJob, setDryRunningJob] = useState<JobId | null>(null);
   const settings = useSettings();
   const jobMessages = { ...messages };
   if (settings.currentSettings.mediaServerType === MediaServerType.EMBY) {
@@ -308,6 +321,36 @@ const SettingsJobs = () => {
       }
     );
     revalidate();
+  };
+
+  const dryRunJob = async (job: Job) => {
+    if (dryRunningJob) return;
+    setDryRunningJob(job.id);
+    try {
+      const response = await axios.post<{
+        qualifyingProgress: number;
+        candidates: { outcome: string }[];
+      }>(`/api/v1/settings/jobs/${job.id}/dry-run`);
+      addToast(
+        intl.formatMessage(messages.dryRunComplete, {
+          qualifying: response.data.qualifyingProgress,
+          candidates: response.data.candidates.filter(
+            (candidate) => candidate.outcome === 'would-request'
+          ).length,
+        }),
+        { appearance: 'info', autoDismiss: true }
+      );
+      await revalidate();
+    } catch {
+      addToast(
+        intl.formatMessage(messages.jobUpdateFailed, {
+          jobname: intl.formatMessage(messages[job.id] ?? messages.unknownJob),
+        }),
+        { appearance: 'error', autoDismiss: true }
+      );
+    } finally {
+      setDryRunningJob(null);
+    }
   };
 
   const flushCache = async (cache: CacheItem) => {
@@ -597,6 +640,16 @@ const SettingsJobs = () => {
                         })}
                       </div>
                     )}
+                  {job.id === 'next-season' && job.lastResult && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages.rouletteJobResult, {
+                        requested:
+                          numericResult(job.lastResult, 'requested') ?? 0,
+                        skipped: numericResult(job.lastResult, 'skipped') ?? 0,
+                        failed: numericResult(job.lastResult, 'failed') ?? 0,
+                      })}
+                    </div>
+                  )}
                   {job.lastExecutionTime && (
                     <div className="mt-1 text-xs text-gray-400">
                       {intl.formatMessage(messages.lastExecution, {
@@ -640,6 +693,17 @@ const SettingsJobs = () => {
                   </div>
                 </Table.TD>
                 <Table.TD alignText="right">
+                  {job.id === 'next-season' && (
+                    <Button
+                      className="mr-2"
+                      buttonType="default"
+                      disabled={dryRunningJob === job.id || job.running}
+                      onClick={() => void dryRunJob(job)}
+                    >
+                      <BeakerIcon />
+                      <span>{intl.formatMessage(messages.dryRun)}</span>
+                    </Button>
+                  )}
                   {job.interval !== 'fixed' && (
                     <Button
                       className="mr-2"

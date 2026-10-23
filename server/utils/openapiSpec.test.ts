@@ -12,6 +12,19 @@ import request from 'supertest';
 const API_SPEC_PATH = path.join(__dirname, '../../seerr-api.yml');
 
 describe('OpenAPI runtime schema', () => {
+  it('publishes the administrator Next Season dry-run operation', () => {
+    const spec = load(readFileSync(API_SPEC_PATH, 'utf8')) as {
+      paths: Record<string, { post?: { responses?: Record<string, unknown> } }>;
+    };
+    assert.ok(spec.paths['/settings/jobs/{jobId}/dry-run']?.post);
+    assert.ok(
+      spec.paths['/settings/jobs/{jobId}/dry-run'].post?.responses?.['200']
+    );
+    assert.ok(
+      spec.paths['/settings/jobs/{jobId}/dry-run'].post?.responses?.['404']
+    );
+  });
+
   it('publishes the user-scoped Leaving Soon presentation lifecycle', () => {
     const spec = load(readFileSync(API_SPEC_PATH, 'utf8')) as {
       paths: Record<string, unknown>;
