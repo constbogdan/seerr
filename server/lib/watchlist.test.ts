@@ -1,6 +1,10 @@
 import PlexTvAPI from '@server/api/plextv';
 import { LibraryMediaType } from '@server/constants/libraryHistory';
-import { MediaType } from '@server/constants/media';
+import { MediaRequestStatus, MediaType } from '@server/constants/media';
+import {
+  UserMediaIntentState,
+  UserMediaIntentType,
+} from '@server/constants/watchlist';
 import { getRepository } from '@server/datasource';
 import {
   CanonicalEpisode,
@@ -15,6 +19,7 @@ import {
 } from '@server/entity/LibraryHistory';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
 import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import {
@@ -24,7 +29,10 @@ import {
   parseWatchlistQuery,
 } from '@server/lib/watchlist';
 import { WatchlistMetadataBackfill } from '@server/lib/watchlistMetadata';
-import { loadWatchlistRouletteCandidates } from '@server/lib/watchlistRoulette';
+import {
+  WatchlistRouletteService,
+  loadWatchlistRouletteCandidates,
+} from '@server/lib/watchlistRoulette';
 import { AddWatchlistGenres1790000000008 } from '@server/migration/sqlite/1790000000008-AddWatchlistGenres';
 import { AddWatchlistEnrichment1790000000014 } from '@server/migration/sqlite/1790000000014-AddWatchlistEnrichment';
 import { setupTestDb } from '@server/test/db';
@@ -529,6 +537,64 @@ describe('local Watchlist query and ownership', () => {
     assert.deepEqual(await loadWatchlistRouletteCandidates(MediaType.TV), [
       { mediaType: MediaType.TV, tmdbId: 7009 },
     ]);
+  });
+
+  it('does not mutate Watchlist membership or durable intent when requesting a collection replacement', async () => {
+    const user = await admin();
+    const startedAt = new Date('2026-10-23T00:00:00.000Z');
+    await addRow({
+      user,
+      tmdbId: 7990,
+      mediaType: MediaType.MOVIE,
+      title: 'Selected sequel',
+      genreIds: [],
+      createdAt: startedAt,
+    });
+    await getRepository(UserMediaIntentOccurrence).save(
+      new UserMediaIntentOccurrence({
+        userId: user.id,
+        user,
+        intentType: UserMediaIntentType.WATCHLIST,
+        mediaType: MediaType.MOVIE,
+        tmdbId: 7990,
+        state: UserMediaIntentState.ACTIVE,
+        startedAt,
+      })
+    );
+
+    const service = new WatchlistRouletteService(MediaType.MOVIE, {
+      now: () => new Date('2026-10-23T01:00:00.000Z'),
+      randomIndex: (upperExclusive) => upperExclusive - 1,
+      getCandidates: async () => [{ mediaType: MediaType.MOVIE, tmdbId: 7990 }],
+      refreshAcquisitions: async () => ({ authoritative: true }),
+      findRequestOwner: async () => user,
+      resolveMovieCandidate: async () => ({
+        outcome: 'resolved',
+        candidate: { mediaType: MediaType.MOVIE, tmdbId: 7991 },
+      }),
+      isCandidateEligible: async () => true,
+      createRequest: async () => ({
+        id: 7991,
+        status: MediaRequestStatus.APPROVED,
+      }),
+      persistSummary: async () => undefined,
+      hasDefaultProvider: () => true,
+      getConfiguration: () => ({
+        requestOwnerUserId: user.id,
+        movieItemsPerRun: 1,
+        seriesItemsPerRun: 1,
+      }),
+    });
+    assert.equal((await service.run()).requested, 1);
+
+    assert.equal(await getRepository(Watchlist).count(), 1);
+    assert.equal(await getRepository(Watchlist).countBy({ tmdbId: 7990 }), 1);
+    assert.equal(await getRepository(Watchlist).countBy({ tmdbId: 7991 }), 0);
+    const occurrence = await getRepository(
+      UserMediaIntentOccurrence
+    ).findOneByOrFail({ tmdbId: 7990 });
+    assert.equal(occurrence.state, UserMediaIntentState.ACTIVE);
+    assert.equal(occurrence.endedAt, null);
   });
 
   it('filters before pagination, isolates users, and reports filtered totals', async () => {

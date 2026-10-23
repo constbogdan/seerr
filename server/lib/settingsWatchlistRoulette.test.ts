@@ -85,9 +85,11 @@ describe('Watchlist Roulette settings', () => {
         failed: 0,
         examined: 3,
         requestIds: [44],
+        limitReason: 'metadata-budget',
       },
     });
     assert.equal(normalized.requestOwnerUserId, 4);
     assert.deepEqual(normalized.lastMovieRun?.requestIds, [44]);
+    assert.equal(normalized.lastMovieRun?.limitReason, 'metadata-budget');
   });
 });

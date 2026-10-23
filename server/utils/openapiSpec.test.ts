@@ -186,6 +186,16 @@ describe('OpenAPI runtime schema', () => {
     assert.ok(spec.paths['/settings/watchlist-roulette']);
     assert.ok(spec.components.schemas.WatchlistRouletteSettings);
     assert.ok(spec.components.schemas.WatchlistRouletteSettingsResponse);
+    assert.deepEqual(
+      (
+        (
+          spec.components.schemas.WatchlistRouletteRunSummary as {
+            properties?: Record<string, unknown>;
+          }
+        ).properties?.limitReason as { enum?: string[] }
+      ).enum,
+      ['metadata-budget', 'metadata-deadline']
+    );
     const seriesRelocationPreviewResult = spec.components.schemas
       .SeriesRelocationPreviewResult as {
       required?: string[];

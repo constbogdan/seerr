@@ -132,7 +132,16 @@ pretending an externally paginated page was fully filtered locally.
 Watchlist Roulette reads only opted-in users' current local Watchlist entries
 whose shared physical Library Status is **Absent**, then keeps its existing
 typed-identity deduplication, shuffle, request eligibility, and submission
-workflow. Active and Archived items never enter its candidate pool.
+workflow. Active and Archived items never enter its candidate pool. Movie
+Roulette resolves collection membership lazily after shuffling. A confirmed
+standalone Movie follows the ordinary path; a collection candidate resolves to
+the earliest release-dated member with no current or historical physical
+Library evidence. The resolved Movie still passes the normal request safeguards,
+and an ineligible earliest missing member consumes that collection's single
+attempt for the run rather than allowing a later sequel. Series Roulette is
+unchanged. Per-run candidate, TMDB-call, and metadata-time limits bound provider
+work; a limited run records `metadata-budget` or `metadata-deadline` and retries
+naturally on a later schedule. Roulette never changes Watchlist membership.
 
 Watchlist and Blocklist are compact secondary card actions with transparent
 circular hit targets, accessible names, and hover/focus tooltips. Request is
