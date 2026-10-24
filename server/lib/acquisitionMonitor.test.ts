@@ -9,6 +9,7 @@ import {
   ACQUISITION_WARM_DURATION_MS,
   AcquisitionMonitor,
   AcquisitionMonitorState,
+  fanOutConfirmedImports,
 } from '@server/lib/acquisitionMonitor';
 import type {
   ConfirmedServarrImport,
@@ -102,6 +103,34 @@ const buildMonitor = (
 };
 
 describe('AcquisitionMonitor', () => {
+  it('fans confirmed imports to independent consumers when either one fails', async () => {
+    const confirmedImports: ConfirmedServarrImport[] = [
+      {
+        mediaType: MediaType.MOVIE,
+        externalId: 123,
+        downloadId: 'fan-out',
+        serverAliases: [{ id: 1, is4k: false }],
+        episodes: [],
+      },
+    ];
+    const first = mock.fn(() => {
+      throw new Error('first consumer failed');
+    });
+    const second = mock.fn(async (imports: ConfirmedServarrImport[]) => {
+      void imports;
+    });
+
+    fanOutConfirmedImports(confirmedImports, [
+      { name: 'first', request: first },
+      { name: 'second', request: second },
+    ]);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    assert.equal(first.mock.callCount(), 1);
+    assert.equal(second.mock.callCount(), 1);
+    assert.deepEqual(second.mock.calls[0].arguments[0], confirmedImports);
+  });
+
   it('hands confirmed imports off without waiting for Jellyfin reconciliation', async () => {
     const clock = new FakeClock();
     let finishReconciliation: (() => void) | undefined;

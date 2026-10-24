@@ -75,6 +75,18 @@ snapshot captured before removal from reopening the removed presence. A stale
 run fails closed and converges through a fresh retry; the generation is not a
 timestamp and is not process-local.
 
+Confirmed Radarr and Sonarr imports also enqueue a bounded, process-local
+targeted refresh of the affected Movie or complete Series. It rereads only the
+exact Servarr target, coalesces repeated import generations, and commits
+target-scoped Foundation changes only after revalidating the global generation
+and affected source epochs. Provider reads occur outside the shared background
+write lock; unchanged snapshots perform no business-data writes. This immediate
+path is best-effort and deliberately has no durable queue. A restart, exhausted
+retry window, identity conflict, or provider outage is recovered by the next
+authoritative Full Library Sync, which remains the only source-wide closure and
+checkpoint owner. Jellyfin visibility and Seerr availability completion remain
+the responsibility of the independent Jellyfin reconciliation path.
+
 Servarr connection credentials, provider options, and root selections remain in
 `settings.json`. Optional Storage Root display names, colors, and Animation
 designations live in the database. An update validates the whole payload before

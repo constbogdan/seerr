@@ -38,6 +38,29 @@ interface AcquisitionMonitorOptions {
   ) => Promise<void> | void;
 }
 
+interface ConfirmedImportConsumer {
+  name: string;
+  request(imports: ConfirmedServarrImport[]): Promise<void> | void;
+}
+
+export const fanOutConfirmedImports = (
+  imports: ConfirmedServarrImport[],
+  consumers: ConfirmedImportConsumer[]
+): void => {
+  for (const consumer of consumers) {
+    void Promise.resolve()
+      .then(() => consumer.request(imports))
+      .catch((error) => {
+        logger.error('Unable to dispatch confirmed Servarr imports', {
+          label: 'Acquisition Monitor',
+          consumer: consumer.name,
+          imports: imports.length,
+          errorType: error instanceof Error ? error.name : 'UnknownError',
+        });
+      });
+  }
+};
+
 export interface AcquisitionMonitorStatus {
   state: AcquisitionMonitorState;
   refreshing: boolean;
@@ -203,14 +226,11 @@ export class AcquisitionMonitor {
         void Promise.resolve(
           this.onConfirmedImports(outcome.confirmedImports)
         ).catch((error) => {
-          logger.error(
-            'Unable to request Jellyfin availability reconciliation',
-            {
-              label: 'Acquisition Monitor',
-              imports: outcome.confirmedImports?.length,
-              errorType: error instanceof Error ? error.name : 'UnknownError',
-            }
-          );
+          logger.error('Unable to dispatch confirmed Servarr imports', {
+            label: 'Acquisition Monitor',
+            imports: outcome.confirmedImports?.length,
+            errorType: error instanceof Error ? error.name : 'UnknownError',
+          });
         });
       }
       const delay = this.nextDelay(outcome);
@@ -379,7 +399,21 @@ export class AcquisitionMonitor {
 
 const acquisitionMonitor = new AcquisitionMonitor(downloadTracker, {
   onConfirmedImports: (imports) =>
-    jellyfinAvailabilityReconciler.request(imports),
+    fanOutConfirmedImports(imports, [
+      {
+        name: 'jellyfin-availability',
+        request: (confirmed) =>
+          jellyfinAvailabilityReconciler.request(confirmed),
+      },
+      {
+        name: 'library-foundation',
+        request: async (confirmed) => {
+          const { default: libraryTargetedRefresh } =
+            await import('@server/lib/libraryTargetedRefresh');
+          libraryTargetedRefresh.request(confirmed);
+        },
+      },
+    ]),
 });
 
 export default acquisitionMonitor;
