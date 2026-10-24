@@ -1334,14 +1334,7 @@ describe('Library browsing and Watched presentation structure', () => {
       row,
       /availability === 'available' \|\| availability === 'partial'[\s\S]*?messages\.seasonEpisodeRatio[\s\S]*?available: season\.availableEpisodeCount[\s\S]*?known: season\.knownEpisodeCount/
     );
-    assert.match(
-      row,
-      /availability === 'partial'[\s\S]*?border-amber-500\/70 bg-amber-500\/20 text-amber-100/
-    );
-    assert.match(
-      row,
-      /season\.state === 'current'[\s\S]*?border-green-500\/70 bg-green-500\/20 text-green-100/
-    );
+    assert.match(row, /librarySeasonStateClass\(season, availability\)/);
     assert.match(row, /season\.isSpecial[\s\S]*?messages\.specials/);
     assert.match(
       row,

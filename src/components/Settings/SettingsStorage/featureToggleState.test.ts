@@ -5,6 +5,7 @@ import type { OverflowSettings } from '@server/constants/overflow';
 
 import {
   isOverflowRoutingActivationValid,
+  isSeriesRelocationRoutingConfigured,
   replaceStorageJobState,
   seriesRelocationConfigurationChanged,
   setAutomaticSeriesPlacementEnabled,
@@ -35,6 +36,33 @@ const jobs = (enabled: boolean): StorageJobState[] => [
 ];
 
 describe('Storage feature toggle state', () => {
+  it('requires two distinct discovered Sonarr volumes for relocation guidance', () => {
+    const configured = settings(false, false);
+    const volumes = new Set(['physical:volume3', 'physical:volume9']);
+    assert.equal(
+      isSeriesRelocationRoutingConfigured(configured, volumes),
+      true
+    );
+    assert.equal(
+      isSeriesRelocationRoutingConfigured(
+        { ...configured, expansionSeriesVolumeId: null },
+        volumes
+      ),
+      false
+    );
+    assert.equal(
+      isSeriesRelocationRoutingConfigured(
+        { ...configured, expansionSeriesVolumeId: 'physical:volume3' },
+        volumes
+      ),
+      false
+    );
+    assert.equal(
+      isSeriesRelocationRoutingConfigured(configured, new Set()),
+      false
+    );
+  });
+
   it('requires an enabled route only when Overflow Routing is enabled', () => {
     assert.equal(
       isOverflowRoutingActivationValid({ enabled: false, routes: [] }),

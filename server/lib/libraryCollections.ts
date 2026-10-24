@@ -1,5 +1,8 @@
 import TheMovieDb from '@server/api/themoviedb';
-import type { TmdbCollection } from '@server/api/themoviedb/interfaces';
+import type {
+  TmdbCollection,
+  TmdbMovieDetails,
+} from '@server/api/themoviedb/interfaces';
 import { LibraryMediaType } from '@server/constants/libraryHistory';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
@@ -15,6 +18,7 @@ import type {
   LibrarySortDirection,
 } from '@server/interfaces/api/libraryInterfaces';
 import { currentLibraryPresenceSql } from '@server/lib/libraryActivity';
+import { classifyMovieLibraryStatusByTmdbIds } from '@server/lib/watchlistLibraryStatus';
 import logger from '@server/logger';
 import { In } from 'typeorm';
 
@@ -56,6 +60,8 @@ interface CollectionMetadataResult {
 export interface LibraryCollectionsDependencies {
   discoverCollectionIds: () => Promise<number[]>;
   fetchCollection: (id: number, locale: string) => Promise<TmdbCollection>;
+  fetchMovie: (id: number, locale: string) => Promise<TmdbMovieDetails>;
+  fetchPhysicalMovieIds: (tmdbIds: number[]) => Promise<Set<number>>;
   fetchAvailability: (tmdbIds: number[]) => Promise<Map<number, boolean>>;
   now: () => Date;
   snapshotTtlMs: number;
@@ -117,12 +123,33 @@ const fetchStrictAvailability = async (
   return result;
 };
 
+const fetchPhysicalMovieIds = async (
+  tmdbIds: number[]
+): Promise<Set<number>> => {
+  const distinctIds = [...new Set(tmdbIds)].filter(
+    (id) => Number.isSafeInteger(id) && id > 0
+  );
+  if (distinctIds.length === 0) return new Set();
+  // This lookup only decides whether an already-discovered collection member
+  // may override an unreleased TMDB status. Collection discovery remains
+  // current-physical-only in discoverCurrentCollectionIds above.
+  const statusByTmdbId = await classifyMovieLibraryStatusByTmdbIds(distinctIds);
+  return new Set(
+    [...statusByTmdbId]
+      .filter(([, status]) => status !== 'absent')
+      .map(([tmdbId]) => tmdbId)
+  );
+};
+
 const defaultDependencies = (): LibraryCollectionsDependencies => {
   const tmdb = new TheMovieDb();
   return {
     discoverCollectionIds: discoverCurrentCollectionIds,
     fetchCollection: (id, locale) =>
       tmdb.getCollection({ collectionId: id, language: locale }),
+    fetchMovie: (id, locale) =>
+      tmdb.getMovie({ movieId: id, language: locale }),
+    fetchPhysicalMovieIds,
     fetchAvailability: fetchStrictAvailability,
     now: () => new Date(),
     snapshotTtlMs: COLLECTION_SNAPSHOT_TTL_MS,
@@ -155,33 +182,26 @@ const collectionFingerprint = (ids: number[]): string => ids.join(',');
 
 const collectionItem = (
   collection: TmdbCollection,
-  availability: Map<number, boolean>
-): LibraryCollectionItem => {
+  availability: Map<number, boolean>,
+  visibleMemberIds: ReadonlySet<number>
+): LibraryCollectionItem | null => {
+  const visibleParts = collection.parts.filter((part) =>
+    visibleMemberIds.has(Number(part.id))
+  );
   const memberIds = [
     ...new Set(
-      collection.parts
+      visibleParts
         .map((part) => Number(part.id))
         .filter((id) => Number.isSafeInteger(id) && id > 0)
     ),
   ];
-  if (memberIds.length === 0) {
-    return {
-      id: collection.id,
-      name: collection.name,
-      overview: collection.overview ?? null,
-      posterPath: collection.poster_path ?? null,
-      backdropPath: collection.backdrop_path ?? null,
-      availableMovies: null,
-      totalMovies: null,
-      completeness: 'unknown',
-    };
-  }
+  if (memberIds.length === 0) return null;
   const posterPath =
     collection.poster_path ??
-    collection.parts.find(
+    visibleParts.find(
       (part) => availability.get(Number(part.id)) && part.poster_path
     )?.poster_path ??
-    collection.parts.find((part) => part.poster_path)?.poster_path ??
+    visibleParts.find((part) => part.poster_path)?.poster_path ??
     null;
   const availableMovies = memberIds.filter((id) => availability.get(id)).length;
   return {
@@ -324,13 +344,53 @@ export class LibraryCollectionsService {
         return;
       }
 
-      const memberIds = successful.flatMap((entry) =>
-        entry.collection.parts.map((part) => part.id)
+      const memberIds = [
+        ...new Set(
+          successful.flatMap((entry) =>
+            entry.collection.parts
+              .map((part) => Number(part.id))
+              .filter((id) => Number.isSafeInteger(id) && id > 0)
+          )
+        ),
+      ];
+      const [availability, physicalMovieIds, movieMetadata] = await Promise.all(
+        [
+          this.dependencies.fetchAvailability(memberIds),
+          this.dependencies.fetchPhysicalMovieIds(memberIds),
+          mapBounded(
+            memberIds,
+            this.dependencies.metadataConcurrency,
+            async (id) => {
+              try {
+                return {
+                  id,
+                  status: (await this.dependencies.fetchMovie(id, locale))
+                    .status,
+                };
+              } catch {
+                return { id, status: null };
+              }
+            }
+          ),
+        ]
       );
-      const availability = await this.dependencies.fetchAvailability(memberIds);
-      const refreshedItems = successful.map((entry) =>
-        collectionItem(entry.collection, availability)
+      const visibleMemberIds = new Set(
+        movieMetadata
+          .filter(
+            ({ id, status }) =>
+              status === 'Released' || physicalMovieIds.has(id)
+          )
+          .map(({ id }) => id)
       );
+      for (const id of physicalMovieIds) visibleMemberIds.add(id);
+      const refreshedItems = successful.flatMap((entry) => {
+        const item = collectionItem(
+          entry.collection,
+          availability,
+          visibleMemberIds
+        );
+        return item ? [item] : [];
+      });
       const previousById = new Map(
         (runtime.snapshot?.items ?? []).map((item) => [item.id, item])
       );

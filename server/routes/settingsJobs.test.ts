@@ -31,11 +31,14 @@ describe('Next Season settings job authorization', () => {
       type: 'process',
       interval: 'minutes',
       cronSchedule: '15 */5 * * * *',
-      job: {} as (typeof scheduledJobs)[number]['job'],
+      job: {
+        nextInvocation: () => null,
+      } as unknown as (typeof scheduledJobs)[number]['job'],
       dryRun: async () => {
         dryRunCalls += 1;
         return { status: 'succeeded', dryRun: true };
       },
+      showDryRunAction: false,
     });
   });
 
@@ -65,5 +68,15 @@ describe('Next Season settings job authorization', () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.dryRun, true);
     assert.equal(dryRunCalls, 1);
+  });
+
+  it('keeps the Upcoming endpoint while hiding its duplicate Jobs-list action', async () => {
+    const response = await request(app)
+      .get('/settings/jobs')
+      .set('x-test-role', 'admin');
+
+    assert.equal(response.status, 200);
+    assert.equal(response.body[0].id, 'next-season');
+    assert.equal(response.body[0].dryRunAvailable, false);
   });
 });

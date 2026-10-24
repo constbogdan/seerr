@@ -38,6 +38,7 @@ export const NEXT_SEASON_SERIES_LIMIT = 50;
 export const NEXT_SEASON_METADATA_LIMIT = 10;
 export const NEXT_SEASON_REQUEST_LIMIT = 5;
 export const NEXT_SEASON_DEADLINE_MS = 45_000;
+export const NEXT_SEASON_VIEWING_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 export interface NextSeasonSeriesCandidate {
   canonicalMediaId: number;
@@ -49,6 +50,12 @@ export interface NextSeasonTrigger {
   seasonNumber: number;
   nextSeasonNumber: number;
   qualifyingViewers: number;
+}
+
+interface NextSeasonQualifyingViewer {
+  key: string;
+  displayName: string;
+  lastViewedAt: string;
 }
 
 export interface NextSeasonProgressEvaluation {
@@ -91,6 +98,9 @@ export interface NextSeasonCandidateResult {
   seasonNumber: number | null;
   outcome: NextSeasonCandidateOutcome;
   reason?: NextSeasonSkipReason;
+  title?: string;
+  qualifyingViewer?: string;
+  qualifyingLastViewedAt?: string;
 }
 
 export interface NextSeasonRunSummary {
@@ -350,9 +360,46 @@ export const isNextSeasonProgressEligible = (
   watchedEpisodeCount <= totalEpisodeCount &&
   watchedEpisodeCount * 100 >= totalEpisodeCount * NEXT_SEASON_PROGRESS_PERCENT;
 
+export const isNextSeasonViewingActivityEligible = (
+  lastViewedAt: string | null,
+  now: Date
+): boolean => {
+  if (!lastViewedAt || !Number.isFinite(now.getTime())) return false;
+  const viewedAt = new Date(lastViewedAt).getTime();
+  if (!Number.isFinite(viewedAt) || viewedAt > now.getTime()) return false;
+  return now.getTime() - viewedAt <= NEXT_SEASON_VIEWING_WINDOW_MS;
+};
+
+const qualifyingViewersForSeason = (
+  detail: LibrarySeriesDetailResponse,
+  seasonNumber: number,
+  totalEpisodeCount: number,
+  now: Date
+): NextSeasonQualifyingViewer[] =>
+  detail.seasons
+    .find((season) => season.seasonNumber === seasonNumber)
+    ?.users.filter(
+      (user) =>
+        isNextSeasonProgressEligible(
+          user.watchedEpisodeCount,
+          totalEpisodeCount
+        ) && isNextSeasonViewingActivityEligible(user.lastViewedAt, now)
+    )
+    .map((user) => ({
+      key: viewerKey(user),
+      displayName: user.displayName,
+      lastViewedAt: user.lastViewedAt as string,
+    }))
+    .sort(
+      (left, right) =>
+        left.displayName.localeCompare(right.displayName) ||
+        left.key.localeCompare(right.key)
+    ) ?? [];
+
 export const evaluateNextSeasonProgress = (
   detail: LibrarySeriesDetailResponse,
-  totalEpisodesBySeason: ReadonlyMap<number, number>
+  totalEpisodesBySeason: ReadonlyMap<number, number>,
+  now: Date
 ): NextSeasonProgressEvaluation => {
   const triggers = new Map<
     number,
@@ -388,7 +435,8 @@ export const evaluateNextSeasonProgress = (
         !isNextSeasonProgressEligible(
           user.watchedEpisodeCount,
           Number(totalEpisodeCount)
-        )
+        ) ||
+        !isNextSeasonViewingActivityEligible(user.lastViewedAt, now)
       ) {
         continue;
       }
@@ -420,9 +468,10 @@ export const evaluateNextSeasonProgress = (
 
 export const deriveNextSeasonTriggers = (
   detail: LibrarySeriesDetailResponse,
-  totalEpisodesBySeason: ReadonlyMap<number, number>
+  totalEpisodesBySeason: ReadonlyMap<number, number>,
+  now: Date
 ): NextSeasonTrigger[] =>
-  evaluateNextSeasonProgress(detail, totalEpisodesBySeason).triggers;
+  evaluateNextSeasonProgress(detail, totalEpisodesBySeason, now).triggers;
 
 const knownRequestIneligibility = (error: unknown): boolean =>
   error instanceof DuplicateMediaRequestError ||
@@ -473,6 +522,7 @@ const summaryFor = (
 
 export class NextSeasonService {
   private activeRun?: Promise<NextSeasonRunSummary>;
+  private activeUpcoming?: Promise<NextSeasonRunSummary>;
   private lastResult?: NextSeasonRunSummary;
   private cursor = 0;
   private cancelRequested = false;
@@ -497,6 +547,7 @@ export class NextSeasonService {
     options: { dryRun?: boolean } = {}
   ): Promise<NextSeasonRunSummary> {
     const dryRun = options.dryRun === true;
+    if (dryRun) return this.upcoming();
     if (this.activeRun) {
       const now = this.dependencies.now().toISOString();
       return Promise.resolve({
@@ -513,12 +564,64 @@ export class NextSeasonService {
     return execution;
   }
 
+  public upcoming(): Promise<NextSeasonRunSummary> {
+    if (this.activeUpcoming) return this.activeUpcoming;
+    const execution = this.execute(true).finally(() => {
+      if (this.activeUpcoming === execution) this.activeUpcoming = undefined;
+    });
+    this.activeUpcoming = execution;
+    return execution;
+  }
+
+  private async loadSeriesForEvaluation(
+    complete: boolean
+  ): Promise<NextSeasonSeriesCandidate[]> {
+    if (!complete) {
+      return this.dependencies.loadActiveSeries(
+        NEXT_SEASON_SERIES_LIMIT,
+        this.cursor
+      );
+    }
+
+    const series: NextSeasonSeriesCandidate[] = [];
+    const seen = new Set<number>();
+    let afterCanonicalMediaId = 0;
+    while (true) {
+      const page = await this.dependencies.loadActiveSeries(
+        NEXT_SEASON_SERIES_LIMIT,
+        afterCanonicalMediaId
+      );
+      if (page.length === 0) break;
+      let repeated = false;
+      for (const candidate of page) {
+        if (seen.has(candidate.canonicalMediaId)) {
+          repeated = true;
+          continue;
+        }
+        seen.add(candidate.canonicalMediaId);
+        series.push(candidate);
+        afterCanonicalMediaId = candidate.canonicalMediaId;
+      }
+      if (page.length < NEXT_SEASON_SERIES_LIMIT || repeated) break;
+    }
+    return series;
+  }
+
   private async execute(dryRun: boolean): Promise<NextSeasonRunSummary> {
     const startedAt = this.dependencies.now();
     const deadline = startedAt.getTime() + NEXT_SEASON_DEADLINE_MS;
     const summary = summaryFor(dryRun, startedAt);
     const finish = (): NextSeasonRunSummary => {
       summary.completedAt = this.dependencies.now().toISOString();
+      if (dryRun) {
+        summary.candidates.sort(
+          (left, right) =>
+            (left.title ?? '').localeCompare(right.title ?? '', 'en') ||
+            left.canonicalMediaId - right.canonicalMediaId ||
+            (left.seasonNumber ?? -1) - (right.seasonNumber ?? -1) ||
+            left.outcome.localeCompare(right.outcome)
+        );
+      }
       if (!dryRun) this.lastResult = summary;
       logger.info('Next Season evaluation completed', {
         label: 'Next Season',
@@ -595,33 +698,29 @@ export class NextSeasonService {
 
     let series: NextSeasonSeriesCandidate[];
     try {
-      series = await this.dependencies.loadActiveSeries(
-        NEXT_SEASON_SERIES_LIMIT,
-        this.cursor
-      );
+      series = await this.loadSeriesForEvaluation(dryRun);
     } catch {
       summary.status = 'failed';
       summary.failed = 1;
       return finish();
     }
-    if (series.length === NEXT_SEASON_SERIES_LIMIT) {
+    if (!dryRun && series.length === NEXT_SEASON_SERIES_LIMIT) {
       summary.limitReason = 'series-limit';
     }
     const evaluatedTargets = new Set<string>();
-    let wouldRequestCount = 0;
 
     for (const candidate of series) {
-      if (this.cancelRequested) {
+      if (!dryRun && this.cancelRequested) {
         summary.limitReason = 'cancelled';
         break;
       }
-      if (this.dependencies.now().getTime() >= deadline) {
+      if (!dryRun && this.dependencies.now().getTime() >= deadline) {
         summary.limitReason = 'deadline';
         break;
       }
       summary.seriesExamined += 1;
       const completeCandidate = () => {
-        this.cursor = candidate.canonicalMediaId;
+        if (!dryRun) this.cursor = candidate.canonicalMediaId;
       };
       if (!candidate.tmdbId) {
         summary.skipped += 1;
@@ -684,7 +783,7 @@ export class NextSeasonService {
         completeCandidate();
         continue;
       }
-      if (summary.metadataLookups >= NEXT_SEASON_METADATA_LIMIT) {
+      if (!dryRun && summary.metadataLookups >= NEXT_SEASON_METADATA_LIMIT) {
         summary.limitReason = 'metadata-limit';
         break;
       }
@@ -712,7 +811,8 @@ export class NextSeasonService {
           metadata.seasons
             .filter((season) => season.season_number > 0)
             .map((season) => [season.season_number, season.episode_count])
-        )
+        ),
+        this.dependencies.now()
       );
       for (const sourceSeasonNumber of progress.missingEpisodeCountSeasons) {
         summary.skipped += 1;
@@ -757,12 +857,12 @@ export class NextSeasonService {
 
       let candidateInterrupted = false;
       for (const [triggerIndex, trigger] of triggers.entries()) {
-        if (this.cancelRequested) {
+        if (!dryRun && this.cancelRequested) {
           summary.limitReason = 'cancelled';
           candidateInterrupted = true;
           break;
         }
-        if (this.dependencies.now().getTime() >= deadline) {
+        if (!dryRun && this.dependencies.now().getTime() >= deadline) {
           summary.limitReason = 'deadline';
           candidateInterrupted = true;
           break;
@@ -774,6 +874,28 @@ export class NextSeasonService {
           canonicalMediaId: candidate.canonicalMediaId,
           tmdbId: candidate.tmdbId,
           seasonNumber: trigger.nextSeasonNumber,
+          title: candidate.title,
+          ...(() => {
+            const totalEpisodes = metadata.seasons.find(
+              (season) => season.season_number === trigger.seasonNumber
+            )?.episode_count;
+            const viewers = totalEpisodes
+              ? qualifyingViewersForSeason(
+                  detail,
+                  trigger.seasonNumber,
+                  totalEpisodes,
+                  this.dependencies.now()
+                )
+              : [];
+            if (viewers.length === 0) return {};
+            return {
+              qualifyingViewer:
+                viewers.length === 1
+                  ? viewers[0].displayName
+                  : `${viewers[0].displayName} +${viewers.length - 1}`,
+              qualifyingLastViewedAt: viewers[0].lastViewedAt,
+            };
+          })(),
         };
         const nextSeason = metadata.seasons.find(
           (season) =>
@@ -908,12 +1030,6 @@ export class NextSeasonService {
         }
         if (dryRun) {
           summary.candidates.push({ ...resultBase, outcome: 'would-request' });
-          wouldRequestCount += 1;
-          if (wouldRequestCount >= NEXT_SEASON_REQUEST_LIMIT) {
-            summary.limitReason = 'request-limit';
-            candidateInterrupted = triggerIndex < triggers.length - 1;
-            break;
-          }
           continue;
         }
         let recheck: SeasonInspection;
@@ -963,6 +1079,44 @@ export class NextSeasonService {
           });
           continue;
         }
+        let currentProgress: LibrarySeriesDetailResponse | null;
+        try {
+          currentProgress = await this.dependencies.loadSeriesProgress(
+            candidate.canonicalMediaId
+          );
+        } catch {
+          summary.failed += 1;
+          summary.candidates.push({
+            ...resultBase,
+            outcome: 'failed',
+            reason: 'progress-failure',
+          });
+          continue;
+        }
+        const stillQualifies =
+          currentProgress &&
+          evaluateNextSeasonProgress(
+            currentProgress,
+            new Map(
+              metadata.seasons
+                .filter((season) => season.season_number > 0)
+                .map((season) => [season.season_number, season.episode_count])
+            ),
+            this.dependencies.now()
+          ).triggers.some(
+            (currentTrigger) =>
+              currentTrigger.seasonNumber === trigger.seasonNumber &&
+              currentTrigger.nextSeasonNumber === trigger.nextSeasonNumber
+          );
+        if (!stillQualifies) {
+          summary.skipped += 1;
+          summary.candidates.push({
+            ...resultBase,
+            outcome: 'skipped',
+            reason: 'below-threshold',
+          });
+          continue;
+        }
         try {
           const request = await this.dependencies.submitSeason(
             candidate.tmdbId,
@@ -997,7 +1151,6 @@ export class NextSeasonService {
       if (!candidateInterrupted) completeCandidate();
       if (
         summary.requested >= NEXT_SEASON_REQUEST_LIMIT ||
-        wouldRequestCount >= NEXT_SEASON_REQUEST_LIMIT ||
         summary.limitReason === 'cancelled' ||
         summary.limitReason === 'deadline'
       ) {

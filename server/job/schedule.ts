@@ -65,9 +65,14 @@ export interface ScheduledJob {
   cancelFn?: () => void;
   commissioningRun?: () => Promise<unknown>;
   dryRun?: () => Promise<unknown>;
+  showDryRunAction?: boolean;
 }
 
 export const scheduledJobs: ScheduledJob[] = [];
+
+export const isDryRunActionAvailable = (
+  job: Pick<ScheduledJob, 'dryRun' | 'showDryRunAction'>
+): boolean => Boolean(job.dryRun) && job.showDryRunAction !== false;
 
 export const runDownloadSync = () => acquisitionMonitor.refresh('background');
 
@@ -119,6 +124,7 @@ export const createNextSeasonScheduledJob = (
   result: dependencies.result,
   cancelFn: dependencies.cancel,
   dryRun: dependencies.dryRun,
+  showDryRunAction: false,
 });
 
 export const startJobs = async (): Promise<void> => {

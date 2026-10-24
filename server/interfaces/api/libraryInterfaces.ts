@@ -107,6 +107,7 @@ export interface LibrarySeasonSummary {
   knownEpisodeCount: number | null;
   resolution: number | null;
   requestable: boolean;
+  acquiring: boolean;
 }
 
 export interface LibraryExternalLink {

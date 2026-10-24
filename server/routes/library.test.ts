@@ -68,6 +68,13 @@ const service = new LibraryService({
     backdropPath: `/backdrop-${tmdbId}.jpg`,
     voteAverage: 7.5,
     voteCount: 100,
+    seasons:
+      tmdbId === 80039
+        ? [1, 2, 3, 4].map((seasonNumber) => ({
+            seasonNumber,
+            airDate: '2025-01-01',
+          }))
+        : undefined,
     collection:
       tmdbId === 101
         ? {
@@ -765,10 +772,10 @@ describe('Library factual administrator API', () => {
       null
     );
     assert.equal(
-      mixed.body.results[0].seasonSummaries.find(
+      mixed.body.results[0].seasonSummaries.some(
         (season: { seasonNumber: number }) => season.seasonNumber === 0
-      ).resolution,
-      1080
+      ),
+      false
     );
 
     mixedFile.resolution = null;
@@ -2696,8 +2703,8 @@ describe('Library factual administrator API', () => {
         ]
       )
     );
-    assert.equal(requestability.get(1), false);
-    assert.equal(requestability.get(0), true);
+    assert.equal(requestability.get(1), true);
+    assert.equal(requestability.has(0), false);
   });
 
   it('reports independent unpaginated per-user availability without applying the current user selection', async () => {
@@ -3260,15 +3267,14 @@ describe('Library factual administrator API', () => {
         ]
       ),
       [
-        [0, 'current', 1, 1],
         [1, 'current', 10, 11],
         [2, 'known_missing', 0, null],
         [3, 'archive', 1, null],
         [4, 'current', 1, null],
       ]
     );
-    assert.equal(summaries[0].key, `season:${seriesId}:0`);
-    assert.equal(summaries[0].isSpecial, true);
+    assert.equal(summaries[0].key, `season:${seriesId}:1`);
+    assert.equal(summaries[0].isSpecial, false);
 
     await closeLibraryMedia(completedMovieId);
     const archivedMovie = await request(app)
@@ -3834,10 +3840,7 @@ describe('Library factual administrator API', () => {
         ['Bogdan', 3, 10, 30],
         ['Moni', 9, 10, 90],
       ],
-      seasonSummaries: [
-        [0, 'current', 1, 1],
-        [1, 'current', 10, 10],
-      ],
+      seasonSummaries: [[1, 'current', 10, 10]],
       removalSchedules: [],
     });
     assert.deepEqual(summarize(removedMovieId), {

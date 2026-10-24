@@ -30,6 +30,20 @@ export const classifyLibrarySeasonAvailability = (
     : 'partial';
 };
 
+export const librarySeasonStateClass = (
+  season: Pick<LibrarySeasonSummary, 'state' | 'acquiring'>,
+  availability: LibrarySeasonAvailabilityPresentation
+): string =>
+  availability === 'partial'
+    ? 'border-amber-500/70 bg-amber-500/20 text-amber-100'
+    : season.state === 'current'
+      ? 'border-green-500/70 bg-green-500/20 text-green-100'
+      : season.state === 'archive'
+        ? 'border-gray-500 bg-gray-700 text-gray-300'
+        : season.acquiring
+          ? 'border-dashed border-gray-500 bg-blue-500/20 text-blue-100'
+          : 'border-dashed border-gray-600 bg-gray-900/60 text-gray-500';
+
 export const formatLibrarySize = (value: string | null): string => {
   if (!value) return '—';
   const bytes = Number(value);

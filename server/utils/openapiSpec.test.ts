@@ -320,6 +320,12 @@ describe('OpenAPI runtime schema', () => {
       description:
         'Whether the existing standard Seerr request workflow currently considers this Season requestable before user-specific permission and settings checks.',
     });
+    assert.ok(seasonSummaries.items?.required?.includes('acquiring'));
+    assert.deepEqual(seasonSummaries.items?.properties?.acquiring, {
+      type: 'boolean',
+      description:
+        'Whether the otherwise-missing Season has an exact active standard request association.',
+    });
     assert.ok(spec.components.schemas.LibraryItem.properties?.externalLinks);
     assert.ok(spec.components.schemas.LibraryItem.properties?.tmdbRating);
     assert.ok(spec.components.schemas.LibraryItem.properties?.backdropPath);

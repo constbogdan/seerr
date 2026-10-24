@@ -16,6 +16,7 @@ import {
   NextSeasonService,
   deriveNextSeasonTriggers,
   isNextSeasonProgressEligible,
+  isNextSeasonViewingActivityEligible,
   loadActiveNextSeasonSeries,
   type NextSeasonDependencies,
   type SeasonInspection,
@@ -41,6 +42,7 @@ const detail = (
       key: string;
       userId: number | null;
       watchedEpisodeCount: number;
+      lastViewedAt?: string | null;
     }[];
   }[]
 ): LibrarySeriesDetailResponse => ({
@@ -61,7 +63,10 @@ const detail = (
         season.availableEpisodeCount > 0
           ? (user.watchedEpisodeCount / season.availableEpisodeCount) * 100
           : 0,
-      lastViewedAt: null,
+      lastViewedAt:
+        user.lastViewedAt === undefined
+          ? '2026-10-23T11:55:00.000Z'
+          : user.lastViewedAt,
     })),
   })),
 });
@@ -156,6 +161,134 @@ describe('Next Season progress selection', () => {
     assert.equal(isNextSeasonProgressEligible(5.5, 8), false);
   });
 
+  it('uses an inclusive rolling 24-hour viewing-activity window', () => {
+    assert.equal(
+      isNextSeasonViewingActivityEligible('2026-10-23T11:55:00.000Z', now),
+      true
+    );
+    assert.equal(
+      isNextSeasonViewingActivityEligible('2026-10-22T13:00:00.000Z', now),
+      true
+    );
+    assert.equal(
+      isNextSeasonViewingActivityEligible('2026-10-22T12:00:00.000Z', now),
+      true
+    );
+    assert.equal(
+      isNextSeasonViewingActivityEligible('2026-10-22T11:00:00.000Z', now),
+      false
+    );
+    assert.equal(isNextSeasonViewingActivityEligible(null, now), false);
+    assert.equal(isNextSeasonViewingActivityEligible('invalid', now), false);
+    assert.equal(
+      isNextSeasonViewingActivityEligible('2026-10-23T12:00:00.001Z', now),
+      false
+    );
+  });
+
+  it('combines progress and viewing boundaries for the same user and Season', () => {
+    const qualifies = (watchedEpisodeCount: number, lastViewedAt: string) =>
+      deriveNextSeasonTriggers(
+        detail([
+          {
+            seasonNumber: 1,
+            availableEpisodeCount: 10,
+            users: [
+              {
+                key: 'viewer',
+                userId: 1,
+                watchedEpisodeCount,
+                lastViewedAt,
+              },
+            ],
+          },
+        ]),
+        new Map([[1, 10]]),
+        now
+      ).length === 1;
+
+    assert.equal(qualifies(7, '2026-10-23T11:55:00.000Z'), true);
+    assert.equal(qualifies(8, '2026-10-22T13:00:00.000Z'), true);
+    assert.equal(qualifies(9, '2026-10-22T11:00:00.000Z'), false);
+    assert.equal(qualifies(7, '2026-10-22T12:00:00.000Z'), true);
+  });
+
+  it('requires the same viewer to have qualifying progress and recent activity in the source Season', () => {
+    const triggers = deriveNextSeasonTriggers(
+      detail([
+        {
+          seasonNumber: 1,
+          availableEpisodeCount: 10,
+          users: [
+            {
+              key: 'recent-low-progress',
+              userId: 1,
+              watchedEpisodeCount: 6,
+              lastViewedAt: '2026-10-23T11:55:00.000Z',
+            },
+            {
+              key: 'stale-high-progress',
+              userId: 2,
+              watchedEpisodeCount: 9,
+              lastViewedAt: '2026-10-22T11:00:00.000Z',
+            },
+            {
+              key: 'recent-qualifying',
+              userId: 3,
+              watchedEpisodeCount: 8,
+              lastViewedAt: '2026-10-22T13:00:00.000Z',
+            },
+          ],
+        },
+      ]),
+      new Map([[1, 10]]),
+      now
+    );
+
+    assert.deepEqual(triggers, [
+      { seasonNumber: 1, nextSeasonNumber: 2, qualifyingViewers: 1 },
+    ]);
+  });
+
+  it('does not let recent activity in another Season refresh stale source-Season progress', () => {
+    assert.deepEqual(
+      deriveNextSeasonTriggers(
+        detail([
+          {
+            seasonNumber: 1,
+            availableEpisodeCount: 10,
+            users: [
+              {
+                key: 'viewer',
+                userId: 1,
+                watchedEpisodeCount: 9,
+                lastViewedAt: '2026-10-22T11:00:00.000Z',
+              },
+            ],
+          },
+          {
+            seasonNumber: 2,
+            availableEpisodeCount: 10,
+            users: [
+              {
+                key: 'viewer',
+                userId: 1,
+                watchedEpisodeCount: 1,
+                lastViewedAt: '2026-10-23T11:55:00.000Z',
+              },
+            ],
+          },
+        ]),
+        new Map([
+          [1, 10],
+          [2, 10],
+        ]),
+        now
+      ),
+      []
+    );
+  });
+
   it('evaluates every physical regular Season and keeps viewers independent', () => {
     const triggers = deriveNextSeasonTriggers(
       detail([
@@ -182,7 +315,8 @@ describe('Next Season progress selection', () => {
       new Map([
         [1, 8],
         [2, 10],
-      ])
+      ]),
+      now
     );
 
     assert.deepEqual(triggers, [
@@ -203,7 +337,8 @@ describe('Next Season progress selection', () => {
             ],
           },
         ]),
-        new Map([[2, 10]])
+        new Map([[2, 10]]),
+        now
       ),
       [{ seasonNumber: 2, nextSeasonNumber: 3, qualifyingViewers: 2 }]
     );
@@ -222,7 +357,8 @@ describe('Next Season progress selection', () => {
             ],
           },
         ]),
-        new Map([[1, 10]])
+        new Map([[1, 10]]),
+        now
       ),
       []
     );
@@ -245,7 +381,8 @@ describe('Next Season progress selection', () => {
       new Map([
         [1, 8],
         [3, 10],
-      ])
+      ]),
+      now
     );
     assert.deepEqual(
       triggers.map((trigger) => trigger.nextSeasonNumber),
@@ -263,7 +400,8 @@ describe('Next Season progress selection', () => {
             users: [{ key: 'viewer', userId: 1, watchedEpisodeCount: 7 }],
           },
         ]),
-        new Map()
+        new Map(),
+        now
       ),
       []
     );
@@ -285,7 +423,8 @@ describe('Next Season progress selection', () => {
         ]),
         totalEpisodeCount === undefined
           ? new Map()
-          : new Map([[1, totalEpisodeCount]])
+          : new Map([[1, totalEpisodeCount]]),
+        now
       ).length;
 
     assert.equal(triggerCount(10, 7, 10), 1);
@@ -378,9 +517,38 @@ describe('Next Season execution safety', () => {
         canonicalMediaId: 1,
         tmdbId: 101,
         seasonNumber: 2,
+        title: 'Series',
+        qualifyingViewer: 'viewer-1',
+        qualifyingLastViewedAt: '2026-10-23T11:55:00.000Z',
         outcome: 'would-request',
       },
     ]);
+  });
+
+  it('reports one deterministic qualifying viewer when several viewers qualify', async () => {
+    const result = await new NextSeasonService(
+      dependencies({
+        loadSeriesProgress: async () =>
+          detail([
+            {
+              seasonNumber: 1,
+              availableEpisodeCount: 10,
+              users: [
+                { key: 'Zed', userId: 2, watchedEpisodeCount: 8 },
+                { key: 'Amy', userId: 1, watchedEpisodeCount: 7 },
+              ],
+            },
+          ]),
+        loadTvMetadata: async () =>
+          metadata([
+            { seasonNumber: 1, episodes: 10 },
+            { seasonNumber: 2, episodes: 10 },
+          ]),
+      })
+    ).run({ dryRun: true });
+
+    assert.equal(result.candidates[0].title, 'Series');
+    assert.equal(result.candidates[0].qualifyingViewer, 'Amy +1');
   });
 
   it('submits one automatic Season request and rechecks immediately before submission', async () => {
@@ -404,6 +572,76 @@ describe('Next Season execution safety', () => {
     assert.equal(result.requested, 1);
     assert.deepEqual(result.requestIds, [44]);
     assert.equal(result.limitReason, undefined);
+  });
+
+  it('fails closed when recent activity expires before request submission', async () => {
+    let clock = new Date(now);
+    let progressCalls = 0;
+    let submissions = 0;
+    const result = await new NextSeasonService(
+      dependencies({
+        now: () => clock,
+        loadSeriesProgress: async () => {
+          progressCalls += 1;
+          if (progressCalls === 2) {
+            clock = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+          }
+          return qualifyingDetail;
+        },
+        submitSeason: async () => {
+          submissions += 1;
+          return { id: 1 };
+        },
+      })
+    ).run();
+
+    assert.equal(progressCalls, 2);
+    assert.equal(submissions, 0);
+    assert.equal(result.requested, 0);
+    assert.equal(result.candidates[0].reason, 'below-threshold');
+  });
+
+  it('keeps Upcoming and scheduled eligibility consistent and excludes stale backlog', async () => {
+    let submissions = 0;
+    const staleDetail = detail([
+      {
+        seasonNumber: 1,
+        availableEpisodeCount: 10,
+        users: [
+          {
+            key: 'stale-viewer',
+            userId: 1,
+            watchedEpisodeCount: 9,
+            lastViewedAt: '2026-10-22T11:00:00.000Z',
+          },
+        ],
+      },
+    ]);
+    const service = new NextSeasonService(
+      dependencies({
+        loadSeriesProgress: async () => staleDetail,
+        loadTvMetadata: async () =>
+          metadata([
+            { seasonNumber: 1, episodes: 10 },
+            { seasonNumber: 2, episodes: 10 },
+          ]),
+        submitSeason: async () => {
+          submissions += 1;
+          return { id: 1 };
+        },
+      })
+    );
+
+    const upcoming = await service.upcoming();
+    const scheduled = await service.run();
+    assert.equal(
+      upcoming.candidates.some(({ outcome }) => outcome === 'would-request'),
+      false
+    );
+    assert.equal(upcoming.candidates[0].reason, 'below-threshold');
+    assert.equal(scheduled.requested, 0);
+    assert.equal(scheduled.candidates[0].reason, 'below-threshold');
+    assert.equal(submissions, 0);
   });
 
   it('requests independently eligible targets across a non-contiguous physical Series', async () => {
@@ -905,11 +1143,11 @@ describe('Next Season execution safety', () => {
     );
 
     const dryRun = await service.run({ dryRun: true });
-    assert.equal(dryRun.limitReason, 'request-limit');
+    assert.equal(dryRun.limitReason, undefined);
     assert.equal(
       dryRun.candidates.filter(({ outcome }) => outcome === 'would-request')
         .length,
-      5
+      6
     );
     assert.deepEqual(submissions, []);
 
@@ -929,7 +1167,7 @@ describe('Next Season execution safety', () => {
     const requested = new Set<number>();
     const submissions: number[] = [];
     let deadlineEnabled = true;
-    let nowCalls = 0;
+    let clock = new Date(now);
     const service = new NextSeasonService(
       dependencies({
         loadActiveSeries: loadActiveNextSeasonSeries,
@@ -962,15 +1200,12 @@ describe('Next Season execution safety', () => {
         submitSeason: async (_tmdbId, seasonNumber) => {
           submissions.push(seasonNumber);
           requested.add(seasonNumber);
+          if (deadlineEnabled) {
+            clock = new Date(now.getTime() + 45_000);
+          }
           return { id: seasonNumber };
         },
-        now: () => {
-          if (!deadlineEnabled) return new Date(now);
-          nowCalls += 1;
-          return nowCalls >= 4
-            ? new Date(now.getTime() + 45_000)
-            : new Date(now);
-        },
+        now: () => clock,
       })
     );
 
@@ -980,6 +1215,7 @@ describe('Next Season execution safety', () => {
     assert.deepEqual(submissions, [2]);
 
     deadlineEnabled = false;
+    clock = new Date(now);
     const second = await service.run();
     assert.equal(second.requested, 1);
     assert.deepEqual(submissions, [2, 4]);
@@ -1040,36 +1276,58 @@ describe('Next Season execution safety', () => {
     assert.deepEqual(submissions, [2, 4]);
   });
 
-  it('continues from the first unprocessed real candidate after the metadata budget', async () => {
-    for (let index = 0; index < 11; index += 1) {
-      await seedActiveSeries(2301 + index);
-    }
-    let runNumber = 1;
-    const metadataIdsByRun = new Map<number, number[]>();
+  it('enumerates every candidate in bounded pages without advancing the operational cursor', async () => {
+    const candidates = Array.from({ length: 52 }, (_, index) => ({
+      canonicalMediaId: index + 1,
+      tmdbId: 2301 + index,
+      title: `Series ${String(52 - index).padStart(2, '0')}`,
+    }));
+    const cursors: number[] = [];
+    let submissions = 0;
     const service = new NextSeasonService(
       dependencies({
-        loadActiveSeries: loadActiveNextSeasonSeries,
+        loadActiveSeries: async (limit, afterCanonicalMediaId) => {
+          cursors.push(afterCanonicalMediaId);
+          return candidates
+            .filter(
+              (candidate) => candidate.canonicalMediaId > afterCanonicalMediaId
+            )
+            .slice(0, limit);
+        },
         loadTvMetadata: async (tmdbId) => {
-          const ids = metadataIdsByRun.get(runNumber) ?? [];
-          ids.push(tmdbId);
-          metadataIdsByRun.set(runNumber, ids);
           return {
             ...metadata([{ seasonNumber: 1 }, { seasonNumber: 2 }]),
             id: tmdbId,
           };
         },
-        inspectSeason: async () => ({ state: 'already-requested' }),
+        submitSeason: async () => {
+          submissions += 1;
+          return { id: submissions };
+        },
       })
     );
 
     const first = await service.run({ dryRun: true });
-    assert.equal(first.metadataLookups, 10);
-    assert.equal(first.limitReason, 'metadata-limit');
-    assert.equal(first.alreadyRequested, 10);
+    assert.equal(first.metadataLookups, 52);
+    assert.equal(first.limitReason, undefined);
+    assert.equal(
+      first.candidates.filter(({ outcome }) => outcome === 'would-request')
+        .length,
+      52
+    );
+    assert.deepEqual(cursors, [0, 50]);
+    assert.equal(submissions, 0);
 
-    runNumber = 2;
+    cursors.length = 0;
     const second = await service.run({ dryRun: true });
-    assert.equal(second.limitReason, 'metadata-limit');
-    assert.equal(metadataIdsByRun.get(2)?.[0], 2311);
+    assert.deepEqual(second.candidates, first.candidates);
+    assert.deepEqual(cursors, [0, 50]);
+    assert.equal(service.status(), undefined);
+
+    cursors.length = 0;
+    const operational = await service.run();
+    assert.equal(cursors[0], 0);
+    assert.equal(operational.requested, 5);
+    assert.equal(submissions, 5);
   });
 });

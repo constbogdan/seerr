@@ -11,6 +11,10 @@ The job examines at most 50 physically current Series per run. It evaluates
 every physically present regular Season independently for each viewer. Specials
 are excluded. The immediately following numbered Season is considered when at
 least one viewer has watched 70 percent or more of the source Season.
+That same viewer must have a confirmed latest viewing event in the source
+Season within the previous 24 hours. The boundary is inclusive; missing,
+invalid, future, or older timestamps fail closed. Synchronization time does not
+refresh this window.
 
 The numerator is the Library's distinct completed Episode evidence for that
 viewer. The denominator is the authoritative regular Episode count from the
@@ -61,17 +65,18 @@ commissioning modes suppress scheduled and ordinary manual execution, and there
 is no startup catch-up. Concurrent runs are rejected, while request submission
 is rechecked immediately before the existing request lock is entered.
 
-## Dry run
+## Upcoming
 
-Administrators can enable or disable the job and run the diagnostic from
-**Settings > Next Season**. Jobs & Cache also exposes the same **Dry Run**
-action, or administrators can call:
+Administrators can enable or disable the job and refresh the complete,
+read-only eligibility view from **Settings > Next Season**, or call:
 
 ```text
 POST /api/v1/settings/jobs/next-season/dry-run
 ```
 
-Dry run executes the real persisted progress, metadata, availability, request,
-and acquisition checks. It never persists a request or invokes Sonarr. The
-response contains bounded candidate identities and skip reasons but no private
-viewer identities. A dry run does not replace the last operational run result.
+Upcoming executes the same persisted progress, recency, metadata, availability,
+request, and acquisition checks as the scheduled job. It evaluates physically
+active Series in bounded pages, but does not apply the operational five-request
+limit, metadata budget, deadline, or rotating cursor. It never persists a
+request, invokes Sonarr, advances the cursor, or replaces the last operational
+run result. Jobs & Cache intentionally does not duplicate this action.

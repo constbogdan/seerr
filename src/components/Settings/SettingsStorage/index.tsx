@@ -41,6 +41,7 @@ import useSWR from 'swr';
 import { splitRootCapacity } from './capacityBar';
 import {
   isOverflowRoutingActivationValid,
+  isSeriesRelocationRoutingConfigured,
   replaceStorageJobState,
   seriesRelocationConfigurationChanged,
   setAutomaticSeriesPlacementEnabled,
@@ -94,6 +95,7 @@ const messages = defineMessages('components.Settings.SettingsStorage', {
   candidateUnavailable: 'The next candidate is currently unavailable.',
   candidateStale:
     'Save the Series Routing changes before refreshing the next candidate.',
+  candidateConfigurationIncomplete: 'Configure routing first.',
   candidateSummary:
     '{count, plural, one {# Season} other {# Seasons}} · {size}',
   defaultSeriesVolume: 'Default volume',
@@ -332,14 +334,9 @@ const SettingsStorage = () => {
   );
   const selectedSeriesVolumesValid =
     values !== null &&
-    values.defaultSeriesVolumeId !== null &&
-    values.expansionSeriesVolumeId !== null &&
-    values.defaultSeriesVolumeId !== values.expansionSeriesVolumeId &&
-    sonarrVolumes.some(
-      (volume) => volume.id === values.defaultSeriesVolumeId
-    ) &&
-    sonarrVolumes.some(
-      (volume) => volume.id === values.expansionSeriesVolumeId
+    isSeriesRelocationRoutingConfigured(
+      values,
+      new Set(sonarrVolumes.map((volume) => volume.id))
     );
   const automaticSeriesPlacementVolumesValid =
     values !== null &&
@@ -517,7 +514,8 @@ const SettingsStorage = () => {
   const refreshSeriesRelocationPreview = async () => {
     if (
       refreshingSeriesRelocationPreviewRef.current ||
-      seriesRelocationPreviewStale
+      seriesRelocationPreviewStale ||
+      !selectedSeriesVolumesValid
     )
       return;
     refreshingSeriesRelocationPreviewRef.current = true;
@@ -1524,7 +1522,8 @@ const SettingsStorage = () => {
                       aria-label={intl.formatMessage(messages.refreshCandidate)}
                       disabled={
                         refreshingSeriesRelocationPreview ||
-                        seriesRelocationPreviewStale
+                        seriesRelocationPreviewStale ||
+                        !selectedSeriesVolumesValid
                       }
                       onClick={() => void refreshSeriesRelocationPreview()}
                     >
@@ -1539,7 +1538,13 @@ const SettingsStorage = () => {
                       {intl.formatMessage(messages.refreshCandidate)}
                     </Button>
                   </div>
-                  {seriesRelocationPreviewStale ? (
+                  {!selectedSeriesVolumesValid ? (
+                    <p className="mt-1.5 text-sm text-yellow-200" role="status">
+                      {intl.formatMessage(
+                        messages.candidateConfigurationIncomplete
+                      )}
+                    </p>
+                  ) : seriesRelocationPreviewStale ? (
                     <p className="mt-1.5 text-sm text-yellow-200" role="status">
                       {intl.formatMessage(messages.candidateStale)}
                     </p>

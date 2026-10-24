@@ -86,7 +86,7 @@ export const runNextSeason = createNextSeasonRunner({
 
 export const runNextSeasonDryRun = async () => {
   logger.info('Starting dry run: Next Season', { label: 'Jobs' });
-  return nextSeason.run({ dryRun: true });
+  return nextSeason.upcoming();
 };
 
 export default nextSeason;

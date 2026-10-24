@@ -1,14 +1,22 @@
-import type { TmdbCollection } from '@server/api/themoviedb/interfaces';
+import type {
+  TmdbCollection,
+  TmdbMovieDetails,
+} from '@server/api/themoviedb/interfaces';
 import { LibraryMediaType } from '@server/constants/libraryHistory';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
-import { CanonicalMedia } from '@server/entity/CanonicalMedia';
-import { LibraryPresence } from '@server/entity/LibraryHistory';
+import {
+  CanonicalMedia,
+  CanonicalMediaIdentity,
+} from '@server/entity/CanonicalMedia';
+import { LibraryFile, LibraryPresence } from '@server/entity/LibraryHistory';
 import Media from '@server/entity/Media';
 import {
   LibraryCollectionsService,
+  type LibraryCollectionsDependencies,
   type LibraryCollectionsQuery,
 } from '@server/lib/libraryCollections';
+import { classifyMovieLibraryStatusByTmdbIds } from '@server/lib/watchlistLibraryStatus';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -38,6 +46,15 @@ const collection = (
     parts: memberIds.map((memberId) => ({ id: memberId })),
   }) as TmdbCollection;
 
+const createService = (
+  dependencies: Partial<LibraryCollectionsDependencies>
+): LibraryCollectionsService =>
+  new LibraryCollectionsService({
+    fetchMovie: async (id) => ({ id, status: 'Released' }) as TmdbMovieDetails,
+    fetchPhysicalMovieIds: async () => new Set(),
+    ...dependencies,
+  });
+
 const settle = async (
   service: LibraryCollectionsService,
   input: LibraryCollectionsQuery = query
@@ -49,6 +66,111 @@ const settle = async (
 };
 
 describe('Library collection discovery', () => {
+  it('counts only Released or physically historical Movies and keeps one eligible member', async () => {
+    const metadata = new Map([
+      [40, collection(40, 'Mixed Collection', [401, 402, 403, 404])],
+      [41, collection(41, 'Single Collection', [411])],
+      [42, collection(42, 'Future Collection', [421])],
+    ]);
+    const statuses = new Map<number, string | null>([
+      [401, 'Released'],
+      [402, 'In Production'],
+      [403, null],
+      [404, 'Planned'],
+      [411, 'Released'],
+      [421, 'Post Production'],
+    ]);
+    const service = createService({
+      discoverCollectionIds: async () => [40, 41, 42],
+      fetchCollection: async (id) => metadata.get(id)!,
+      fetchMovie: async (id) =>
+        ({ id, status: statuses.get(id) ?? undefined }) as TmdbMovieDetails,
+      fetchPhysicalMovieIds: async () => new Set([404]),
+      fetchAvailability: async (ids) =>
+        new Map(ids.map((id) => [id, id === 401 || id === 411])),
+    });
+
+    const result = await settle(service);
+    assert.deepEqual(
+      result.results.map((item) => [
+        item.id,
+        item.availableMovies,
+        item.totalMovies,
+      ]),
+      [
+        [40, 1, 2],
+        [41, 1, 1],
+      ]
+    );
+  });
+
+  it('uses retained Library files only as a visibility override for historical members', async () => {
+    const canonical = await getRepository(CanonicalMedia).save(
+      new CanonicalMedia({
+        mediaType: LibraryMediaType.MOVIE,
+        titleSnapshot: 'Historical member',
+      })
+    );
+    await getRepository(CanonicalMediaIdentity).save(
+      new CanonicalMediaIdentity({
+        canonicalMediaId: canonical.id,
+        mediaType: LibraryMediaType.MOVIE,
+        provider: 'tmdb',
+        sourceScope: '',
+        value: '991',
+      })
+    );
+    const presence = await getRepository(LibraryPresence).save(
+      new LibraryPresence({
+        canonicalMediaId: canonical.id,
+        sourceSystem: 'radarr',
+        sourceScope: '1',
+        sourceItemId: 'historical-member',
+        isCurrent: false,
+        servarrHasFile: false,
+        removedAt: new Date('2026-01-01T00:00:00.000Z'),
+      })
+    );
+    await getRepository(LibraryFile).save(
+      new LibraryFile({
+        libraryPresenceId: presence.id,
+        sourceSystem: 'radarr',
+        sourceScope: '1',
+        sourceFileId: 'historical-member-file',
+        isCurrent: false,
+        removedAt: new Date('2026-01-01T00:00:00.000Z'),
+      })
+    );
+    assert.equal(
+      (await classifyMovieLibraryStatusByTmdbIds([991])).get(991),
+      'archived'
+    );
+
+    const service = new LibraryCollectionsService({
+      discoverCollectionIds: async () => [99],
+      fetchCollection: async () =>
+        collection(99, 'Historical Collection', [991, 992]),
+      fetchMovie: async (id) =>
+        ({ id, status: 'In Production' }) as TmdbMovieDetails,
+      fetchAvailability: async () => new Map(),
+    });
+
+    let result = await service.query(query);
+    for (
+      let attempt = 0;
+      result.status === 'pending' && attempt < 20;
+      attempt++
+    ) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      result = await service.query(query);
+    }
+    assert.equal(result.status, 'complete', JSON.stringify(result));
+    assert.deepEqual(
+      result.results.map((item) => [item.id, item.totalMovies]),
+      [[99, 1]]
+    );
+  });
+
   it('discovers distinct confirmed collections from current Movie presence and resolves strict availability', async () => {
     const canonicalRepository = getRepository(CanonicalMedia);
     const presenceRepository = getRepository(LibraryPresence);
@@ -140,7 +262,7 @@ describe('Library collection discovery', () => {
     ]);
 
     const fetched: number[] = [];
-    const service = new LibraryCollectionsService({
+    const service = createService({
       fetchCollection: async (id) => {
         fetched.push(id);
         return collection(id, 'Only Collection', [101, 101, 102]);
@@ -253,7 +375,7 @@ describe('Library collection discovery', () => {
     ]);
 
     const fetched: number[] = [];
-    const service = new LibraryCollectionsService({
+    const service = createService({
       fetchCollection: async (id) => {
         fetched.push(id);
         return collection(id, `Collection ${id}`, [id * 10]);
@@ -267,7 +389,7 @@ describe('Library collection discovery', () => {
     removablePresence.servarrHasFile = false;
     await presenceRepository.save(removablePresence);
     const afterRemoval = await settle(
-      new LibraryCollectionsService({
+      createService({
         fetchCollection: async (id) =>
           collection(id, `Collection ${id}`, [id * 10]),
         fetchAvailability: async () => new Map(),
@@ -326,7 +448,7 @@ describe('Library collection discovery', () => {
     ]);
     let metadataCalls = 0;
     let availabilityCalls = 0;
-    const service = new LibraryCollectionsService({
+    const service = createService({
       discoverCollectionIds: async () => [31, 32, 33, 34],
       fetchCollection: async (id) => {
         metadataCalls++;
@@ -360,13 +482,13 @@ describe('Library collection discovery', () => {
     );
   });
 
-  it('filters before pagination and sorts complete, incomplete, and unknown collections deterministically', async () => {
+  it('filters before pagination and hides collections without eligible Movies', async () => {
     const metadata = new Map([
       [1, collection(1, 'Zulu', [11])],
       [2, collection(2, 'Alpha', [21, 22])],
       [3, collection(3, 'Unknown', [])],
     ]);
-    const service = new LibraryCollectionsService({
+    const service = createService({
       discoverCollectionIds: async () => [1, 2, 3],
       fetchCollection: async (id) => metadata.get(id)!,
       fetchAvailability: async () =>
@@ -392,10 +514,8 @@ describe('Library collection discovery', () => {
     });
     assert.deepEqual(
       sorted.results.map((item) => item.id),
-      [2, 1, 3]
+      [2, 1]
     );
-    assert.equal(sorted.results[2].availableMovies, null);
-    assert.equal(sorted.results[2].completeness, 'unknown');
   });
 
   it('sorts API results by the exact completion ratio before pagination', async () => {
@@ -418,7 +538,7 @@ describe('Library collection discovery', () => {
       ...members(501, 10),
       ...members(701, 4),
     ]);
-    const service = new LibraryCollectionsService({
+    const service = createService({
       discoverCollectionIds: async () => [...metadata.keys()],
       fetchCollection: async (id) => metadata.get(id)!,
       fetchAvailability: async (ids) =>
@@ -443,7 +563,6 @@ describe('Library collection discovery', () => {
         [2, 2, 3],
         [3, 5, 6],
         [4, 3, 3],
-        [6, null, null],
       ]
     );
 
@@ -454,7 +573,7 @@ describe('Library collection discovery', () => {
     });
     assert.deepEqual(
       descending.results.map((item) => item.id),
-      [4, 3, 7, 2, 5, 1, 6]
+      [4, 3, 7, 2, 5, 1]
     );
 
     const paginated = await service.query({
@@ -464,7 +583,7 @@ describe('Library collection discovery', () => {
       sort: 'completeness',
       sortDirection: 'asc',
     });
-    assert.equal(paginated.pageInfo.results, 7);
+    assert.equal(paginated.pageInfo.results, 6);
     assert.deepEqual(
       paginated.results.map((item) => item.id),
       [5, 7]
@@ -482,11 +601,11 @@ describe('Library collection discovery', () => {
     });
     assert.deepEqual(
       availableAscending.results.map((item) => item.id),
-      [1, 2, 4, 7, 3, 5, 6]
+      [1, 2, 4, 7, 3, 5]
     );
     assert.deepEqual(
       availableDescending.results.map((item) => item.id),
-      [5, 3, 7, 4, 2, 1, 6]
+      [5, 3, 7, 4, 2, 1]
     );
 
     const nameAscending = await service.query({
@@ -501,11 +620,11 @@ describe('Library collection discovery', () => {
     });
     assert.deepEqual(
       nameAscending.results.map((item) => item.id),
-      [7, 1, 5, 3, 4, 6, 2]
+      [7, 1, 5, 3, 4, 2]
     );
     assert.deepEqual(
       nameDescending.results.map((item) => item.id),
-      [2, 6, 4, 3, 5, 1, 7]
+      [2, 4, 3, 5, 1, 7]
     );
   });
 
@@ -513,7 +632,7 @@ describe('Library collection discovery', () => {
     let now = new Date('2026-10-21T00:00:00.000Z');
     let calls = 0;
     let fail = false;
-    const service = new LibraryCollectionsService({
+    const service = createService({
       discoverCollectionIds: async () => [7],
       fetchCollection: async () => {
         calls++;
@@ -550,7 +669,7 @@ describe('Library collection discovery', () => {
   });
 
   it('reports cold metadata or availability failures as unavailable instead of zero availability', async () => {
-    const metadataFailure = new LibraryCollectionsService({
+    const metadataFailure = createService({
       discoverCollectionIds: async () => [8],
       fetchCollection: async () => {
         throw new Error('metadata failure');
@@ -561,7 +680,7 @@ describe('Library collection discovery', () => {
     assert.equal(unavailableMetadata.status, 'unavailable');
     assert.deepEqual(unavailableMetadata.results, []);
 
-    const availabilityFailure = new LibraryCollectionsService({
+    const availabilityFailure = createService({
       discoverCollectionIds: async () => [9],
       fetchCollection: async () => collection(9, 'Strict Availability', [91]),
       fetchAvailability: async () => {
