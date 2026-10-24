@@ -15,7 +15,10 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import Season from '@server/entity/Season';
 import { User } from '@server/entity/User';
-import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
+import {
+  jellyfinFullScanner,
+  jellyfinRecentScanner,
+} from '@server/lib/scanners/jellyfin';
 import type { Library } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
@@ -34,6 +37,9 @@ Object.defineProperty(animeList, 'sync', {
 let getLibraryContentsImpl: (
   id: string
 ) => Promise<JellyfinLibraryItem[]> = async () => [];
+let getRecentlyAddedImpl: (
+  id: string
+) => Promise<JellyfinLibraryItem[]> = async () => [];
 let getItemDataImpl: (
   id: string
 ) => Promise<JellyfinLibraryItemExtended | undefined> = async () => undefined;
@@ -48,6 +54,14 @@ let getEpisodesImpl: (
 Object.defineProperty(JellyfinAPI.prototype, 'getLibraryContents', {
   get() {
     return async (id: string) => getLibraryContentsImpl(id);
+  },
+  set() {},
+  configurable: true,
+});
+
+Object.defineProperty(JellyfinAPI.prototype, 'getRecentlyAdded', {
+  get() {
+    return async (id: string) => getRecentlyAddedImpl(id);
   },
   set() {},
   configurable: true,
@@ -110,14 +124,16 @@ Object.defineProperty(TheMovieDb.prototype, 'getTvShowForScan', {
   configurable: true,
 });
 
-// both are assigned in the constructor, so the prototype stubs miss the
-// instance jellyfinFullScanner built when it was first imported
-for (const method of ['getTvShow', 'getTvShowForScan'] as const) {
-  Object.defineProperty(jellyfinFullScanner.tmdb, method, {
-    value: async (args: { tvId: number; language?: string }) =>
-      getTvShowImpl(args),
-    configurable: true,
-  });
+// Both are assigned in the constructor, so the prototype stubs miss the
+// singleton scanner instances built when this module was first imported.
+for (const scanner of [jellyfinFullScanner, jellyfinRecentScanner]) {
+  for (const method of ['getTvShow', 'getTvShowForScan'] as const) {
+    Object.defineProperty(scanner.tmdb, method, {
+      value: async (args: { tvId: number; language?: string }) =>
+        getTvShowImpl(args),
+      configurable: true,
+    });
+  }
 }
 
 setupTestDb();
@@ -243,6 +259,7 @@ function configureJellyfinWithLibrary(
 describe('Jellyfin Scanner', () => {
   beforeEach(async () => {
     getLibraryContentsImpl = async () => [];
+    getRecentlyAddedImpl = async () => [];
     getItemDataImpl = async () => undefined;
     getSeasonsImpl = async () => [];
     getEpisodesImpl = async () => [];
@@ -260,6 +277,77 @@ describe('Jellyfin Scanner', () => {
       admin.username = 'admin';
       await userRepository.save(admin);
     }
+  });
+
+  describe('Recently Added parent dispatch', () => {
+    it('resolves Episode and Season parents and processes each Series once', async () => {
+      configureJellyfinWithLibrary();
+      const processedTmdbIds: number[] = [];
+      getRecentlyAddedImpl = async () => [
+        {
+          ...fakeJellyfinEpisodes(1)[0],
+          Id: 'episode-direct',
+          SeriesId: 'series-one',
+        },
+        {
+          ...fakeJellyfinEpisodes(1)[0],
+          Id: 'episode-via-season',
+        },
+        fakeJellyfinSeason(2, 'season-two'),
+        {
+          ...fakeJellyfinEpisodes(1)[0],
+          Id: 'orphan-episode',
+        },
+      ];
+      getItemDataImpl = async (id: string) => {
+        if (id === 'episode-via-season') {
+          return {
+            ...fakeJellyfinEpisodes(1)[0],
+            Id: id,
+            Type: 'Episode',
+            SeasonId: 'season-one',
+            ProviderIds: {},
+          } as JellyfinLibraryItemExtended;
+        }
+        if (id === 'season-one') {
+          return {
+            ...fakeJellyfinSeason(1, id),
+            ParentId: 'series-one',
+            ProviderIds: {},
+          } as JellyfinLibraryItemExtended;
+        }
+        if (id === 'season-two') {
+          return {
+            ...fakeJellyfinSeason(2, id),
+            ParentId: 'series-two',
+            ProviderIds: {},
+          } as JellyfinLibraryItemExtended;
+        }
+        if (id === 'orphan-episode') {
+          return {
+            ...fakeJellyfinEpisodes(1)[0],
+            Id: id,
+            Type: 'Episode',
+            ProviderIds: {},
+          } as JellyfinLibraryItemExtended;
+        }
+        if (id === 'series-one') return fakeJellyfinShowMetadata(id, '6101');
+        if (id === 'series-two') return fakeJellyfinShowMetadata(id, '6102');
+        return undefined;
+      };
+      getTvShowImpl = async ({ tvId }) => {
+        processedTmdbIds.push(tvId);
+        return fakeTmdbShow(tvId, []);
+      };
+
+      const result = await runWithMockTimers(() => jellyfinRecentScanner.run());
+
+      assert.equal(result.status, 'completed');
+      assert.deepEqual(
+        processedTmdbIds.sort((a, b) => a - b),
+        [6101, 6102]
+      );
+    });
   });
 
   describe('empty TMDB season handling', () => {

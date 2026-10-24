@@ -14,7 +14,7 @@ import type {
   LogsResultsResponse,
   SettingsAboutResponse,
 } from '@server/interfaces/api/settingsInterfaces';
-import { scheduledJobs } from '@server/job/schedule';
+import { isDryRunActionAvailable, scheduledJobs } from '@server/job/schedule';
 import {
   SynchronizationExecutionBlockedError,
   synchronizationPolicy,
@@ -769,6 +769,7 @@ const scheduledJobResponse = (job: (typeof scheduledJobs)[number]) => {
     running: job.running ? job.running() : false,
     enabled,
     configurableEnabled: job.configurableEnabled === true,
+    dryRunAvailable: isDryRunActionAvailable(job),
     lastResult,
     lastExecutionTime,
     scheduledExecutionAllowed:

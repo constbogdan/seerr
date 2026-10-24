@@ -22,6 +22,19 @@ export const isOverflowRoutingActivationValid = (
 ): boolean =>
   !settings.enabled || settings.routes.some((route) => route.enabled);
 
+export const isSeriesRelocationRoutingConfigured = (
+  settings: Pick<
+    OverflowSettings,
+    'defaultSeriesVolumeId' | 'expansionSeriesVolumeId'
+  >,
+  sonarrVolumeIds: ReadonlySet<string>
+): boolean =>
+  settings.defaultSeriesVolumeId !== null &&
+  settings.expansionSeriesVolumeId !== null &&
+  settings.defaultSeriesVolumeId !== settings.expansionSeriesVolumeId &&
+  sonarrVolumeIds.has(settings.defaultSeriesVolumeId) &&
+  sonarrVolumeIds.has(settings.expansionSeriesVolumeId);
+
 export const replaceStorageJobState = <T extends StorageJobState>(
   jobs: T[] | undefined,
   updatedJob: T

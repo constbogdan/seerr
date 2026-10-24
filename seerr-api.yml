@@ -215,6 +215,7 @@ components:
                 knownEpisodeCount,
                 resolution,
                 requestable,
+                acquiring,
               ]
             properties:
               key: { type: string }
@@ -235,6 +236,9 @@ components:
               requestable:
                 type: boolean
                 description: Whether the existing standard Seerr request workflow currently considers this Season requestable before user-specific permission and settings checks.
+              acquiring:
+                type: boolean
+                description: Whether the otherwise-missing Season has an exact active standard request association.
         externalLinks:
           type: array
           description: Verified current-media links computed by the server without credentials.
@@ -3555,6 +3559,9 @@ components:
         configurableEnabled:
           type: boolean
           description: Whether administrators may change the job feature gate.
+        dryRunAvailable:
+          type: boolean
+          description: Whether the Jobs list should offer this job's read-only dry-run action.
         lastResult:
           type: object
           nullable: true

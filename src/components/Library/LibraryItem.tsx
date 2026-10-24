@@ -24,6 +24,7 @@ import {
   classifyLibrarySeasonAvailability,
   formatLibraryResolution,
   formatLibrarySize,
+  librarySeasonStateClass,
 } from '@app/components/Library/presentation';
 import {
   getEligibleLibrarySeasonNumbers,
@@ -192,14 +193,7 @@ const SeasonPill = ({
           : intl.formatMessage(messages.availableEpisodes, {
               count: season.availableEpisodeCount,
             });
-  const stateClass =
-    availability === 'partial'
-      ? 'border-amber-500/70 bg-amber-500/20 text-amber-100'
-      : season.state === 'current'
-        ? 'border-green-500/70 bg-green-500/20 text-green-100'
-        : season.state === 'archive'
-          ? 'border-gray-500 bg-gray-700 text-gray-300'
-          : 'border-dashed border-gray-600 bg-gray-900/60 text-gray-500';
+  const stateClass = librarySeasonStateClass(season, availability);
   const requestLabel = intl.formatMessage(messages.requestSeason, {
     season: title,
   });

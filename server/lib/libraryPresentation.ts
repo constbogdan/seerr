@@ -19,6 +19,10 @@ export interface LibraryPresentation {
   backdropPath: string | null;
   voteAverage?: number | null;
   voteCount?: number | null;
+  seasons?: {
+    seasonNumber: number;
+    airDate: string | null;
+  }[];
   collection?: {
     id: number;
     name: string;
@@ -101,6 +105,12 @@ export const fetchLibraryPresentation = async (
     backdropPath: series.backdrop_path ?? null,
     voteAverage: series.vote_average ?? null,
     voteCount: series.vote_count ?? null,
+    seasons: tmdbTv.seasons
+      .filter((season) => season.season_number > 0)
+      .map((season) => ({
+        seasonNumber: season.season_number,
+        airDate: season.air_date || null,
+      })),
   };
 };
 

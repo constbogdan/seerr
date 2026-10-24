@@ -4,6 +4,7 @@ import {
 } from '@server/job/nextSeasonJob';
 import {
   createNextSeasonScheduledJob,
+  isDryRunActionAvailable,
   type ScheduledJob,
 } from '@server/job/schedule';
 import { SynchronizationPolicy } from '@server/job/synchronizationPolicy';
@@ -39,6 +40,13 @@ describe('Next Season job lifecycle', () => {
     assert.equal(job.job, scheduledJob);
     assert.equal(job.enabled?.(), false);
     assert.equal(job.configurableEnabled, true);
+    assert.equal(job.showDryRunAction, false);
+    assert.equal(typeof job.dryRun, 'function');
+    assert.equal(isDryRunActionAvailable(job), false);
+    assert.equal(
+      isDryRunActionAvailable({ dryRun: async () => undefined }),
+      true
+    );
     assert.deepEqual(
       scheduled && {
         id: scheduled.id,

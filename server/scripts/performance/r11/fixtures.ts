@@ -108,6 +108,7 @@ export const createR11LibraryItems = (count: number): LibraryItem[] =>
             knownEpisodeCount: 8,
             resolution: seasonIndex < 3 ? 1080 : null,
             requestable: seasonIndex >= 3,
+            acquiring: false,
           }))
         : [],
       externalLinks: [

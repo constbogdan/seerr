@@ -124,7 +124,7 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
       'Automatically relocates eligible Series between storage volumes.',
     'next-season': 'Next Season',
     'next-season-description':
-      'Requests released next Seasons after a viewer watches at least 70% of a physically present Season.',
+      'Automatically requests the next season when viewing progress reaches 70%.',
     'watchlist-roulette-movies': 'Watchlist Roulette Movies',
     'watchlist-roulette-movies-description':
       "Automatically requests random Movies from users' Watchlists.",
@@ -175,6 +175,7 @@ interface Job {
   running: boolean;
   enabled: boolean;
   configurableEnabled: boolean;
+  dryRunAvailable: boolean;
   lastResult?: Record<string, unknown> | null;
   lastExecutionTime?: string | null;
   scheduledExecutionAllowed: boolean;
@@ -693,7 +694,7 @@ const SettingsJobs = () => {
                   </div>
                 </Table.TD>
                 <Table.TD alignText="right">
-                  {job.id === 'next-season' && (
+                  {job.dryRunAvailable && (
                     <Button
                       className="mr-2"
                       buttonType="default"

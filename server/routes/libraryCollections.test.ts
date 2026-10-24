@@ -153,6 +153,11 @@ describe('Library collections API', () => {
       },
       fetchAvailability: async (ids) =>
         new Map(ids.map((id) => [id, availableIds.has(id)])),
+      fetchMovie: async (id) =>
+        ({ id, status: 'Released' }) as Awaited<
+          ReturnType<LibraryCollectionsDependencies['fetchMovie']>
+        >,
+      fetchPhysicalMovieIds: async () => new Set(),
     };
     const sortingApp = createApp(new LibraryCollectionsService(dependencies));
     const getCollections = (sortDirection: 'asc' | 'desc') =>
@@ -183,12 +188,11 @@ describe('Library collections API', () => {
         [2, 2, 3],
         [3, 5, 6],
         [4, 3, 3],
-        [6, null, null],
       ]
     );
     assert.deepEqual(
       descending.body.results.map((item: { id: number }) => item.id),
-      [4, 3, 2, 5, 1, 6]
+      [4, 3, 2, 5, 1]
     );
   });
 });

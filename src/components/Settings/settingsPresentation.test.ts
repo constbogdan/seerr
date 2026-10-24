@@ -26,7 +26,7 @@ describe('Settings jobs and navigation presentation', () => {
       'Finds media eligible for scheduled removal.',
       'Processes scheduled removals when their deadlines arrive.',
       'Automatically relocates eligible Series between storage volumes.',
-      'Requests released next Seasons after a viewer watches at least 70% of a physically present Season.',
+      'Automatically requests the next season when viewing progress reaches 70%.',
       'Adds missing genre information to Watchlist items.',
       "Updates watched status and progress for each user's Watchlist.",
     ]) {

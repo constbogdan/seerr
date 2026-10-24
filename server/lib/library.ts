@@ -137,6 +137,42 @@ const defaultDependencies: LibraryDependencies = {
   presentationCoordinator: libraryPresentation,
 };
 
+export const isLibrarySeasonVisible = (
+  season: Pick<LibrarySeasonSummary, 'seasonNumber' | 'isSpecial' | 'state'>,
+  tmdbSeasons: LibraryPresentation['seasons'],
+  today: string
+): boolean => {
+  if (season.isSpecial || season.seasonNumber <= 0) return false;
+  if (season.state === 'current' || season.state === 'archive') return true;
+  const airDate = tmdbSeasons?.find(
+    (candidate) => candidate.seasonNumber === season.seasonNumber
+  )?.airDate;
+  return Boolean(
+    airDate && /^\d{4}-\d{2}-\d{2}$/.test(airDate) && airDate <= today
+  );
+};
+
+export const activeLibraryRequestSeasonNumbers = (
+  requesters: readonly LibraryRequester[]
+): Set<number> =>
+  new Set(
+    requesters.flatMap((requester) =>
+      requester.requests.flatMap((request) =>
+        !request.is4k &&
+        (request.status === MediaRequestStatus.PENDING ||
+          request.status === MediaRequestStatus.APPROVED)
+          ? request.seasons
+              .filter(
+                (season) =>
+                  season.status === MediaRequestStatus.PENDING ||
+                  season.status === MediaRequestStatus.APPROVED
+              )
+              .map((season) => season.seasonNumber)
+          : []
+      )
+    )
+  );
+
 const mapBounded = async <T>(
   values: T[],
   concurrency: number,
@@ -2229,6 +2265,7 @@ export class LibraryService {
             `${season.canonicalMediaId}:${season.seasonNumber}`
           ) ?? null,
         requestable: false,
+        acquiring: false,
       });
       seasonSummaries.set(season.canonicalMediaId, summaries);
     }
@@ -2658,17 +2695,8 @@ export class LibraryService {
         left.displayName.localeCompare(right.displayName)
       );
       const requesters = facts.requesters.get(canonicalMediaId) ?? [];
-      const activelyRequestedSeasonNumbers = new Set(
-        requesters.flatMap((requester) =>
-          requester.requests.flatMap((request) =>
-            !request.is4k &&
-            request.status !== MediaRequestStatus.DECLINED &&
-            request.status !== MediaRequestStatus.COMPLETED
-              ? request.seasons.map((season) => season.seasonNumber)
-              : []
-          )
-        )
-      );
+      const activelyRequestedSeasonNumbers =
+        activeLibraryRequestSeasonNumbers(requesters);
       return {
         canonicalMediaId,
         tmdbId,
@@ -2701,15 +2729,26 @@ export class LibraryService {
           ),
         seasonSummaries: (
           enrichments.seasonSummaries.get(canonicalMediaId) ?? []
-        ).map((season) => ({
-          ...season,
-          requestable:
-            enrichments.requestMediaCanonicalIds.has(canonicalMediaId) &&
-            !enrichments.unavailableRequestSeasonKeys.has(
-              `${canonicalMediaId}:${season.seasonNumber}`
-            ) &&
-            !activelyRequestedSeasonNumbers.has(season.seasonNumber),
-        })),
+        )
+          .filter((season) =>
+            isLibrarySeasonVisible(
+              season,
+              presentation?.seasons,
+              new Date().toISOString().slice(0, 10)
+            )
+          )
+          .map((season) => ({
+            ...season,
+            requestable:
+              enrichments.requestMediaCanonicalIds.has(canonicalMediaId) &&
+              !enrichments.unavailableRequestSeasonKeys.has(
+                `${canonicalMediaId}:${season.seasonNumber}`
+              ) &&
+              !activelyRequestedSeasonNumbers.has(season.seasonNumber),
+            acquiring:
+              season.state === 'known_missing' &&
+              activelyRequestedSeasonNumbers.has(season.seasonNumber),
+          })),
         externalLinks:
           row.libraryStatus === 'current'
             ? (enrichments.externalLinks.get(canonicalMediaId) ?? [])

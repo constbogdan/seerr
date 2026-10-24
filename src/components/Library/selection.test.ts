@@ -33,6 +33,7 @@ const season = (
   knownEpisodeCount: availableEpisodeCount || null,
   resolution: null,
   requestable: false,
+  acquiring: false,
 });
 
 const seriesItem = (

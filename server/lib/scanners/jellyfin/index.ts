@@ -26,7 +26,6 @@ import BaseScanner from '@server/lib/scanners/baseScanner';
 import type { Library } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { getHostname } from '@server/utils/getHostname';
-import { uniqWith } from 'lodash';
 
 interface JellyfinSyncStatus extends StatusBase {
   currentLibrary: Library;
@@ -268,11 +267,10 @@ export class JellyfinScanner
     let tvShow: TmdbTvScanDetails | TmdbTvDetails | null = null;
 
     try {
-      const Id =
-        jellyfinitem.SeriesId ?? jellyfinitem.SeasonId ?? jellyfinitem.Id;
+      const Id = jellyfinitem.SeriesId ?? jellyfinitem.Id;
       const metadata = await this.jfClient.getItemData(Id);
 
-      if (!metadata?.Id) {
+      if (!metadata?.Id || metadata.Type !== 'Series') {
         this.log('No Id metadata for this title. Skipping', 'debug', {
           jellyfinItemId: jellyfinitem.Id,
         });
@@ -495,11 +493,76 @@ export class JellyfinScanner
     }
   }
 
+  private async resolveSeriesItem(
+    item: JellyfinLibraryItem
+  ): Promise<JellyfinLibraryItem | null> {
+    if (item.Type === 'Series') return item;
+    if (item.Type !== 'Season' && item.Type !== 'Episode') return null;
+
+    try {
+      let seriesId = item.SeriesId?.trim();
+      if (!seriesId) {
+        const metadata = await this.jfClient.getItemData(item.Id);
+        seriesId = metadata?.SeriesId?.trim();
+        if (!seriesId && metadata?.Type === 'Season') {
+          seriesId = metadata.ParentId?.trim();
+        }
+        if (!seriesId && metadata?.Type === 'Episode') {
+          const seasonId =
+            metadata.SeasonId?.trim() || metadata.ParentId?.trim();
+          if (seasonId) {
+            const season = await this.jfClient.getItemData(seasonId);
+            if (season?.Type === 'Season') {
+              seriesId = season.SeriesId?.trim() || season.ParentId?.trim();
+            }
+          }
+        }
+      }
+      if (!seriesId) {
+        this.log('No authoritative parent Series found. Skipping', 'debug', {
+          jellyfinItemId: item.Id,
+          jellyfinItemType: item.Type,
+        });
+        return null;
+      }
+      return { ...item, Id: seriesId, SeriesId: seriesId, Type: 'Series' };
+    } catch (error) {
+      this.log('Unable to resolve Jellyfin parent Series. Skipping', 'error', {
+        jellyfinItemId: item.Id,
+        jellyfinItemType: item.Type,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
+  }
+
+  private async normalizeProcessableItems(
+    items: JellyfinLibraryItem[]
+  ): Promise<JellyfinLibraryItem[]> {
+    const normalized = new Map<string, JellyfinLibraryItem>();
+    for (const item of items) {
+      const processable =
+        item.Type === 'Movie' ? item : await this.resolveSeriesItem(item);
+      if (!processable) continue;
+      const key =
+        processable.Type === 'Movie'
+          ? `movie:${processable.Id}`
+          : `series:${processable.SeriesId ?? processable.Id}`;
+      if (!normalized.has(key)) normalized.set(key, processable);
+    }
+    return [...normalized.values()];
+  }
+
   private async processItem(item: JellyfinLibraryItem): Promise<boolean> {
     if (item.Type === 'Movie') {
       return this.processJellyfinMovie(item);
-    } else if (item.Type === 'Series') {
-      return this.processJellyfinShow(item);
+    } else if (
+      item.Type === 'Series' ||
+      item.Type === 'Season' ||
+      item.Type === 'Episode'
+    ) {
+      const series = await this.resolveSeriesItem(item);
+      return series ? this.processJellyfinShow(series) : false;
     }
     return false;
   }
@@ -544,18 +607,7 @@ export class JellyfinScanner
           );
           const libraryItems = await this.jfClient.getRecentlyAdded(library.id);
 
-          // Bundle items up by rating keys
-          this.items = uniqWith(libraryItems, (mediaA, mediaB) => {
-            if (mediaA.SeriesId && mediaB.SeriesId) {
-              return mediaA.SeriesId === mediaB.SeriesId;
-            }
-
-            if (mediaA.SeasonId && mediaB.SeasonId) {
-              return mediaA.SeasonId === mediaB.SeasonId;
-            }
-
-            return mediaA.Id === mediaB.Id;
-          });
+          this.items = await this.normalizeProcessableItems(libraryItems);
 
           await this.loop(
             async (item) => {
@@ -618,9 +670,7 @@ export class JellyfinScanner
         this.jfClient = context.client;
         this.libraries = context.libraries;
         this.processedAnidbSeason = new Map();
-        const uniqueItems = [
-          ...new Map(items.map((item) => [item.Id, item])).values(),
-        ];
+        const uniqueItems = await this.normalizeProcessableItems(items);
         let failures = 0;
         for (const item of uniqueItems) {
           if (!(await this.processItem(item))) failures += 1;

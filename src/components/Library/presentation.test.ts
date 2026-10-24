@@ -6,6 +6,7 @@ import {
   formatLibraryResolution,
   formatLibrarySize,
   libraryLastActiveTooltip,
+  librarySeasonStateClass,
   libraryWatchedLabel,
   libraryWatchedTooltip,
   sortLibraryWatchedUsersForPresentation,
@@ -25,6 +26,34 @@ const viewer = (init: Partial<LibraryWatchedUser>): LibraryWatchedUser => ({
 });
 
 describe('Library factual presentation', () => {
+  it('uses the blue acquiring fill and gray dashed border only for otherwise-missing active acquisitions', () => {
+    assert.equal(
+      librarySeasonStateClass(
+        { state: 'known_missing', acquiring: true },
+        'missing'
+      ),
+      'border-dashed border-gray-500 bg-blue-500/20 text-blue-100'
+    );
+    assert.match(
+      librarySeasonStateClass(
+        { state: 'known_missing', acquiring: false },
+        'missing'
+      ),
+      /border-dashed border-gray-600/
+    );
+    assert.doesNotMatch(
+      librarySeasonStateClass({ state: 'current', acquiring: true }, 'partial'),
+      /blue/
+    );
+    assert.doesNotMatch(
+      librarySeasonStateClass(
+        { state: 'current', acquiring: true },
+        'available'
+      ),
+      /blue/
+    );
+  });
+
   it('classifies complete, partial, missing, archived, Specials, and unknown Season totals truthfully', () => {
     assert.equal(
       classifyLibrarySeasonAvailability({
