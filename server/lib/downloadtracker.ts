@@ -1,5 +1,6 @@
 import {
   DEFAULT_DOWNLOAD_QUEUE_SIZE,
+  MAX_DOWNLOAD_QUEUE_SIZE,
   validateDownloadQueueSize,
   type QueueItem,
   type ServarrQueueStatus,
@@ -47,6 +48,8 @@ export interface DownloadingItem {
 
 interface InternalDownloadingItem extends DownloadingItem {
   queueRecordId: number;
+  firstObservedAt: number;
+  disappearedAt?: number;
 }
 
 export interface ConfirmedServarrImport {
@@ -87,12 +90,18 @@ interface ProviderRefreshOutcome {
 
 interface ImportConfirmationResult {
   confirmedImports: ConfirmedServarrImport[];
-  historyAuthoritative: boolean;
+  retainedUnmatched: InternalDownloadingItem[];
 }
 
 interface DownloadTrackerOptions {
   now?: () => number;
 }
+
+// Recent-history records can trail queue removal briefly. Keep only the
+// correlation facts needed to confirm that disappearance, and expire them so
+// an old download can never be mistaken for a later import.
+export const IMPORT_CONFIRMATION_WINDOW_MS = 2 * 60_000;
+export const MAX_IMPORT_CONFIRMATION_BACKLOG = MAX_DOWNLOAD_QUEUE_SIZE;
 
 export class DownloadTracker {
   private radarrServers: Record<number, InternalDownloadingItem[]> = {};
@@ -104,6 +113,8 @@ export class DownloadTracker {
   private updatePromise?: Promise<DownloadTrackerUpdateOutcome>;
   private radarrPhysicalQueues: Record<string, InternalDownloadingItem[]> = {};
   private sonarrPhysicalQueues: Record<string, InternalDownloadingItem[]> = {};
+  private radarrImportBacklogs: Record<string, InternalDownloadingItem[]> = {};
+  private sonarrImportBacklogs: Record<string, InternalDownloadingItem[]> = {};
   private readonly now: () => number;
 
   constructor(options: DownloadTrackerOptions = {}) {
@@ -165,6 +176,7 @@ export class DownloadTracker {
         downloadId: target.downloadId,
         episode,
         queueRecordId: -(index + 1),
+        firstObservedAt: this.now(),
       })),
     ];
   }
@@ -186,6 +198,8 @@ export class DownloadTracker {
     this.sonarrServers = {};
     this.radarrPhysicalQueues = {};
     this.sonarrPhysicalQueues = {};
+    this.radarrImportBacklogs = {};
+    this.sonarrImportBacklogs = {};
   }
 
   public updateDownloads(): Promise<DownloadTrackerUpdateOutcome> {
@@ -230,9 +244,13 @@ export class DownloadTracker {
 
   private readonly toPublicItem = ({
     queueRecordId,
+    firstObservedAt,
+    disappearedAt,
     ...item
   }: InternalDownloadingItem): DownloadingItem => {
     void queueRecordId;
+    void firstObservedAt;
+    void disappearedAt;
     return item;
   };
 
@@ -247,6 +265,16 @@ export class DownloadTracker {
     return (active.length ? active : (finalizingItems ?? []))
       .filter((item) => item.externalId === externalServiceId)
       .map(this.toPublicItem);
+  }
+
+  private hasPresentationChanged(
+    previous: InternalDownloadingItem[],
+    current: InternalDownloadingItem[]
+  ): boolean {
+    return !isEqual(
+      previous.map(this.toPublicItem),
+      current.map(this.toPublicItem)
+    );
   }
 
   private physicalServerKey(server: {
@@ -277,6 +305,7 @@ export class DownloadTracker {
     });
     const prior = previous.find(
       (candidate) =>
+        candidate.disappearedAt === undefined &&
         candidate.downloadId === item.downloadId &&
         candidate.mediaType === mediaType &&
         candidate.externalId === externalId &&
@@ -323,6 +352,7 @@ export class DownloadTracker {
       episode,
       downloadId: item.downloadId,
       queueRecordId: item.id,
+      firstObservedAt: prior?.firstObservedAt ?? this.now(),
     };
   }
 
@@ -339,7 +369,24 @@ export class DownloadTracker {
       (item) => !currentKeys.has(this.downloadGenerationKey(item))
     );
     if (!disappeared.length) {
-      return { confirmedImports: [], historyAuthoritative: true };
+      return {
+        confirmedImports: [],
+        retainedUnmatched: [],
+      };
+    }
+
+    const observedAt = this.now();
+    const confirmable = disappeared.flatMap((item) => {
+      const disappearedAt = item.disappearedAt ?? observedAt;
+      return observedAt - disappearedAt < IMPORT_CONFIRMATION_WINDOW_MS
+        ? [{ ...item, disappearedAt }]
+        : [];
+    });
+    if (!confirmable.length) {
+      return {
+        confirmedImports: [],
+        retainedUnmatched: [],
+      };
     }
 
     let history;
@@ -348,24 +395,37 @@ export class DownloadTracker {
     } catch (error) {
       logger.warn('Unable to reconcile disappeared downloads with history', {
         label: 'Download Tracker',
-        provider: disappeared[0]?.mediaType,
+        provider: confirmable[0]?.mediaType,
         errorType: error instanceof Error ? error.name : 'UnknownError',
       });
-      return { confirmedImports: [], historyAuthoritative: false };
+      return {
+        confirmedImports: [],
+        retainedUnmatched: confirmable,
+      };
     }
 
-    const importedDownloadIds = new Set(
-      history
-        .filter(
-          (record) =>
-            record.eventType.toLowerCase() === 'downloadfolderimported' &&
-            record.downloadId
-        )
-        .map((record) => record.downloadId as string)
+    const imported = history.filter(
+      (record) =>
+        record.eventType.toLowerCase() === 'downloadfolderimported' &&
+        record.downloadId
     );
     const grouped = new Map<string, ConfirmedServarrImport>();
-    for (const item of disappeared) {
-      if (!item.downloadId || !importedDownloadIds.has(item.downloadId)) {
+    const retainedUnmatched: InternalDownloadingItem[] = [];
+    for (const item of confirmable) {
+      const matchingRecord = imported.find((record) => {
+        if (record.downloadId !== item.downloadId) return false;
+        const providerMediaId =
+          item.mediaType === MediaType.MOVIE ? record.movieId : record.seriesId;
+        if (providerMediaId !== item.externalId) return false;
+        const importedAt = Date.parse(record.date);
+        return (
+          Number.isFinite(importedAt) &&
+          importedAt >= item.firstObservedAt &&
+          importedAt <= observedAt
+        );
+      });
+      if (!item.downloadId || !matchingRecord) {
+        retainedUnmatched.push(item);
         continue;
       }
       const key = `${item.mediaType}:${item.externalId}:${item.downloadId}`;
@@ -394,21 +454,8 @@ export class DownloadTracker {
     }
     return {
       confirmedImports: [...grouped.values()],
-      historyAuthoritative: true,
+      retainedUnmatched,
     };
-  }
-
-  private retainCorrelationState(
-    previous: InternalDownloadingItem[],
-    current: InternalDownloadingItem[]
-  ): InternalDownloadingItem[] {
-    const retained = new Map(
-      previous.map((item) => [this.downloadGenerationKey(item), item])
-    );
-    for (const item of current) {
-      retained.set(this.downloadGenerationKey(item), item);
-    }
-    return [...retained.values()];
   }
 
   private downloadGenerationKey(item: InternalDownloadingItem): string {
@@ -420,6 +467,19 @@ export class DownloadTracker {
     ].join(':');
   }
 
+  private boundImportBacklog(
+    items: InternalDownloadingItem[]
+  ): InternalDownloadingItem[] {
+    const unique = new Map<string, InternalDownloadingItem>();
+    for (const item of items)
+      unique.set(this.downloadGenerationKey(item), item);
+    return [...unique.values()]
+      .sort(
+        (left, right) => (right.disappearedAt ?? 0) - (left.disappearedAt ?? 0)
+      )
+      .slice(0, MAX_IMPORT_CONFIRMATION_BACKLOG);
+  }
+
   private async updateRadarrDownloads(): Promise<ProviderRefreshOutcome[]> {
     const settings = getSettings();
 
@@ -428,9 +488,7 @@ export class DownloadTracker {
       settings.radarr.filter((radarr) => radarr.syncEnabled),
       (radarrA, radarrB) => {
         return (
-          radarrA.hostname === radarrB.hostname &&
-          radarrA.port === radarrB.port &&
-          radarrA.baseUrl === radarrB.baseUrl
+          this.physicalServerKey(radarrA) === this.physicalServerKey(radarrB)
         );
       }
     );
@@ -441,9 +499,7 @@ export class DownloadTracker {
         if (server.syncEnabled) {
           const matchingServers = settings.radarr.filter(
             (rs) =>
-              rs.hostname === server.hostname &&
-              rs.port === server.port &&
-              rs.baseUrl === server.baseUrl &&
+              this.physicalServerKey(rs) === this.physicalServerKey(server) &&
               rs.id !== server.id &&
               rs.syncEnabled
           );
@@ -462,14 +518,18 @@ export class DownloadTracker {
             await radarr.refreshMonitoredDownloads();
             const queueItems = await radarr.getQueue(physicalServerQueueSize);
             const physicalKey = this.physicalServerKey(server);
-            const previous = this.radarrPhysicalQueues[physicalKey] ?? [];
+            const previousActive = this.radarrPhysicalQueues[physicalKey] ?? [];
+            const previous = [
+              ...previousActive,
+              ...(this.radarrImportBacklogs[physicalKey] ?? []),
+            ];
             const serverDownloads = queueItems.map((item) =>
               this.buildDownloadingItem(
                 item,
                 MediaType.MOVIE,
                 item.movieId,
                 undefined,
-                previous
+                previousActive
               )
             );
             const serverAliases = [server, ...matchingServers].map((alias) => ({
@@ -482,10 +542,10 @@ export class DownloadTracker {
               serverDownloads,
               serverAliases
             );
-            this.radarrPhysicalQueues[physicalKey] =
-              importConfirmation.historyAuthoritative
-                ? serverDownloads
-                : this.retainCorrelationState(previous, serverDownloads);
+            this.radarrPhysicalQueues[physicalKey] = serverDownloads;
+            this.radarrImportBacklogs[physicalKey] = this.boundImportBacklog(
+              importConfirmation.retainedUnmatched
+            );
 
             const downloads = serverDownloads.slice(
               0,
@@ -493,7 +553,7 @@ export class DownloadTracker {
                 server.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
               )
             );
-            let changed = !isEqual(
+            let changed = this.hasPresentationChanged(
               this.radarrServers[server.id] ?? [],
               downloads
             );
@@ -507,8 +567,10 @@ export class DownloadTracker {
                 )
               );
               changed =
-                !isEqual(this.radarrServers[ms.id] ?? [], matchingDownloads) ||
-                changed;
+                this.hasPresentationChanged(
+                  this.radarrServers[ms.id] ?? [],
+                  matchingDownloads
+                ) || changed;
               this.radarrServers[ms.id] = matchingDownloads;
             });
 
@@ -572,9 +634,7 @@ export class DownloadTracker {
       settings.sonarr.filter((sonarr) => sonarr.syncEnabled),
       (sonarrA, sonarrB) => {
         return (
-          sonarrA.hostname === sonarrB.hostname &&
-          sonarrA.port === sonarrB.port &&
-          sonarrA.baseUrl === sonarrB.baseUrl
+          this.physicalServerKey(sonarrA) === this.physicalServerKey(sonarrB)
         );
       }
     );
@@ -585,9 +645,7 @@ export class DownloadTracker {
         if (server.syncEnabled) {
           const matchingServers = settings.sonarr.filter(
             (ss) =>
-              ss.hostname === server.hostname &&
-              ss.port === server.port &&
-              ss.baseUrl === server.baseUrl &&
+              this.physicalServerKey(ss) === this.physicalServerKey(server) &&
               ss.id !== server.id &&
               ss.syncEnabled
           );
@@ -606,14 +664,18 @@ export class DownloadTracker {
             await sonarr.refreshMonitoredDownloads();
             const queueItems = await sonarr.getQueue(physicalServerQueueSize);
             const physicalKey = this.physicalServerKey(server);
-            const previous = this.sonarrPhysicalQueues[physicalKey] ?? [];
+            const previousActive = this.sonarrPhysicalQueues[physicalKey] ?? [];
+            const previous = [
+              ...previousActive,
+              ...(this.sonarrImportBacklogs[physicalKey] ?? []),
+            ];
             const serverDownloads = queueItems.map((item) =>
               this.buildDownloadingItem(
                 item,
                 MediaType.TV,
                 item.seriesId,
                 item.episode,
-                previous
+                previousActive
               )
             );
             const serverAliases = [server, ...matchingServers].map((alias) => ({
@@ -626,10 +688,10 @@ export class DownloadTracker {
               serverDownloads,
               serverAliases
             );
-            this.sonarrPhysicalQueues[physicalKey] =
-              importConfirmation.historyAuthoritative
-                ? serverDownloads
-                : this.retainCorrelationState(previous, serverDownloads);
+            this.sonarrPhysicalQueues[physicalKey] = serverDownloads;
+            this.sonarrImportBacklogs[physicalKey] = this.boundImportBacklog(
+              importConfirmation.retainedUnmatched
+            );
 
             const downloads = serverDownloads.slice(
               0,
@@ -637,7 +699,7 @@ export class DownloadTracker {
                 server.downloadQueueSize ?? DEFAULT_DOWNLOAD_QUEUE_SIZE
               )
             );
-            let changed = !isEqual(
+            let changed = this.hasPresentationChanged(
               this.sonarrServers[server.id] ?? [],
               downloads
             );
@@ -651,8 +713,10 @@ export class DownloadTracker {
                 )
               );
               changed =
-                !isEqual(this.sonarrServers[ms.id] ?? [], matchingDownloads) ||
-                changed;
+                this.hasPresentationChanged(
+                  this.sonarrServers[ms.id] ?? [],
+                  matchingDownloads
+                ) || changed;
               this.sonarrServers[ms.id] = matchingDownloads;
             });
 
