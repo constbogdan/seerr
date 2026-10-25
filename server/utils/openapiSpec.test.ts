@@ -490,7 +490,7 @@ describe('OpenAPI runtime schema', () => {
     assert.equal(
       (
         await authenticatedGet(
-          '/api/v1/fresh?page=1&mediaType=movie&sort=vote_average.desc'
+          '/api/v1/fresh?page=1&mediaType=movie&sort=freshest'
         )
       ).status,
       200

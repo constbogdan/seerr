@@ -22,7 +22,6 @@ describe('Settings jobs and navigation presentation', () => {
       'Updates what each user has watched in Jellyfin.',
       'Keeps your Library in sync with your local media files.',
       'Finds new releases matching your selected discovery sources.',
-      'Keeps Fresh results up to date as media becomes available or changes.',
       'Finds media eligible for scheduled removal.',
       'Processes scheduled removals when their deadlines arrive.',
       'Automatically relocates eligible Series between storage volumes.',
@@ -35,6 +34,19 @@ describe('Settings jobs and navigation presentation', () => {
     assert.doesNotMatch(
       jobs,
       /Moves at most one eligible whole Series from the default volume to the expansion volume\./
+    );
+  });
+
+  it('presents the single Fresh V2 sync job without the retired reconciliation job', () => {
+    assert.match(jobs, /'fresh-sync': 'Fresh Sync'/);
+    assert.match(
+      jobs,
+      /'fresh-sync-description':\s*'Finds new releases matching your selected discovery sources\.'/
+    );
+    assert.doesNotMatch(jobs, /'fresh-reconciliation(?:-description)?':/);
+    assert.doesNotMatch(
+      jobs,
+      /Keeps Fresh results up to date as media becomes available or changes\./
     );
   });
 

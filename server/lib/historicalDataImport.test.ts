@@ -32,7 +32,7 @@ import {
 } from '@server/lib/wholphinHistory';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
@@ -724,82 +724,5 @@ describe('generic historical-data import', () => {
       if (primary.isInitialized) await primary.destroy();
       rmSync(directory, { recursive: true, force: true });
     }
-  });
-
-  it('accepts the approved October 4 artifact with truthful counts and no invented current state', async () => {
-    const artifactPath = [
-      process.env.SEERR_HISTORY_ACCEPTANCE_ARTIFACT,
-      path.resolve(
-        process.cwd(),
-        '..',
-        'seerr-harness',
-        'config',
-        'migration',
-        'wholphin-history-v1.json'
-      ),
-      path.resolve(
-        process.cwd(),
-        '..',
-        '..',
-        'seerr-harness',
-        'config',
-        'migration',
-        'wholphin-history-v1.json'
-      ),
-    ].find((candidate): candidate is string =>
-      Boolean(candidate && existsSync(candidate))
-    );
-
-    assert.ok(
-      artifactPath,
-      'approved history artifact is required; set SEERR_HISTORY_ACCEPTANCE_ARTIFACT when it is not in a supported workspace location'
-    );
-    const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
-    const inspection = await historicalDataImport.inspect(artifact);
-    assert.equal(
-      inspection.contentHash,
-      'sha256:6d19c5e622b0642c6d6281b10e774367cc9962db4fd04a4d90a68b1286d073e2'
-    );
-    assert.equal(inspection.counts.viewingFacts, 2030);
-    assert.equal(inspection.observedRange.completeness, 'not-asserted');
-    assert.equal(inspection.disposition, 'first-import');
-    assert.equal(await getRepository(HydrationRun).count(), 0);
-    assert.equal(await getRepository(CurrentViewingState).count(), 0);
-    assert.equal(await getRepository(LibraryPresence).count(), 0);
-
-    const imported = await historicalDataImport.import(artifact);
-    assert.deepEqual(
-      {
-        viewers: imported.viewersCreated,
-        media: imported.mediaCreated,
-        seasons: imported.seasonsCreated,
-        episodes: imported.episodesCreated,
-        library: imported.libraryFactsCreated,
-        viewing: imported.viewingFactsCreated,
-        completion: imported.completionFactsCreated,
-        activity: imported.activityFactsCreated,
-        untimed: imported.untimedEvidenceFactsCreated,
-      },
-      {
-        viewers: 4,
-        media: 588,
-        seasons: 283,
-        episodes: 2649,
-        library: 111,
-        viewing: 2030,
-        completion: 562,
-        activity: 6,
-        untimed: 82,
-      }
-    );
-    assert.equal(imported.disposition, 'first-import');
-    assert.equal(await getRepository(CurrentViewingState).count(), 0);
-    assert.equal(
-      await getRepository(LibraryPresence).countBy({ isCurrent: true }),
-      0
-    );
-    const repeat = await historicalDataImport.import(artifact);
-    assert.equal(repeat.disposition, 'exact-repeat');
-    assert.equal(await getRepository(HydrationRun).count(), 1);
   });
 });

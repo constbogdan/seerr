@@ -32,6 +32,7 @@ interface MediaSliderProps {
   extraParams?: string;
   onNewTitles?: (titleCount: number) => void;
   headerAction?: ReactNode;
+  showRatings?: boolean;
 }
 
 const MediaSlider = ({
@@ -43,6 +44,7 @@ const MediaSlider = ({
   hideWhenEmpty = false,
   onNewTitles,
   headerAction,
+  showRatings = false,
 }: MediaSliderProps) => {
   const settings = useSettings();
   const { hasPermission } = useUser();
@@ -142,6 +144,7 @@ const MediaSlider = ({
               summary={title.overview}
               title={title.title}
               userScore={title.voteAverage}
+              showRating={showRatings}
               year={title.releaseDate}
               mediaType={title.mediaType}
               inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
@@ -158,6 +161,7 @@ const MediaSlider = ({
               summary={title.overview}
               title={title.name}
               userScore={title.voteAverage}
+              showRating={showRatings}
               year={title.firstAirDate}
               mediaType={title.mediaType}
               inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}

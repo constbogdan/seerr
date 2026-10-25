@@ -557,27 +557,7 @@ export const startJobs = async (): Promise<void> => {
     }),
     running: () => freshService.running(),
     cancelFn: () => freshService.cancel(),
-    commissioningRun: () => freshService.sync(false, true),
-  });
-
-  scheduledJobs.push({
-    id: 'fresh-reconciliation',
-    name: 'Fresh Reconciliation',
-    type: 'process',
-    interval: 'days',
-    cronSchedule: jobs['fresh-reconciliation'].schedule,
-    job: scheduleGuardedJob(
-      'fresh-reconciliation',
-      jobs['fresh-reconciliation'].schedule,
-      () => {
-        logger.info('Starting scheduled job: Fresh Reconciliation', {
-          label: 'Jobs',
-        });
-        void freshService.reconcile();
-      }
-    ),
-    running: () => freshService.running(),
-    cancelFn: () => freshService.cancel(),
+    commissioningRun: () => freshService.sync(true),
   });
 
   scheduledJobs.push(

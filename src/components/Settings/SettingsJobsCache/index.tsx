@@ -140,9 +140,6 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'fresh-sync': 'Fresh Sync',
     'fresh-sync-description':
       'Finds new releases matching your selected discovery sources.',
-    'fresh-reconciliation': 'Fresh Reconciliation',
-    'fresh-reconciliation-description':
-      'Keeps Fresh results up to date as media becomes available or changes.',
     editJobSchedule: 'Modify Job',
     jobScheduleEditSaved: 'Job edited successfully!',
     jobScheduleEditFailed: 'Something went wrong while saving the job.',

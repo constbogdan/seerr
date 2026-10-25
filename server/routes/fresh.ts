@@ -5,171 +5,192 @@ import type {
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
 import { FRESH_PAGE_SIZE } from '@server/constants/fresh';
-import { MediaType } from '@server/constants/media';
-import { getRepository } from '@server/datasource';
-import FreshMedia from '@server/entity/FreshMedia';
+import dataSource from '@server/datasource';
+import FreshDiscovery from '@server/entity/FreshDiscovery';
 import Media from '@server/entity/Media';
-import type { FreshSort } from '@server/lib/fresh';
+import { hasFreshContentFilters } from '@server/lib/fresh/contentFilters';
+import { freshSourceKey } from '@server/lib/fresh/engine';
+import {
+  FRESH_FILTER_MAX_ITEMS,
+  FreshFilterSnapshots,
+  isFreshMetricSort,
+  selectFreshSnapshotRows,
+} from '@server/lib/fresh/filterSnapshot';
 import {
   freshPresentationKey,
   resolveFreshPagePresentation,
 } from '@server/lib/fresh/presentation';
 import freshService from '@server/lib/fresh/service';
-import logger from '@server/logger';
+import type { FreshSort } from '@server/lib/fresh/types';
+import { getSettings } from '@server/lib/settings';
 import { mapMovieResult, mapTvResult } from '@server/models/Search';
 import { Router } from 'express';
 
-const freshRoutes = Router();
-const sorts = new Set<FreshSort>([
-  'freshest',
-  'oldest',
-  'title',
-  'year',
-  'vote_average.desc',
-  'vote_average.asc',
-]);
-
-freshRoutes.get('/', async (req, res, next) => {
-  let stage = 'status';
-  try {
-    const status = await freshService.status();
-    if (status.status === 'disabled') {
-      return res.status(200).json({
-        page: 1,
-        totalPages: 0,
-        totalResults: 0,
-        results: [],
+export const createFreshRoutes = ({
+  database = dataSource,
+  settings: readSettings = () => getSettings().fresh,
+  status: readStatus = () => freshService.status(),
+  presentation: present = resolveFreshPagePresentation,
+  related: relatedMedia = Media.getRelatedMedia.bind(Media),
+} = {}) => {
+  const freshRoutes = Router();
+  const snapshots = new FreshFilterSnapshots();
+  freshRoutes.get('/', async (req, res, next) => {
+    try {
+      const settings = readSettings();
+      const status = await readStatus();
+      const page = Math.max(
+        1,
+        Math.min(1000000, Math.trunc(Number(req.query.page) || 1))
+      );
+      if (!settings.enabled)
+        return res.json({
+          page,
+          totalPages: 0,
+          totalResults: 0,
+          results: [],
+          status,
+        });
+      const now = new Date();
+      const query = database
+        .getRepository(FreshDiscovery)
+        .createQueryBuilder('discovery')
+        .select('discovery.mediaType', 'mediaType')
+        .addSelect('discovery.tmdbId', 'tmdbId')
+        .addSelect('MAX(discovery.discoveredAt)', 'discoveredAt')
+        .addSelect('MIN(discovery.title)', 'title')
+        .where('discovery.sourceKey = :sourceKey', {
+          sourceKey: freshSourceKey(settings),
+        })
+        .andWhere(
+          'discovery.discoveredAt >= :cutoff AND discovery.discoveredAt <= :now',
+          {
+            cutoff: new Date(
+              now.getTime() - settings.freshVisibilityDays * 86400000
+            ),
+            now,
+          }
+        )
+        .groupBy('discovery.mediaType')
+        .addGroupBy('discovery.tmdbId');
+      if (req.query.mediaType === 'movie' || req.query.mediaType === 'tv')
+        query.andWhere('discovery.mediaType = :mediaType', {
+          mediaType: req.query.mediaType,
+        });
+      const count = await database
+        .createQueryBuilder()
+        .select('COUNT(*)', 'count')
+        .from(`(${query.getQuery()})`, 'feed')
+        .setParameters(query.getParameters())
+        .getRawOne<{ count: string | number }>();
+      let totalResults = Number(count?.count ?? 0);
+      const sort: FreshSort =
+        req.query.sort === 'oldest' || isFreshMetricSort(req.query.sort)
+          ? req.query.sort
+          : 'freshest';
+      const requiresSnapshot =
+        hasFreshContentFilters(settings) || isFreshMetricSort(sort);
+      if (requiresSnapshot && totalResults > FRESH_FILTER_MAX_ITEMS)
+        throw new Error('fresh_filter_population_limit');
+      const population = await query
+        .orderBy('"discoveredAt"', sort === 'oldest' ? 'ASC' : 'DESC')
+        .addOrderBy('discovery.mediaType', 'ASC')
+        .addOrderBy('discovery.tmdbId', 'ASC')
+        .offset(requiresSnapshot ? 0 : (page - 1) * FRESH_PAGE_SIZE)
+        .limit(requiresSnapshot ? FRESH_FILTER_MAX_ITEMS : FRESH_PAGE_SIZE)
+        .getRawMany<{
+          mediaType: 'movie' | 'tv';
+          tmdbId: number;
+          discoveredAt: Date | string;
+          title: string;
+        }>();
+      let rows = population;
+      let snapshotPresentation;
+      if (requiresSnapshot) {
+        if (population.length !== totalResults)
+          throw new Error('fresh_filter_population_changed');
+        const snapshot = await snapshots.evaluate(
+          population,
+          settings,
+          req.locale ?? 'en',
+          present
+        );
+        const eligible = selectFreshSnapshotRows(population, snapshot, sort);
+        totalResults = eligible.length;
+        rows = eligible.slice(
+          (page - 1) * FRESH_PAGE_SIZE,
+          page * FRESH_PAGE_SIZE
+        );
+        snapshotPresentation = snapshot.presentations;
+      }
+      const [related, presentations] = await Promise.all([
+        relatedMedia(
+          req.user,
+          rows.map(({ tmdbId, mediaType }) => ({ tmdbId, mediaType })),
+          { includeActiveRequest: true }
+        ),
+        snapshotPresentation ?? present(rows, req.locale ?? 'en'),
+      ]);
+      const results = rows.map((item) => {
+        const media = related.find(
+          (value) =>
+            value.tmdbId === item.tmdbId && value.mediaType === item.mediaType
+        );
+        const presentation = presentations.get(freshPresentationKey(item));
+        const common = {
+          id: item.tmdbId,
+          media_type: item.mediaType,
+          genre_ids: presentation?.genres?.map((genre) => genre.id) ?? [],
+          original_language: '',
+          overview: '',
+          popularity: 0,
+          vote_average: 0,
+          vote_count: 0,
+          ...presentation,
+        };
+        const result =
+          item.mediaType === 'movie'
+            ? mapMovieResult(
+                {
+                  adult: false,
+                  title: item.title,
+                  original_title: item.title,
+                  release_date: '',
+                  video: false,
+                  ...common,
+                } as TmdbMovieResult & Partial<TmdbMovieDetails>,
+                media
+              )
+            : mapTvResult(
+                {
+                  name: item.title,
+                  original_name: item.title,
+                  first_air_date: '',
+                  origin_country: [],
+                  ...common,
+                } as TmdbTvResult & Partial<TmdbTvDetails>,
+                media
+              );
+        const value =
+          item.discoveredAt instanceof Date
+            ? item.discoveredAt.toISOString()
+            : item.discoveredAt.replace(' ', 'T');
+        const date = new Date(
+          /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value) ? value : value + 'Z'
+        );
+        return { ...result, freshFirstSeenAt: date.toISOString() };
+      });
+      return res.json({
+        page,
+        totalPages: Math.ceil(totalResults / FRESH_PAGE_SIZE),
+        totalResults,
+        results,
         status,
       });
+    } catch {
+      return next({ status: 503, message: 'Unable to retrieve Fresh media.' });
     }
-    const page = Math.max(1, Number(req.query.page) || 1);
-    const mediaType = ['movie', 'tv'].includes(String(req.query.mediaType))
-      ? String(req.query.mediaType)
-      : 'all';
-    const requestedSort = String(req.query.sort || 'freshest') as FreshSort;
-    const sort = sorts.has(requestedSort) ? requestedSort : 'freshest';
-    stage = 'query';
-    const repository = getRepository(FreshMedia);
-    const query = repository
-      .createQueryBuilder('fresh')
-      .where('fresh.active = :active', { active: true });
-    if (mediaType !== 'all')
-      query.andWhere('fresh.mediaType = :mediaType', { mediaType });
-
-    if (sort === 'freshest') query.orderBy('fresh.firstSeenAt', 'DESC');
-    else if (sort === 'oldest') query.orderBy('fresh.firstSeenAt', 'ASC');
-    else if (sort === 'title') query.orderBy('fresh.sortTitle', 'ASC');
-    else if (sort === 'year')
-      query
-        .orderBy('CASE WHEN fresh.mediaDate IS NULL THEN 1 ELSE 0 END', 'ASC')
-        .addOrderBy('fresh.mediaDate', 'DESC');
-    else
-      query.orderBy(
-        'fresh.voteAverage',
-        sort === 'vote_average.desc' ? 'DESC' : 'ASC'
-      );
-    query
-      .addOrderBy('fresh.mediaType', 'ASC')
-      .addOrderBy('fresh.tmdbId', 'ASC');
-
-    const [projection, totalResults] = await query
-      .skip((page - 1) * FRESH_PAGE_SIZE)
-      .take(FRESH_PAGE_SIZE)
-      .getManyAndCount();
-    stage = 'enrichment';
-    const [related, presentations] = await Promise.all([
-      Media.getRelatedMedia(
-        req.user,
-        projection.map((item) => ({
-          tmdbId: item.tmdbId,
-          mediaType:
-            item.mediaType === 'movie' ? MediaType.MOVIE : MediaType.TV,
-        })),
-        { includeActiveRequest: true }
-      ),
-      resolveFreshPagePresentation(projection, req.locale ?? 'en'),
-    ]);
-    stage = 'mapping';
-    const results = projection.map((item) => {
-      const mediaInfo = related.find(
-        (value) =>
-          value.tmdbId === item.tmdbId && value.mediaType === item.mediaType
-      );
-      const presentation = presentations.get(freshPresentationKey(item));
-      const fallback = {
-        id: item.tmdbId,
-        media_type: item.mediaType,
-        genre_ids: item.genreIds,
-        original_language: item.originalLanguage,
-        overview: '',
-        popularity: 0,
-        vote_average: item.voteAverage,
-        vote_count: item.voteCount,
-      };
-      const result =
-        item.mediaType === 'movie'
-          ? mapMovieResult(
-              (presentation
-                ? {
-                    ...(presentation as TmdbMovieDetails),
-                    genre_ids:
-                      (presentation as TmdbMovieDetails).genres?.map(
-                        (genre) => genre.id
-                      ) ?? [],
-                    media_type: 'movie',
-                  }
-                : {
-                    ...fallback,
-                    media_type: 'movie',
-                    adult: false,
-                    title: item.displayTitle,
-                    original_title: item.displayTitle,
-                    release_date: item.mediaDate ?? '',
-                    video: false,
-                  }) as TmdbMovieResult,
-              mediaInfo
-            )
-          : mapTvResult(
-              (presentation
-                ? {
-                    ...(presentation as TmdbTvDetails),
-                    genre_ids:
-                      (presentation as TmdbTvDetails).genres?.map(
-                        (genre) => genre.id
-                      ) ?? [],
-                    media_type: 'tv',
-                  }
-                : {
-                    ...fallback,
-                    media_type: 'tv',
-                    name: item.displayTitle,
-                    original_name: item.displayTitle,
-                    first_air_date: item.mediaDate ?? '',
-                    origin_country: [],
-                  }) as TmdbTvResult,
-              mediaInfo
-            );
-      return {
-        ...result,
-        freshFirstSeenAt: item.firstSeenAt.toISOString(),
-      };
-    });
-
-    return res.status(200).json({
-      page,
-      totalPages: Math.ceil(totalResults / FRESH_PAGE_SIZE),
-      totalResults,
-      results,
-      status,
-    });
-  } catch (error) {
-    logger.error('Unable to retrieve Fresh media', {
-      label: 'Fresh',
-      stage,
-      errorType: error instanceof Error ? error.name : 'UnknownError',
-    });
-    return next({ status: 500, message: 'Unable to retrieve Fresh media.' });
-  }
-});
-
-export default freshRoutes;
+  });
+  return freshRoutes;
+};
+export default createFreshRoutes();

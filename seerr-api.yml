@@ -2020,468 +2020,57 @@ components:
     FreshSettings:
       type: object
       required:
-        - enabled
-        - baseUrl
-        - filterId
-        - cachedFilterName
-        - mediaEligibilityDays
-        - freshVisibilityDays
-        - includeGenreIds
-        - excludeGenreIds
-        - includeOriginalLanguages
-        - excludeOriginalLanguages
-        - includeContentRatings
-        - excludeContentRatings
-        - minimumTmdbScore
-        - minimumTmdbVotes
+        [enabled, baseUrl, filterId, cachedFilterName, freshVisibilityDays]
       properties:
-        enabled:
-          type: boolean
-        baseUrl:
-          type: string
-        apiToken:
-          type: string
-          writeOnly: true
-        apiTokenConfigured:
-          type: boolean
-          readOnly: true
-        filterId:
-          type: integer
-          minimum: 0
-          description: Authoritative numeric autobrr filter identity.
-        cachedFilterName:
-          type: string
-          description: Non-authoritative friendly name cached for presentation.
-        mediaEligibilityDays:
-          type: integer
-          minimum: 1
-          maximum: 365
-          default: 90
-          description: Movie normal eligibility window and TV recent-season activity sanity window.
+        enabled: { type: boolean }
+        baseUrl: { type: string }
+        apiToken: { type: string, writeOnly: true }
+        apiTokenConfigured: { type: boolean, readOnly: true }
+        filterId: { type: integer, minimum: 0 }
+        cachedFilterName: { type: string }
         freshVisibilityDays:
           type: integer
           minimum: 1
           maximum: 90
           default: 7
-          description: Duration of active Fresh visibility after first qualification.
-        includeGenreIds: &freshGenreIds
+          description: Visibility measured from the original autobrr discovery timestamp.
+        excludeGenreIds:
           type: array
-          items:
-            type: integer
-            minimum: 1
-        excludeGenreIds: *freshGenreIds
-        includeOriginalLanguages: &freshLanguages
+          maxItems: 1000
+          items: { type: integer, minimum: 1 }
+          default: []
+          description: Presentation-only genre exclusions, applied before feed pagination.
+        excludeOriginalLanguages:
           type: array
-          items:
-            type: string
-        excludeOriginalLanguages: *freshLanguages
-        includeContentRatings: &freshRatings
-          type: array
-          items:
-            type: string
-            pattern: '^(movie|tv):'
-        excludeContentRatings: *freshRatings
+          maxItems: 300
+          items: { type: string, pattern: '^[a-z]{2}$' }
+          default: []
         minimumTmdbScore:
           type: number
           minimum: 0
           maximum: 10
           default: 0
+          description: Inclusive minimum; zero disables score filtering.
         minimumTmdbVotes:
           type: integer
           minimum: 0
-          maximum: 10000000
+          maximum: 9007199254740991
           default: 0
+          description: Inclusive minimum; zero disables vote filtering.
     FreshStatus:
       type: object
-      required:
-        - status
-        - refreshing
-        - itemCount
+      required: [status, refreshing, backfillComplete, itemCount, pendingWork]
       properties:
         status:
           type: string
-          enum:
-            [
-              preparing,
-              refreshing,
-              rebuilding,
-              ready,
-              stale,
-              unavailable,
-              disabled,
-            ]
-        refreshing:
-          type: boolean
-        lastRefresh:
-          type: string
-          format: date-time
-        lastReconciliation:
-          type: string
-          format: date-time
-        checkpoint:
-          type: string
-        itemCount:
-          type: integer
-        continuityStatus:
-          type: integer
-          enum: [1, 2, 3, 4]
-        error:
-          type: string
-    FreshDiagnosticCounts:
-      type: object
-      required:
-        - newAutobrrReleases
-        - persistedObservations
-        - replayedObservations
-        - uniqueCandidates
-        - alreadyResolved
-        - resolutionAttempts
-        - resolved
-        - noMatch
-        - ambiguous
-        - transientFailures
-        - outsideFreshWindow
-        - newFreshMedia
-        - existingFreshMediaUpdated
-        - expiredFreshMedia
-        - currentFreshMedia
-      properties:
-        newAutobrrReleases: &nullableFreshCount
-          type: integer
-          nullable: true
-        persistedObservations: *nullableFreshCount
-        replayedObservations: *nullableFreshCount
-        uniqueCandidates: *nullableFreshCount
-        alreadyResolved: *nullableFreshCount
-        resolutionAttempts: *nullableFreshCount
-        resolved: *nullableFreshCount
-        noMatch: *nullableFreshCount
-        ambiguous: *nullableFreshCount
-        transientFailures: *nullableFreshCount
-        outsideFreshWindow: *nullableFreshCount
-        newFreshMedia: *nullableFreshCount
-        existingFreshMediaUpdated: *nullableFreshCount
-        expiredFreshMedia: *nullableFreshCount
-        currentFreshMedia: *nullableFreshCount
-    FreshDiagnosticDecision:
-      type: object
-      required:
-        - title
-        - mediaType
-        - normalizedTitle
-        - stage
-        - outcome
-        - reason
-      properties:
-        title:
-          type: string
-        mediaType:
-          type: string
-          enum: [movie, tv]
-        year:
-          type: integer
-        normalizedTitle:
-          type: string
-        tmdbId:
-          type: integer
-        stage:
-          type: string
-          enum:
-            - configuration
-            - filter_authentication
-            - source_history
-            - observation_persistence
-            - checkpoint_commit
-            - resolution_search
-            - projection_update
-            - retention
-            - reconciliation
-        outcome:
-          type: string
-          enum: [accepted, resolved, rejected, retry]
-        reason:
-          type: string
-    FreshDiagnosticsSnapshot:
-      type: object
-      required:
-        - operation
-        - outcome
-        - startedAt
-        - stages
-        - counts
-        - decisions
-        - checkpoint
-      properties:
-        operation:
-          type: string
-          enum: [sync, reconciliation]
-        outcome:
-          type: string
-          enum: [running, succeeded, failed, cancelled]
-        startedAt:
-          type: string
-          format: date-time
-        completedAt:
-          type: string
-          format: date-time
-        failingStage:
-          type: string
-        failureReason:
-          type: string
-          enum:
-            - invalid_configuration
-            - filter_missing
-            - filter_disabled
-            - source_unavailable
-            - invalid_source_response
-            - invalid_source_order
-            - checkpoint_missing
-            - source_id_regression
-            - tmdb_unavailable
-            - tmdb_rate_limited
-            - persistence_failed
-            - cancelled
-            - unexpected_failure
-        stages:
-          type: object
-          additionalProperties:
-            type: string
-            enum: [not_started, running, succeeded, failed, cancelled]
-        counts:
-          $ref: '#/components/schemas/FreshDiagnosticCounts'
-        decisions:
-          type: array
-          maxItems: 100
-          items:
-            $ref: '#/components/schemas/FreshDiagnosticDecision'
-        checkpoint:
-          type: object
-          properties:
-            before:
-              type: string
-            after:
-              type: string
-        continuityStatus:
-          type: integer
-        lastGood:
-          type: object
-          required: [timestamp, itemCount]
-          properties:
-            timestamp:
-              type: string
-              format: date-time
-            itemCount:
-              type: integer
-    FreshDiagnosticsResponse:
-      type: object
-      required: [latestAttempt, currentProjection]
-      properties:
-        latestAttempt:
-          type: object
-          nullable: true
-          allOf:
-            - $ref: '#/components/schemas/FreshDiagnosticsSnapshot'
-        currentProjection:
-          $ref: '#/components/schemas/FreshStatus'
-    FreshCandidateDiagnostic:
-      type: object
-      required:
-        - candidateId
-        - revision
-        - displayTitle
-        - parsedTitle
-        - parsedMediaType
-        - mediaType
-        - resolutionStatus
-        - displayStatus
-        - firstObservedAt
-        - lastObservedAt
-        - attemptCount
-        - automaticReasons
-        - sourceTitleSamples
-        - observationCount
-        - active
-        - show
-        - actionable
-        - actions
-      properties:
-        candidateId: { type: integer }
-        revision: { type: integer, minimum: 1 }
-        displayTitle: { type: string }
-        parsedTitle: { type: string }
-        parsedMediaType: { type: string, enum: [movie, tv] }
-        mediaType: { type: string, enum: [movie, tv] }
-        matchYear: { type: integer }
-        seasonNumber: { type: integer, minimum: 0 }
-        episodeNumber: { type: integer, minimum: 0 }
-        resolutionStatus: { type: integer }
-        automaticResolution:
-          type: object
-          required: [status, mediaType]
-          properties:
-            status: { type: integer }
-            mediaType: { type: string, enum: [movie, tv] }
-            tmdbId: { type: integer, minimum: 1 }
-            failureReason: { type: string }
-        displayStatus:
-          type: string
-          enum:
-            [
-              resolved,
-              no_match,
-              ambiguous,
-              temporary_failure,
-              pending,
-              resolving,
-              outside_eligibility_window,
-              eligibility_unknown,
-              excluded_content_filter,
-              visibility_expired,
-              active_fresh,
-              needs_attention,
-              reviewable,
-              historical,
-            ]
-        tmdbId: { type: integer }
-        firstObservedAt: { type: string, format: date-time }
-        lastObservedAt: { type: string, format: date-time }
-        attemptCount: { type: integer }
-        lastAttemptAt: { type: string, format: date-time }
-        nextAttemptAt: { type: string, format: date-time }
-        resolvedAt: { type: string, format: date-time }
-        failureReason: { type: string }
-        membershipReason: { type: string }
-        automaticReasons:
-          type: array
-          items: { type: string }
-        sourceTitleSamples:
-          type: array
-          maxItems: 5
-          items: { type: string }
-        observationCount: { type: integer, minimum: 0 }
-        manualResolution:
-          type: object
-          required: [mediaType, tmdbId, canonicalTitle, updatedAt, revision]
-          properties:
-            mediaType: { type: string, enum: [movie, tv] }
-            tmdbId: { type: integer, minimum: 1 }
-            canonicalTitle: { type: string }
-            actorUserId: { type: integer, minimum: 1 }
-            updatedAt: { type: string, format: date-time }
-            revision: { type: integer, minimum: 1 }
-        admissionOverride:
-          type: object
-          required: [updatedAt, revision]
-          properties:
-            actorUserId: { type: integer, minimum: 1 }
-            updatedAt: { type: string, format: date-time }
-            revision: { type: integer, minimum: 1 }
-        discoveryHistory:
-          type: object
-          required:
-            [
-              identityKind,
-              admitted,
-              legacyProjection,
-              admissionReason,
-              activitySource,
-            ]
-          properties:
-            identityKind:
-              type: string
-              enum: [movie, season, special, legacy_tv]
-            seasonNumber: { type: integer, minimum: 0 }
-            episodeNumber: { type: integer, minimum: 1 }
-            admitted: { type: boolean }
-            legacyProjection: { type: boolean }
-            admissionReason: { type: string }
-            activityDate: { type: string, format: date }
-            activitySource: { type: string }
-            firstFreshAt: { type: string, format: date-time }
-            visibleUntil: { type: string, format: date-time }
-        firstSeenAt: { type: string, format: date-time }
-        lastSeenAt: { type: string, format: date-time }
-        mediaDate: { type: string }
-        eligibility:
-          type: object
-          required:
-            [
-              observationType,
-              observationAt,
-              eligibilityDateSource,
-              eligibilityLimitDays,
-              legacyEvidence,
-            ]
-          properties:
-            observationType:
-              type: string
-              enum: [digital, physical, unknown]
-            observationAt: { type: string, format: date-time }
-            eligibilityDate: { type: string, format: date }
-            eligibilityDateSource:
-              type: string
-              enum:
-                [
-                  digital,
-                  physical,
-                  canonical_fallback,
-                  tv_first_air_date,
-                  unavailable,
-                ]
-            firstQualifyingObservation: { type: string, format: date-time }
-            ageDays: { type: number }
-            eligibilityLimitDays: { type: integer }
-            legacyEvidence: { type: boolean }
-        visibleUntil: { type: string, format: date-time }
-        active: { type: boolean }
-        show: { type: boolean }
-        actionable: { type: boolean }
-        actions:
-          type: object
-          required:
-            [resolve, resetResolution, admit, removeOverride, dismiss, show]
-          properties:
-            resolve: { type: boolean }
-            resetResolution: { type: boolean }
-            admit: { type: boolean }
-            removeOverride: { type: boolean }
-            dismiss: { type: boolean }
-            show: { type: boolean }
-    FreshCandidateDiagnosticsResponse:
-      type: object
-      required: [pageInfo, results, summary]
-      properties:
-        pageInfo:
-          type: object
-          required: [pages, page, results, pageSize]
-          properties:
-            pages: { type: integer }
-            page: { type: integer }
-            results: { type: integer }
-            pageSize: { type: integer }
-        results:
-          type: array
-          items:
-            $ref: '#/components/schemas/FreshCandidateDiagnostic'
-        summary:
-          type: object
-          additionalProperties:
-            type: integer
-    FreshManualResolutionResponse:
-      type: object
-      required:
-        [candidateId, parsedMediaType, mediaType, tmdbId, title, status, active]
-      properties:
-        candidateId: { type: integer }
-        parsedMediaType: { type: string, enum: [movie, tv] }
-        mediaType: { type: string, enum: [movie, tv] }
-        tmdbId: { type: integer }
-        title: { type: string }
-        mediaDate:
-          type: string
-          nullable: true
-        status: { type: integer }
-        active: { type: boolean }
+          enum: [disabled, preparing, refreshing, ready, stale, unavailable]
+        refreshing: { type: boolean }
+        backfillComplete: { type: boolean }
+        itemCount: { type: integer, minimum: 0 }
+        pendingWork: { type: integer, minimum: 0 }
+        lastRefresh: { type: string, format: date-time }
+        checkpoint: { type: string }
+        error: { type: string }
     FreshResult:
       oneOf:
         - allOf:
@@ -2489,7 +2078,9 @@ components:
             - type: object
               required:
                 - freshFirstSeenAt
+                - mediaType
               properties:
+                mediaType: { type: string, enum: [movie] }
                 freshFirstSeenAt:
                   type: string
                   format: date-time
@@ -2498,7 +2089,9 @@ components:
             - type: object
               required:
                 - freshFirstSeenAt
+                - mediaType
               properties:
+                mediaType: { type: string, enum: [tv] }
                 freshFirstSeenAt:
                   type: string
                   format: date-time
@@ -8481,7 +8074,15 @@ paths:
   /fresh:
     get:
       summary: Get Fresh media
-      description: Returns prepared persistent Fresh media with native Seerr media state.
+      description: >-
+        Returns discovered Fresh media with native Seerr media state. Administrator
+        content filters apply to the full visibility-eligible population before
+        totals and pagination. Rating/vote sorts order the complete qualifying
+        population by the selected metric descending (missing/invalid/zero last),
+        First Seen descending, then media type and TMDB ID ascending. Filtered or
+        metric-sorted metadata evaluation is bounded to 5000
+        typed identities and two minutes checked between batches; incomplete or
+        busy evaluation returns 503, never partial filtered totals.
       tags:
         - search
       parameters:
@@ -8504,12 +8105,50 @@ paths:
             enum:
               - freshest
               - oldest
-              - title
-              - year
-              - vote_average.desc
-              - vote_average.asc
+              - vote_average
+              - vote_count
             default: freshest
       responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
         '200':
           description: Fresh media projection
           content:
@@ -8522,6 +8161,46 @@ paths:
       tags:
         - settings
       responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
         '200':
           description: Fresh settings without the API token
           content:
@@ -8539,6 +8218,46 @@ paths:
             schema:
               $ref: '#/components/schemas/FreshSettings'
       responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
         '200':
           description: Updated Fresh settings without the API token
           content:
@@ -8562,6 +8281,46 @@ paths:
                   type: string
                   writeOnly: true
       responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
         '200':
           description: Connection succeeded
   /settings/fresh/filters:
@@ -8581,6 +8340,46 @@ paths:
                   type: string
                   writeOnly: true
       responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
         '200':
           description: autobrr filter options
           content:
@@ -8603,323 +8402,48 @@ paths:
       tags:
         - settings
       responses:
-        '200':
-          description: Fresh refresh status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreshStatus'
-  /settings/fresh/diagnostics:
-    get:
-      summary: Get the latest bounded Fresh refresh diagnostics
-      tags:
-        - settings
-      responses:
-        '200':
-          description: Latest completed refresh attempt and current projection status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreshDiagnosticsResponse'
-  /settings/fresh/candidates:
-    get:
-      summary: Get persistent Fresh candidate diagnostics
-      tags:
-        - settings
-      parameters:
-        - in: query
-          name: page
-          schema: { type: integer, minimum: 1, default: 1 }
-        - in: query
-          name: search
-          schema: { type: string, maxLength: 300 }
-        - in: query
-          name: mediaType
-          schema: { type: string, enum: [all, movie, tv], default: all }
-        - in: query
-          name: status
-          schema:
-            type: string
-            enum:
-              [
-                all,
-                resolved,
-                no_match,
-                ambiguous,
-                temporary_failure,
-                pending,
-                resolving,
-                outside_eligibility_window,
-                eligibility_unknown,
-                excluded_content_filter,
-                visibility_expired,
-                active_fresh,
-                needs_attention,
-                reviewable,
-                historical,
-              ]
-            default: all
-        - in: query
-          name: sort
-          schema:
-            type: string
-            enum:
-              [
-                priority,
-                title.asc,
-                title.desc,
-                status,
-                year.desc,
-                year.asc,
-                first_seen.desc,
-                first_seen.asc,
-                last_seen.desc,
-                last_seen.asc,
-              ]
-            default: priority
-        - in: query
-          name: reasonFamily
-          schema:
-            type: string
-            enum: [all, resolution, admission, content, history, source]
-            default: all
-        - in: query
-          name: seasonEvidence
-          schema:
-            type: string
-            enum: [all, known, unknown]
-            default: all
-        - in: query
-          name: manualResolution
-          schema:
-            type: string
-            enum: [all, present, absent]
-            default: all
-        - in: query
-          name: admissionOverride
-          schema:
-            type: string
-            enum: [all, present, absent]
-            default: all
-        - in: query
-          name: visibility
-          schema:
-            type: string
-            enum: [visible, hidden, all]
-            default: visible
-      responses:
-        '200':
-          description: Persistent current-generation Fresh candidate state
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreshCandidateDiagnosticsResponse'
-  /settings/fresh/candidates/visibility:
-    post:
-      summary: Atomically update visibility for selected Fresh diagnostics candidates
-      tags: [settings]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [show, candidates]
-              properties:
-                show: { type: boolean }
-                candidates:
-                  type: array
-                  minItems: 1
-                  maxItems: 25
-                  uniqueItems: true
-                  items:
-                    type: object
-                    additionalProperties: false
-                    required: [candidateId, expectedRevision]
-                    properties:
-                      candidateId: { type: integer, minimum: 1 }
-                      expectedRevision: { type: integer, minimum: 1 }
-      responses:
-        '200':
-          description: Candidate diagnostics visibility updated atomically
+        '400':
+          description: Invalid Fresh configuration or query
           content:
             application/json:
               schema:
                 type: object
-                required: [show, candidates]
                 properties:
-                  show: { type: boolean }
-                  candidates:
-                    type: array
-                    items:
-                      type: object
-                      required: [candidateId, revision]
-                      properties:
-                        candidateId: { type: integer }
-                        revision: { type: integer }
-        '409':
-          description: At least one candidate identity or revision is stale
-  /settings/fresh/candidates/{candidateId}/resolve:
-    post:
-      summary: Resolve an actionable Fresh candidate to a validated TMDB identity
-      tags:
-        - settings
-      parameters:
-        - in: path
-          name: candidateId
-          required: true
-          schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [mediaType, tmdbId, expectedRevision]
-              additionalProperties: false
-              properties:
-                mediaType: { type: string, enum: [movie, tv] }
-                tmdbId: { type: integer, minimum: 1 }
-                expectedRevision: { type: integer, minimum: 1 }
-      responses:
-        '200':
-          description: Validated canonical TMDB resolution
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/FreshManualResolutionResponse'
-  /settings/fresh/candidates/{candidateId}/reset-resolution:
-    post:
-      summary: Reset a typed Fresh manual canonical resolution
-      tags: [settings]
-      parameters:
-        - in: path
-          name: candidateId
-          required: true
-          schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision]
-              properties:
-                expectedRevision: { type: integer, minimum: 1 }
-      responses:
-        '200':
-          description: Manual resolution reset
-  /settings/fresh/candidates/{candidateId}/admit:
-    post:
-      summary: Admit a stable excluded Fresh identity through an override
-      tags: [settings]
-      parameters:
-        - in: path
-          name: candidateId
-          required: true
-          schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision]
-              properties:
-                expectedRevision: { type: integer, minimum: 1 }
-      responses:
-        '200':
-          description: Admission override applied
-  /settings/fresh/candidates/{candidateId}/remove-override:
-    post:
-      summary: Remove a Fresh admission override
-      tags: [settings]
-      parameters:
-        - in: path
-          name: candidateId
-          required: true
-          schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision]
-              properties:
-                expectedRevision: { type: integer, minimum: 1 }
-      responses:
-        '200':
-          description: Admission override removed
-  /settings/fresh/candidates/{candidateId}/dismiss:
-    post:
-      summary: Hide a Fresh candidate from default diagnostics results
-      tags: [settings]
-      parameters:
-        - in: path
-          name: candidateId
-          required: true
-          schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision]
-              properties:
-                expectedRevision: { type: integer, minimum: 1 }
-      responses:
-        '200':
-          description: Candidate hidden from default diagnostics results
-  /settings/fresh/candidates/{candidateId}/show:
-    post:
-      summary: Restore a Fresh candidate to default diagnostics results
-      tags: [settings]
-      parameters:
-        - in: path
-          name: candidateId
-          required: true
-          schema: { type: integer, minimum: 1 }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: false
-              required: [expectedRevision]
-              properties:
-                expectedRevision: { type: integer, minimum: 1 }
-      responses:
-        '200':
-          description: Candidate restored to default diagnostics results
-  /settings/fresh/refresh:
-    post:
-      summary: Force and await a Fresh refresh
-      tags:
-        - settings
-      responses:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
         '200':
           description: Fresh refresh status
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/FreshStatus'
-  /settings/fresh/rebuild:
-    post:
-      summary: Rebuild source-derived Fresh discovery data
-      description: Clears Fresh observations, automatic candidates, and synchronization state before replaying retained source history. Canonical media metadata, irreversible discovery history, typed manual resolutions, and admission overrides are preserved.
-      tags:
-        - settings
-      responses:
-        '200':
-          description: Completed Fresh rebuild status
           content:
             application/json:
               schema:

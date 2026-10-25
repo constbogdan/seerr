@@ -21,10 +21,7 @@ describe('removal execution migration', () => {
     try {
       await database.initialize();
       const applied = await database.runMigrations();
-      assert.equal(
-        applied.at(-1)?.name,
-        'AddTmdbCollectionMembership1790000000046'
-      );
+      assert.equal(applied.at(-1)?.name, 'AddFreshV21790000000048');
       const runner = database.createQueryRunner();
       const execution = await runner.getTable('removal_execution');
       const claim = await runner.getTable('removal_execution_claim');
@@ -50,6 +47,7 @@ describe('removal execution migration', () => {
       assert.deepEqual(await runner.query('PRAGMA foreign_key_check'), []);
       await runner.release();
 
+      await database.undoLastMigration(); // Fresh V2
       await database.undoLastMigration();
       assert.equal(
         await database
@@ -109,6 +107,7 @@ describe('removal execution migration', () => {
     try {
       await database.initialize();
       await database.runMigrations();
+      await database.undoLastMigration(); // Fresh V2
       await database.undoLastMigration();
       await database.undoLastMigration();
       await database.undoLastMigration();
@@ -132,6 +131,7 @@ describe('removal execution migration', () => {
           'AddCurrentEpisodeIdentityGeneration1790000000042',
           'AddSeriesRelocation1790000000044',
           'AddTmdbCollectionMembership1790000000046',
+          'AddFreshV21790000000048',
         ]
       );
       assert.deepEqual(

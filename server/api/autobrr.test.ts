@@ -1,4 +1,8 @@
-import { parseFilters, parseReleasePage } from '@server/api/autobrr';
+import {
+  parseFilterYears,
+  parseFilters,
+  parseReleasePage,
+} from '@server/api/autobrr';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
@@ -17,6 +21,25 @@ const row = (overrides: Record<string, unknown> = {}) => ({
 });
 
 describe('autobrr Fresh boundary', () => {
+  it('reads dynamic filter-year lists and ranges', () => {
+    assert.deepEqual(parseFilterYears('2032, 2033-2034'), [2032, 2033, 2034]);
+    assert.deepEqual(parseFilterYears([2020, 2021]), [2020, 2021]);
+    assert.deepEqual(parseFilterYears(''), []);
+    assert.throws(() => parseFilterYears('secret-token'));
+  });
+  it('retains only validated external identifiers without provider payloads', () => {
+    const page = parseReleasePage(
+      {
+        data: [row({ tmdb_id: 123, tvdb_id: 456, imdb_id: 'tt123456' })],
+        next_cursor: 20,
+      },
+      { id: 7 }
+    );
+    assert.equal(page.releases[0].tmdbId, 123);
+    assert.equal(page.releases[0].tvdbId, 456);
+    assert.equal(page.releases[0].imdbId, 'tt123456');
+    assert.doesNotMatch(JSON.stringify(page), /passkey|download_url/);
+  });
   it('retains only safe fields for releases proven against the numeric filter', () => {
     const parsed = parseReleasePage(
       {
@@ -41,35 +64,42 @@ describe('autobrr Fresh boundary', () => {
     );
 
     assert.deepEqual(parsed.releaseIds, ['20', '19', '18', '17']);
-    assert.deepEqual(parsed.releases, [
-      {
-        releaseId: '20',
-        mediaType: 'movie',
-        title: 'Example Movie',
-        sourceTitle: 'Example Movie',
-        year: 2026,
-        seasonNumber: -1,
-        episodeNumber: -1,
-        explicitSeason: false,
-        explicitSpecial: false,
-        observedAt: Date.parse('2026-09-26T10:00:00Z'),
-        availabilityType: 'digital',
-      },
-      {
-        releaseId: '19',
-        mediaType: 'tv',
-        title: 'Example Show',
-        sourceTitle: 'Example Show',
-        year: 0,
-        seasonNumber: -1,
-        episodeNumber: -1,
-        explicitSeason: false,
-        explicitSpecial: false,
-        observedAt: Date.parse('2026-09-26T10:00:00Z'),
-        availabilityType: 'digital',
-      },
-    ]);
+    assert.deepEqual(
+      parsed.releases.filter((release) => release.releaseId !== '17'),
+      [
+        {
+          releaseId: '20',
+          mediaType: 'movie',
+          title: 'Example Movie',
+          sourceTitle: 'Example Movie',
+          year: 2026,
+          seasonNumber: -1,
+          episodeNumber: -1,
+          explicitSeason: false,
+          explicitSpecial: false,
+          observedAt: Date.parse('2026-09-26T10:00:00Z'),
+          availabilityType: 'digital',
+        },
+        {
+          releaseId: '19',
+          mediaType: 'tv',
+          title: 'Example Show',
+          sourceTitle: 'Example Show',
+          year: 0,
+          seasonNumber: -1,
+          episodeNumber: -1,
+          explicitSeason: false,
+          explicitSpecial: false,
+          observedAt: Date.parse('2026-09-26T10:00:00Z'),
+          availabilityType: 'digital',
+        },
+      ]
+    );
     assert.equal(parsed.counts.inspected, 4);
+    assert.equal(
+      parsed.releases.find((release) => release.releaseId === '17')?.year,
+      0
+    );
     assert.equal(parsed.counts.selectedFilter, 3);
     assert.doesNotMatch(JSON.stringify(parsed), /tracker|passkey|download_url/);
   });

@@ -52,13 +52,13 @@ maintenance branch.
 ### Fresh
 
 Fresh is merged into `downstream-main` and maintained in this repository. The
-earlier isolated prototype checkout has been retired. Continue Fresh maintenance
-from the primary Seerr checkout and preserve its persistent incremental
-architecture. The durable Movie/Season/Special identity, irreversible-history,
-typed correction, override, rebuild, and GAP-recovery contract is documented in
-[Fresh discovery](FRESH.md). Administrators can open Candidate Diagnostics
-directly from the Discover Fresh row or the dedicated Fresh page; durable
-Visible/Hidden preferences affect that work queue only.
+earlier isolated prototype checkout has been retired. Fresh V2 replaces the
+matching administration system with one automatic sync and three runtime
+entities. It rebuilds from all currently available approved autobrr history;
+legacy Fresh tables remain untouched for rollback, not imported into V2.
+There are no manual matching, override, dismissal or diagnostic queues.
+See [Fresh discovery](FRESH.md) for source clocks, bounded continuation/recovery,
+the additive SQLite/PostgreSQL schema and database/settings rollback requirements.
 
 ### Watchlist
 

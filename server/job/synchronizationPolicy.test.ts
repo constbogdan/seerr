@@ -210,7 +210,7 @@ describe('synchronization containment integration boundaries', () => {
     );
     assert.match(
       scheduleSource,
-      /commissioningRun: \(\) => freshService\.sync\(false, true\)/
+      /commissioningRun: \(\) => freshService\.sync\(true\)/
     );
   });
 
@@ -230,10 +230,7 @@ describe('synchronization containment integration boundaries', () => {
       settingsSource.match(/assertDirectManualExecutionAllowed\(\)/g)?.length,
       3
     );
-    assert.equal(
-      freshSource.match(/assertDirectManualExecutionAllowed\(\)/g)?.length,
-      2
-    );
+    assert.doesNotMatch(freshSource, /post\('\/(?:refresh|rebuild)'/);
     assert.match(settingsSource, /synchronization-containment/);
   });
 });

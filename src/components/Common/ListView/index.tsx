@@ -24,6 +24,7 @@ type ListViewProps = {
   onScrollBottom: () => void;
   mutateParent?: () => void;
   showWatchlistOwner?: boolean;
+  showRatings?: boolean;
 };
 
 const ListView = ({
@@ -35,6 +36,7 @@ const ListView = ({
   plexItems,
   mutateParent,
   showWatchlistOwner = false,
+  showRatings = false,
 }: ListViewProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -99,6 +101,7 @@ const ListView = ({
                     summary={title.overview}
                     title={title.title}
                     userScore={title.voteAverage}
+                    showRating={showRatings}
                     year={title.releaseDate}
                     mediaType={title.mediaType}
                     inProgress={
@@ -121,6 +124,7 @@ const ListView = ({
                     summary={title.overview}
                     title={title.name}
                     userScore={title.voteAverage}
+                    showRating={showRatings}
                     year={title.firstAirDate}
                     mediaType={title.mediaType}
                     inProgress={

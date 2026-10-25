@@ -1,203 +1,123 @@
-import useSettings from '@app/hooks/useSettings';
 import defineMessages from '@app/utils/defineMessages';
 import type { TmdbGenre } from '@server/api/themoviedb/interfaces';
 import type { Language } from '@server/lib/settings';
-import { useFormikContext } from 'formik';
-import { useMemo } from 'react';
+import { ErrorMessage, Field, useFormikContext } from 'formik';
 import { useIntl } from 'react-intl';
 import Select from 'react-select';
 import useSWR from 'swr';
-import type { FreshSettingsFormValues } from './settingsFresh';
-
-interface CertificationResponse {
-  certifications: Record<string, { certification: string }[]>;
-}
-
-type OptionValue = number | string;
-type Option = { label: string; value: OptionValue };
+import type { FreshSettingsDraft } from './settingsFresh';
 
 const messages = defineMessages('components.Settings.SettingsFresh.Filters', {
   title: 'Fresh Content Filters',
-  help: 'Include matches any selected value. Exclude matches any selected value and takes precedence.',
-  includeGenres: 'Include Genres',
+  help: 'Filters only change which discoveries appear in Fresh. Discovery history is preserved.',
   excludeGenres: 'Exclude Genres',
-  includeLanguages: 'Include Original Languages',
   excludeLanguages: 'Exclude Original Languages',
-  includeRatings: 'Include Content Ratings',
-  excludeRatings: 'Exclude Content Ratings',
   minimumScore: 'Minimum TMDB Score',
   minimumVotes: 'Minimum TMDB Votes',
-  movie: 'Movie',
-  series: 'Series',
 });
-
-const MultiSelect = ({
-  id,
-  ariaLabel,
-  options,
-  value,
-  onChange,
-}: {
-  id: string;
-  ariaLabel: string;
-  options: Option[];
-  value: OptionValue[];
-  onChange: (value: OptionValue[]) => void;
-}) => (
-  <Select<Option, true>
-    inputId={id}
-    aria-label={ariaLabel}
-    className="react-select-container"
-    classNamePrefix="react-select"
-    isMulti
-    options={options}
-    value={options.filter((option) => value.includes(option.value))}
-    onChange={(selected) => onChange(selected.map((option) => option.value))}
-  />
-);
 
 const FreshContentFilters = () => {
   const intl = useIntl();
-  const { values, setFieldValue, errors, touched } =
-    useFormikContext<FreshSettingsFormValues>();
-  const { currentSettings } = useSettings();
+  const { values, setFieldValue } = useFormikContext<FreshSettingsDraft>();
   const { data: movieGenres } = useSWR<TmdbGenre[]>('/api/v1/genres/movie');
   const { data: tvGenres } = useSWR<TmdbGenre[]>('/api/v1/genres/tv');
   const { data: languages } = useSWR<Language[]>('/api/v1/languages');
-  const { data: movieCertifications } = useSWR<CertificationResponse>(
-    '/api/v1/certifications/movie'
+  const genres = new Map(
+    [...(movieGenres ?? []), ...(tvGenres ?? [])].map((genre) => [
+      genre.id,
+      genre.name,
+    ])
   );
-  const { data: tvCertifications } = useSWR<CertificationResponse>(
-    '/api/v1/certifications/tv'
-  );
-  const region = currentSettings.discoverRegion || 'US';
-
-  const genreOptions = useMemo(() => {
-    const genres = new Map<number, string>();
-    [...(movieGenres ?? []), ...(tvGenres ?? [])].forEach((genre) =>
-      genres.set(genre.id, genre.name)
-    );
-    return [...genres].map(([value, label]) => ({ value, label }));
-  }, [movieGenres, tvGenres]);
-  const languageOptions = useMemo(
-    () =>
-      (languages ?? []).map((language) => ({
-        value: language.iso_639_1,
-        label: Intl.DisplayNames
-          ? (new Intl.DisplayNames(undefined, { type: 'language' }).of(
-              language.iso_639_1
-            ) ?? language.english_name)
-          : language.english_name,
-      })),
-    [languages]
-  );
-  const ratingOptions = useMemo(
-    () => [
-      ...(movieCertifications?.certifications[region] ?? []).map((rating) => ({
-        value: `movie:${rating.certification}`,
-        label: `${intl.formatMessage(messages.movie)} · ${rating.certification}`,
-      })),
-      ...(tvCertifications?.certifications[region] ?? []).map((rating) => ({
-        value: `tv:${rating.certification}`,
-        label: `${intl.formatMessage(messages.series)} · ${rating.certification}`,
-      })),
-    ],
-    [intl, movieCertifications, region, tvCertifications]
-  );
-
-  const rows = [
-    [
-      'includeGenreIds',
-      intl.formatMessage(messages.includeGenres),
-      genreOptions,
-    ],
-    [
-      'excludeGenreIds',
-      intl.formatMessage(messages.excludeGenres),
-      genreOptions,
-    ],
-    [
-      'includeOriginalLanguages',
-      intl.formatMessage(messages.includeLanguages),
-      languageOptions,
-    ],
-    [
-      'excludeOriginalLanguages',
-      intl.formatMessage(messages.excludeLanguages),
-      languageOptions,
-    ],
-    [
-      'includeContentRatings',
-      intl.formatMessage(messages.includeRatings),
-      ratingOptions,
-    ],
-    [
-      'excludeContentRatings',
-      intl.formatMessage(messages.excludeRatings),
-      ratingOptions,
-    ],
-  ] as const;
+  const genreOptions = [...genres].map(([value, label]) => ({ value, label }));
+  const names =
+    typeof Intl.DisplayNames === 'function'
+      ? new Intl.DisplayNames([intl.locale], { type: 'language' })
+      : undefined;
+  const languageOptions = (languages ?? []).map((language) => ({
+    value: language.iso_639_1,
+    label: names?.of(language.iso_639_1) ?? language.english_name,
+  }));
   return (
-    <>
+    <section className="section" aria-labelledby="fresh-content-filters">
+      <h3 id="fresh-content-filters" className="heading">
+        {intl.formatMessage(messages.title)}
+      </h3>
+      <p className="description">{intl.formatMessage(messages.help)}</p>
       <div className="form-row">
-        <h4 className="text-lg font-semibold">
-          {intl.formatMessage(messages.title)}
-        </h4>
-        <p className="form-input-area text-sm text-gray-400">
-          {intl.formatMessage(messages.help)}
-        </p>
-      </div>
-      <div className="grid gap-x-6 md:grid-cols-2">
-        {rows.map(([field, label, options]) => (
-          <div className="mb-4 min-w-0" key={field}>
-            <label htmlFor={field} className="text-label mb-2 block">
-              {label}
-            </label>
-            <MultiSelect
-              id={field}
-              ariaLabel={label}
-              options={options}
-              value={values[field]}
-              onChange={(selected) => setFieldValue(field, selected)}
-            />
-          </div>
-        ))}
-        {(
-          [
-            [
-              'minimumTmdbScore',
-              intl.formatMessage(messages.minimumScore),
-              '0.1',
-            ],
-            [
-              'minimumTmdbVotes',
-              intl.formatMessage(messages.minimumVotes),
-              '1',
-            ],
-          ] as const
-        ).map(([field, label, step]) => (
-          <div className="mb-4 min-w-0" key={field}>
-            <label htmlFor={field} className="text-label mb-2 block">
-              {label}
-            </label>
-            <input
-              id={field}
-              className="short"
-              type="text"
-              inputMode={step === '1' ? 'numeric' : 'decimal'}
-              value={values[field]}
-              onChange={(event) =>
-                setFieldValue(field, Number(event.target.value))
+        <label htmlFor="excludeGenreIds" className="text-label">
+          {intl.formatMessage(messages.excludeGenres)}
+        </label>
+        <div className="form-input-area">
+          <div className="form-input-field">
+            <Select
+              isMulti
+              inputId="excludeGenreIds"
+              aria-label={intl.formatMessage(messages.excludeGenres)}
+              className="react-select-container"
+              classNamePrefix="react-select"
+              options={genreOptions}
+              value={genreOptions.filter((option) =>
+                values.excludeGenreIds.includes(option.value)
+              )}
+              onChange={(selected) =>
+                setFieldValue(
+                  'excludeGenreIds',
+                  selected.map((option) => option.value)
+                )
               }
             />
-            {touched[field] && errors[field] && (
-              <div className="error">{String(errors[field])}</div>
-            )}
           </div>
-        ))}
+        </div>
       </div>
-    </>
+      <div className="form-row">
+        <label htmlFor="excludeOriginalLanguages" className="text-label">
+          {intl.formatMessage(messages.excludeLanguages)}
+        </label>
+        <div className="form-input-area">
+          <div className="form-input-field">
+            <Select
+              isMulti
+              inputId="excludeOriginalLanguages"
+              aria-label={intl.formatMessage(messages.excludeLanguages)}
+              className="react-select-container"
+              classNamePrefix="react-select"
+              options={languageOptions}
+              value={languageOptions.filter((option) =>
+                values.excludeOriginalLanguages.includes(option.value)
+              )}
+              onChange={(selected) =>
+                setFieldValue(
+                  'excludeOriginalLanguages',
+                  selected.map((option) => option.value)
+                )
+              }
+            />
+          </div>
+        </div>
+      </div>
+      {(['minimumTmdbScore', 'minimumTmdbVotes'] as const).map((field) => (
+        <div className="form-row" key={field}>
+          <label htmlFor={field} className="text-label">
+            {intl.formatMessage(
+              field === 'minimumTmdbScore'
+                ? messages.minimumScore
+                : messages.minimumVotes
+            )}
+          </label>
+          <div className="form-input-area">
+            <Field
+              id={field}
+              name={field}
+              className="short rounded-md border border-gray-500 bg-gray-700 text-white transition duration-150 ease-in-out sm:text-sm sm:leading-5"
+              type="text"
+              inputMode={field === 'minimumTmdbScore' ? 'decimal' : 'numeric'}
+              required
+            />
+            <ErrorMessage name={field} component="div" className="error" />
+          </div>
+        </div>
+      ))}
+    </section>
   );
 };
-
 export default FreshContentFilters;

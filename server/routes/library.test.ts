@@ -17,7 +17,7 @@ import {
   CanonicalSeasonIdentity,
 } from '@server/entity/CanonicalMedia';
 import { CurrentViewingState } from '@server/entity/CurrentViewingState';
-import FreshMedia from '@server/entity/FreshMedia';
+import FreshDiscovery from '@server/entity/FreshDiscovery';
 import {
   LibraryFile,
   LibraryFileEpisode,
@@ -34,6 +34,7 @@ import { Viewer } from '@server/entity/Viewer';
 import { ViewingEvidence } from '@server/entity/ViewingEvidence';
 import { Watchlist } from '@server/entity/Watchlist';
 import type { LibraryItem } from '@server/interfaces/api/libraryInterfaces';
+import { freshSourceKey } from '@server/lib/fresh/normalize';
 import historicalDataImport from '@server/lib/historicalDataImport';
 import {
   LibraryService,
@@ -3079,18 +3080,16 @@ describe('Library factual administrator API', () => {
   });
 
   it('batch-projects Fresh, TMDB rating, and truthful Current/Archive/known-missing Season summaries', async () => {
-    const now = new Date('2026-04-01T00:00:00.000Z');
-    await getRepository(FreshMedia).save(
-      new FreshMedia({
+    const now = new Date();
+    await getRepository(FreshDiscovery).save(
+      new FreshDiscovery({
         mediaType: 'movie',
         tmdbId: 101,
-        active: true,
-        firstSeenAt: now,
-        lastSeenAt: now,
-        resolvedAt: now,
-        metadataRefreshedAt: now,
-        displayTitle: 'The Completed Movie',
-        sortTitle: 'completed movie',
+        sourceKey: freshSourceKey(getSettings().fresh),
+        eventKey: 'movie',
+        discoveredAt: now,
+        visibleUntil: new Date(now.getTime() + 7 * 86400000),
+        title: 'The Completed Movie',
       })
     );
     const relatedMedia = await getRepository(Media).save(

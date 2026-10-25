@@ -1,1151 +1,687 @@
-import TheMovieDb from '@server/api/themoviedb';
-import { FreshCandidateStatus } from '@server/constants/fresh';
 import { MediaStatus, MediaType } from '@server/constants/media';
-import dataSource from '@server/datasource';
-import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
-import FreshCandidate from '@server/entity/FreshCandidate';
-import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
-import FreshManualResolution from '@server/entity/FreshManualResolution';
-import FreshMedia from '@server/entity/FreshMedia';
-import FreshObservation from '@server/entity/FreshObservation';
-import { FreshSyncState } from '@server/entity/FreshSyncState';
+import FreshDiscovery from '@server/entity/FreshDiscovery';
 import Media from '@server/entity/Media';
+import { freshSourceKey } from '@server/lib/fresh/engine';
+import {
+  freshPresentationKey,
+  type FreshProviderPresentation,
+  type resolveFreshPagePresentation,
+} from '@server/lib/fresh/presentation';
 import freshService from '@server/lib/fresh/service';
+import type { FreshStatus } from '@server/lib/fresh/types';
 import { Permission } from '@server/lib/permissions';
+import type { FreshSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
 import { isAuthenticated } from '@server/middleware/auth';
-import freshRoutes from '@server/routes/fresh';
+import { createFreshRoutes } from '@server/routes/fresh';
 import freshSettingsRoutes, {
   mergeFreshSettingsUpdate,
 } from '@server/routes/settings/fresh';
+import {
+  createFixtureDatabase,
+  fixtureSettings,
+} from '@server/test/freshFixtures';
 import express from 'express';
+import * as OpenApiValidator from 'express-openapi-validator';
 import assert from 'node:assert/strict';
-import { after, before, describe, it } from 'node:test';
+import path from 'node:path';
+import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import request from 'supertest';
+import type { DataSource } from 'typeorm';
 
-Object.defineProperty(TheMovieDb.prototype, 'getMovie', {
-  value: async () => {
-    throw new Error('provider unavailable');
-  },
-  configurable: true,
-});
-Object.defineProperty(TheMovieDb.prototype, 'getTvShow', {
-  value: async () => {
-    throw new Error('provider unavailable');
-  },
-  configurable: true,
-});
-
-const app = express();
-app.use(express.json());
-app.use((req, _res, next) => {
-  const role = req.header('x-test-role');
-  if (role) {
-    req.user = {
-      id: 1,
-      hasPermission: (permission: Permission) =>
-        role === 'admin' || permission === 0,
-    } as Express.Request['user'];
-  }
-  next();
-});
-app.use('/fresh', isAuthenticated(), freshRoutes);
-app.use(
-  '/settings/fresh',
-  isAuthenticated(Permission.ADMIN),
-  freshSettingsRoutes
-);
-
-describe('Fresh route authorization and safe responses', () => {
-  before(async () => {
-    if (!dataSource.isInitialized) await dataSource.initialize();
-    await dataSource.synchronize(true);
-  });
-
-  after(async () => {
-    if (dataSource.isInitialized) await dataSource.destroy();
-  });
-  it('retains the write-only token when updates omit or blank it', () => {
-    const current = {
-      enabled: true,
-      baseUrl: 'https://autobrr.test',
-      apiToken: 'fixture-token',
-      filterId: 7,
-      cachedFilterName: 'Fresh',
-      mediaEligibilityDays: 90,
-      freshVisibilityDays: 7,
-      includeGenreIds: [],
-      excludeGenreIds: [],
-      includeOriginalLanguages: [],
-      excludeOriginalLanguages: [],
-      includeContentRatings: [],
-      excludeContentRatings: [],
-      minimumTmdbScore: 0,
-      minimumTmdbVotes: 0,
-    };
-    const body = { ...current, apiToken: '' };
-    assert.equal(
-      mergeFreshSettingsUpdate(current, body).apiToken,
-      'fixture-token'
-    );
-    const omitted: Partial<typeof body> = { ...body };
-    delete omitted.apiToken;
-    assert.equal(
-      mergeFreshSettingsUpdate(current, omitted).apiToken,
-      'fixture-token'
-    );
-  });
-
-  it('replaces a supplied token and rejects response-only settings state', () => {
-    const current = {
-      enabled: true,
-      baseUrl: 'https://autobrr.test',
-      apiToken: 'fixture-token',
-      filterId: 7,
-      cachedFilterName: 'Fresh',
-      mediaEligibilityDays: 90,
-      freshVisibilityDays: 7,
-      includeGenreIds: [],
-      excludeGenreIds: [],
-      includeOriginalLanguages: [],
-      excludeOriginalLanguages: [],
-      includeContentRatings: [],
-      excludeContentRatings: [],
-      minimumTmdbScore: 0,
-      minimumTmdbVotes: 0,
-    };
-    assert.equal(
-      mergeFreshSettingsUpdate(current, {
-        ...current,
-        apiToken: 'replacement-token',
-      }).apiToken,
-      'replacement-token'
-    );
-    assert.throws(() =>
-      mergeFreshSettingsUpdate(current, {
-        ...current,
-        apiToken: '',
-        apiTokenConfigured: true,
-      })
-    );
-  });
-
-  it('persists enabled changes through settings, public state, and status', async () => {
-    const current = {
-      enabled: true,
-      baseUrl: 'https://autobrr.test',
-      apiToken: 'fixture-token',
-      filterId: 7,
-      cachedFilterName: 'Fresh',
-      mediaEligibilityDays: 90,
-      freshVisibilityDays: 7,
-      includeGenreIds: [],
-      excludeGenreIds: [],
-      includeOriginalLanguages: [],
-      excludeOriginalLanguages: [],
-      includeContentRatings: [],
-      excludeContentRatings: [],
-      minimumTmdbScore: 0,
-      minimumTmdbVotes: 0,
-    };
-    const disabled = mergeFreshSettingsUpdate(current, {
-      ...current,
-      enabled: false,
-      apiToken: '',
+describe('Fresh V2 API contract', () => {
+  let database: DataSource;
+  const status: FreshStatus = {
+    status: 'ready',
+    refreshing: false,
+    backfillComplete: true,
+    itemCount: 0,
+    pendingWork: 0,
+  };
+  let configured: FreshSettings;
+  let referenceNow: number;
+  let presentation: typeof resolveFreshPagePresentation;
+  const currentSettings = () => configured;
+  const app = () => {
+    const server = express();
+    server.use(express.json());
+    server.use((req, _res, next) => {
+      const role = req.header('x-test-role');
+      if (role)
+        req.user = {
+          id: 1,
+          hasPermission: (permission: Permission) =>
+            role === 'admin' || permission === 0,
+        } as Express.Request['user'];
+      next();
     });
-    assert.equal(disabled.enabled, false);
-    const settings = getSettings();
-    settings.fresh = disabled;
-    freshService.configure(disabled);
-    assert.equal(settings.fullPublicSettings.freshEnabled, false);
-    assert.equal((await freshService.status()).status, 'disabled');
-
-    const enabled = mergeFreshSettingsUpdate(disabled, {
-      ...disabled,
-      enabled: true,
-      apiToken: '',
+    server.use(
+      OpenApiValidator.middleware({
+        apiSpec: path.join(process.cwd(), 'seerr-api.yml'),
+        validateRequests: true,
+        validateResponses: true,
+        validateSecurity: false,
+        ignoreUndocumented: true,
+      })
+    );
+    // Match Seerr's own Date-to-JSON adapter installed after the validator.
+    server.use((_req, res, next) => {
+      const json = res.json;
+      res.json = function serialize(value) {
+        return json.call(this, JSON.parse(JSON.stringify(value)));
+      };
+      next();
     });
-    settings.fresh = enabled;
-    freshService.configure(enabled);
-    assert.equal(enabled.enabled, true);
-    assert.equal(settings.fullPublicSettings.freshEnabled, true);
-    assert.equal((await freshService.status()).status, 'preparing');
-  });
-
-  it('requires authentication for results and admin permission for operations', async () => {
-    assert.equal((await request(app).get('/fresh')).status, 403);
-    assert.equal(
-      (await request(app).get('/settings/fresh').set('x-test-role', 'user'))
-        .status,
-      403
-    );
-    assert.equal(
-      (
-        await request(app)
-          .get('/settings/fresh/diagnostics')
-          .set('x-test-role', 'user')
-      ).status,
-      403
-    );
-    assert.equal(
-      (
-        await request(app)
-          .post('/settings/fresh/rebuild')
-          .set('x-test-role', 'user')
-      ).status,
-      403
-    );
-  });
-
-  it('allows only an administrator to await a completed Fresh rebuild', async () => {
-    const original = freshService.rebuild;
-    let calls = 0;
-    freshService.rebuild = async () => {
-      calls++;
-    };
-    try {
-      const response = await request(app)
-        .post('/settings/fresh/rebuild')
-        .set('x-test-role', 'admin');
-      assert.equal(response.status, 200);
-      assert.equal(calls, 1);
-      assert.equal(typeof response.body.status, 'string');
-      freshService.rebuild = async () => {
-        throw new Error(
-          'https://tracker.invalid/download?apikey=secret-provider-token'
-        );
-      };
-      const failed = await request(app)
-        .post('/settings/fresh/rebuild')
-        .set('x-test-role', 'admin');
-      assert.equal(failed.status, 500);
-      assert.doesNotMatch(failed.text, /secret-provider-token/);
-    } finally {
-      freshService.rebuild = original;
-    }
-  });
-
-  it('requires typed, revision-bound administrator candidate mutations', async () => {
-    const originalResolve = freshService.resolveCandidate;
-    const originalReset = freshService.resetCandidateResolution;
-    const originalAdmit = freshService.admitCandidate;
-    const originalRemove = freshService.removeCandidateOverride;
-    const originalVisibility = freshService.setCandidateVisibility;
-    const originalBulkVisibility = freshService.setCandidateVisibilityBulk;
-    const calls: string[] = [];
-    freshService.resolveCandidate = async (
-      candidateId,
-      mediaType,
-      tmdbId,
-      expectedRevision
-    ) => {
-      calls.push(
-        `resolve:${candidateId}:${mediaType}:${tmdbId}:${expectedRevision}`
-      );
-      return {
-        candidate: new FreshCandidate({
-          id: candidateId,
-          mediaType: 'movie',
-          effectiveMediaType: mediaType,
-          status: FreshCandidateStatus.RESOLVED,
-        }),
-        media: new FreshMedia({
-          mediaType,
-          tmdbId,
-          displayTitle: 'Canonical Title',
-          active: false,
-        }),
-      };
-    };
-    freshService.resetCandidateResolution = async (candidateId, revision) => {
-      calls.push(`reset:${candidateId}:${revision}`);
-      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
-    };
-    freshService.admitCandidate = async (candidateId, revision) => {
-      calls.push(`admit:${candidateId}:${revision}`);
-      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
-    };
-    freshService.removeCandidateOverride = async (candidateId, revision) => {
-      calls.push(`remove:${candidateId}:${revision}`);
-      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
-    };
-    freshService.setCandidateVisibility = async (
-      candidateId,
-      show,
-      revision
-    ) => {
-      calls.push(`${show ? 'show' : 'dismiss'}:${candidateId}:${revision}`);
-      return new FreshCandidate({ id: candidateId, revision: revision + 1 });
-    };
-    freshService.setCandidateVisibilityBulk = async (selections, show) => {
-      calls.push(
-        `bulk-${show ? 'show' : 'dismiss'}:${selections
-          .map(
-            ({ candidateId, expectedRevision }) =>
-              `${candidateId}:${expectedRevision}`
-          )
-          .join(',')}`
-      );
-      return selections.map(
-        ({ candidateId, expectedRevision }) =>
-          new FreshCandidate({
-            id: candidateId,
-            revision: expectedRevision + 1,
-          })
-      );
-    };
-    try {
-      assert.equal(
-        (
-          await request(app)
-            .post('/settings/fresh/candidates/10/resolve')
-            .set('x-test-role', 'user')
-            .send({ mediaType: 'tv', tmdbId: 305251, expectedRevision: 7 })
-        ).status,
-        403
-      );
-      const resolved = await request(app)
-        .post('/settings/fresh/candidates/10/resolve')
-        .set('x-test-role', 'admin')
-        .send({ mediaType: 'tv', tmdbId: 305251, expectedRevision: 7 });
-      assert.equal(resolved.status, 200);
-      assert.equal(resolved.body.parsedMediaType, 'movie');
-      assert.equal(resolved.body.mediaType, 'tv');
-      assert.equal(
-        (
-          await request(app)
-            .post('/settings/fresh/candidates/10/resolve')
-            .set('x-test-role', 'admin')
-            .send({ tmdbId: 305251 })
-        ).status,
-        400
-      );
-      for (const [endpoint, expected] of [
-        ['reset-resolution', 'reset:10:8'],
-        ['admit', 'admit:10:8'],
-        ['remove-override', 'remove:10:8'],
-      ] as const) {
-        const response = await request(app)
-          .post(`/settings/fresh/candidates/10/${endpoint}`)
-          .set('x-test-role', 'admin')
-          .send({ expectedRevision: 8 });
-        assert.equal(response.status, 200);
-        assert.ok(calls.includes(expected));
-      }
-      assert.equal(
-        (
-          await request(app)
-            .post('/settings/fresh/candidates/10/dismiss')
-            .set('x-test-role', 'user')
-            .send({ expectedRevision: 9 })
-        ).status,
-        403
-      );
-      for (const [endpoint, expected] of [
-        ['dismiss', 'dismiss:10:9'],
-        ['show', 'show:10:9'],
-      ] as const) {
-        const response = await request(app)
-          .post(`/settings/fresh/candidates/10/${endpoint}`)
-          .set('x-test-role', 'admin')
-          .send({ expectedRevision: 9 });
-        assert.equal(response.status, 200);
-        assert.ok(calls.includes(expected));
-      }
-      assert.equal(
-        (
-          await request(app)
-            .post('/settings/fresh/candidates/visibility')
-            .set('x-test-role', 'user')
-            .send({
-              show: false,
-              candidates: [{ candidateId: 10, expectedRevision: 9 }],
-            })
-        ).status,
-        403
-      );
-      const bulk = await request(app)
-        .post('/settings/fresh/candidates/visibility')
-        .set('x-test-role', 'admin')
-        .send({
-          show: false,
-          candidates: [
-            { candidateId: 10, expectedRevision: 9 },
-            { candidateId: 11, expectedRevision: 4 },
-          ],
-        });
-      assert.equal(bulk.status, 200);
-      assert.ok(calls.includes('bulk-dismiss:10:9,11:4'));
-      assert.ok(calls.includes('resolve:10:tv:305251:7'));
-    } finally {
-      freshService.resolveCandidate = originalResolve;
-      freshService.resetCandidateResolution = originalReset;
-      freshService.admitCandidate = originalAdmit;
-      freshService.removeCandidateOverride = originalRemove;
-      freshService.setCandidateVisibility = originalVisibility;
-      freshService.setCandidateVisibilityBulk = originalBulkVisibility;
-    }
-  });
-
-  it('paginates the prepared projection after server-side filtering and sorting', async () => {
-    const settings = getSettings();
-    settings.fresh = {
-      enabled: true,
-      baseUrl: 'https://autobrr.test',
-      apiToken: 'fixture-token',
-      filterId: 7,
-      cachedFilterName: 'Fresh',
-      mediaEligibilityDays: 90,
-      freshVisibilityDays: 7,
-      includeGenreIds: [],
-      excludeGenreIds: [],
-      includeOriginalLanguages: [],
-      excludeOriginalLanguages: [],
-      includeContentRatings: [],
-      excludeContentRatings: [],
-      minimumTmdbScore: 0,
-      minimumTmdbVotes: 0,
-    };
-    freshService.configure(settings.fresh);
-    await dataSource.getRepository(FreshSyncState).save(
-      new FreshSyncState({
-        id: 1,
-        sourceFingerprint: 'fixture',
-        filterId: 7,
-        generation: 1,
-        checkpointReleaseId: '30',
-        lastSuccessfulSyncAt: new Date('2026-09-26T10:00:00Z'),
+    server.use(
+      '/api/v1/fresh',
+      isAuthenticated(),
+      createFreshRoutes({
+        database,
+        settings: currentSettings,
+        status: async () => status,
+        presentation: (...args) => presentation(...args),
+        related: async (_user, identities, options) => {
+          assert.equal(options?.includeActiveRequest, true);
+          return identities
+            .filter(
+              (identity) =>
+                identity.tmdbId === 1 && identity.mediaType === 'movie'
+            )
+            .map(
+              () =>
+                new Media({
+                  id: 9,
+                  tmdbId: 1,
+                  mediaType: MediaType.MOVIE,
+                  status: MediaStatus.AVAILABLE,
+                  status4k: MediaStatus.UNKNOWN,
+                  requests: [],
+                  issues: [],
+                  seasons: [],
+                  createdAt: new Date(referenceNow),
+                  updatedAt: new Date(referenceNow),
+                })
+            );
+        },
       })
     );
-    const repository = dataSource.getRepository(FreshMedia);
-    await repository.clear();
-    await repository.save(
-      Array.from(
-        { length: 25 },
-        (_, index) =>
-          new FreshMedia({
-            mediaType: 'movie',
-            tmdbId: 1000 + index,
-            active: true,
-            lastMatchedGeneration: 1,
-            firstSeenAt: new Date(
-              Date.parse('2026-09-01T00:00:00Z') + index * 1000
-            ),
-            lastSeenAt: new Date('2026-09-25T00:00:00Z'),
-            resolvedAt: new Date('2026-09-25T00:00:00Z'),
-            metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
-            displayTitle: `Movie ${index}`,
-            sortTitle: `movie ${index.toString().padStart(2, '0')}`,
-            mediaDate: '2026-09-01',
-            originalLanguage: 'en',
-            genreIds: [],
-          })
-      )
+    server.use(
+      '/api/v1/settings/fresh',
+      isAuthenticated(Permission.ADMIN),
+      freshSettingsRoutes
     );
-    await dataSource.getRepository(Media).save(
-      new Media({
-        mediaType: MediaType.MOVIE,
-        tmdbId: 1000,
-        status: MediaStatus.AVAILABLE,
-        status4k: MediaStatus.UNKNOWN,
+    server.use(
+      (
+        error: { status?: number; message?: string },
+        _req: express.Request,
+        res: express.Response,
+        next: express.NextFunction
+      ) => {
+        void next;
+        return res.status(error.status ?? 500).json({ message: error.message });
+      }
+    );
+    return server;
+  };
+  const add = (
+    tmdbId: number,
+    mediaType: 'movie' | 'tv' = 'movie',
+    ageDays = 1,
+    eventKey = mediaType === 'movie' ? 'movie' : 'series'
+  ) =>
+    database.getRepository(FreshDiscovery).save(
+      new FreshDiscovery({
+        sourceKey: freshSourceKey(fixtureSettings),
+        mediaType,
+        tmdbId,
+        eventKey,
+        title: mediaType === 'movie' ? 'Movie ' + tmdbId : 'Series ' + tmdbId,
+        discoveredAt: new Date(referenceNow - ageDays * 86400000),
+        visibleUntil: new Date(referenceNow + (7 - ageDays) * 86400000),
       })
     );
+  beforeEach(async () => {
+    database = await createFixtureDatabase();
+    referenceNow = Date.now();
+    configured = { ...fixtureSettings };
+    presentation = async () => new Map();
+  });
+  afterEach(async () => {
+    mock.restoreAll();
+    await database.destroy();
+  });
 
-    const first = await request(app)
-      .get('/fresh?page=1&mediaType=movie&sort=oldest')
+  it('enforces authentication and admin settings authorization', async () => {
+    const unauthenticated = await request(app()).get('/api/v1/fresh');
+    assert.equal(
+      unauthenticated.status,
+      403,
+      JSON.stringify(unauthenticated.body)
+    );
+    const unauthorized = await request(app())
+      .get('/api/v1/settings/fresh')
       .set('x-test-role', 'user');
-    assert.equal(first.status, 200);
+    assert.equal(unauthorized.status, 403, JSON.stringify(unauthorized.body));
+  });
+  it('retains administrator-only read-only status retrieval and truthful unavailable responses', async () => {
+    const statusRead = mock.method(freshService, 'status', async () => status);
+    mock.method(freshService, 'sync', () =>
+      assert.fail('status must not synchronize')
+    );
+    mock.method(freshService, 'filters', () =>
+      assert.fail('status must not refresh connection/filter data')
+    );
+    mock.method(freshService, 'configure', () =>
+      assert.fail('status must not change configuration')
+    );
+    const server = app();
+    for (const role of [undefined, 'user']) {
+      const call = request(server).get('/api/v1/settings/fresh/status');
+      if (role) call.set('x-test-role', role);
+      assert.equal((await call).status, 403);
+    }
+    assert.equal(statusRead.mock.calls.length, 0);
+    const response = await request(server)
+      .get('/api/v1/settings/fresh/status')
+      .set('x-test-role', 'admin');
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.deepEqual(response.body, status);
+    assert.equal(statusRead.mock.calls.length, 1);
+    statusRead.mock.mockImplementation(async () => {
+      throw new Error('fixture database unavailable');
+    });
+    const failed = await request(server)
+      .get('/api/v1/settings/fresh/status')
+      .set('x-test-role', 'admin');
+    assert.equal(failed.status, 503);
+    assert.equal(failed.body.message, 'Fresh status temporarily unavailable.');
+  });
+  it('returns native typed media, availability and fallback titles through OpenAPI response validation', async () => {
+    await add(1);
+    const response = await request(app())
+      .get('/api/v1/fresh')
+      .set('x-test-role', 'user');
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.totalResults, 1);
+    assert.equal(response.body.results[0].title, 'Movie 1');
+    assert.equal(
+      response.body.results[0].mediaInfo.status,
+      MediaStatus.AVAILABLE
+    );
+    assert.ok(response.body.results[0].freshFirstSeenAt);
+  });
+  it('deduplicates Series events before totals and pagination and preserves deterministic directions', async () => {
+    await add(201, 'tv', 5);
+    await add(201, 'tv', 1, 'season:2');
+    for (let id = 1; id <= 21; id++) await add(id, 'movie', 2);
+    await add(99, 'movie', 30);
+    const first = await request(app())
+      .get('/api/v1/fresh?page=1')
+      .set('x-test-role', 'user');
+    const second = await request(app())
+      .get('/api/v1/fresh?page=2')
+      .set('x-test-role', 'user');
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.totalResults, 22);
+    assert.equal(first.body.results[0].id, 201);
     assert.equal(first.body.results.length, 20);
-    assert.equal(first.body.results[0].id, 1000);
-    assert.equal(first.body.results[0].mediaInfo.status, MediaStatus.AVAILABLE);
+    assert.equal(second.body.results.length, 2);
     assert.equal(
-      first.body.results[0].freshFirstSeenAt,
-      '2026-09-01T00:00:00.000Z'
+      new Set(
+        [...first.body.results, ...second.body.results].map(
+          (item: { id: number; mediaType: string }) =>
+            item.mediaType + ':' + item.id
+        )
+      ).size,
+      22
     );
-    assert.equal(await dataSource.getRepository(Media).count(), 1);
-
-    const second = await request(app)
-      .get('/fresh?page=2&mediaType=movie&sort=oldest')
+    const oldest = await request(app())
+      .get('/api/v1/fresh?sort=oldest&mediaType=tv')
       .set('x-test-role', 'user');
-    assert.equal(second.status, 200);
-    assert.equal(second.body.page, 2);
-    assert.equal(second.body.totalPages, 2);
-    assert.equal(second.body.totalResults, 25);
-    assert.equal(second.body.results.length, 5);
-
-    const outside = await request(app)
-      .get('/fresh?page=3&mediaType=movie&sort=oldest')
-      .set('x-test-role', 'user');
-    assert.equal(outside.status, 200);
-    assert.deepEqual(outside.body.results, []);
-
-    await repository.save(
-      Array.from(
-        { length: 21 },
-        (_, index) =>
-          new FreshMedia({
-            mediaType: 'tv',
-            tmdbId: 2000 + index,
-            active: true,
-            lastMatchedGeneration: 1,
-            firstSeenAt: new Date(
-              Date.parse('2026-09-02T00:00:00Z') + index * 1000
-            ),
-            lastSeenAt: new Date('2026-09-25T00:00:00Z'),
-            resolvedAt: new Date('2026-09-25T00:00:00Z'),
-            metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
-            displayTitle: `Series ${index}`,
-            sortTitle: `series ${index.toString().padStart(2, '0')}`,
-            mediaDate: index === 0 ? null : '2026-09-02',
-            originalLanguage: 'en',
-            genreIds: [],
-          })
-      )
+    assert.equal(oldest.body.totalResults, 1);
+    assert.equal(oldest.body.results[0].id, 201);
+  });
+  it('does not expose the token or legacy administration and rejects obsolete settings', async () => {
+    const response = await request(app())
+      .get('/api/v1/settings/fresh')
+      .set('x-test-role', 'admin');
+    assert.equal(response.status, 200, JSON.stringify(response.body));
+    assert.equal(response.body.apiToken, undefined);
+    assert.equal(response.body.mediaEligibilityDays, undefined);
+    assert.throws(() =>
+      mergeFreshSettingsUpdate(fixtureSettings, {
+        ...fixtureSettings,
+        mediaEligibilityDays: 90,
+      })
     );
-    const tvSecond = await request(app)
-      .get('/fresh?page=2&mediaType=tv&sort=title')
-      .set('x-test-role', 'user');
-    assert.equal(tvSecond.status, 200);
-    assert.equal(tvSecond.body.totalResults, 21);
-    assert.equal(tvSecond.body.totalPages, 2);
-    assert.equal(tvSecond.body.results.length, 1);
-    const tvByYear = await request(app)
-      .get('/fresh?page=2&mediaType=tv&sort=year')
-      .set('x-test-role', 'user');
-    assert.equal(tvByYear.body.results[0].id, 2000);
-    for (const sort of [
-      'freshest',
-      'oldest',
-      'title',
-      'year',
-      'vote_average.desc',
-      'vote_average.asc',
-    ]) {
-      const sorted = await request(app)
-        .get(`/fresh?page=1&mediaType=all&sort=${sort}`)
-        .set('x-test-role', 'user');
-      assert.equal(sorted.status, 200);
-      assert.equal(sorted.body.totalResults, 46);
-      assert.equal(sorted.body.results.length, 20);
+    const { apiToken, ...withoutToken } = fixtureSettings;
+    assert.equal(apiToken, 'fixture-token');
+    assert.equal(
+      mergeFreshSettingsUpdate(fixtureSettings, {
+        ...fixtureSettings,
+        apiToken: '',
+      }).apiToken,
+      'fixture-token'
+    );
+    assert.equal(
+      mergeFreshSettingsUpdate(fixtureSettings, withoutToken).apiToken,
+      'fixture-token'
+    );
+    for (const route of ['candidates', 'diagnostics', 'rebuild', 'refresh']) {
+      const res = await request(app())
+        .get('/api/v1/settings/fresh/' + route)
+        .set('x-test-role', 'admin');
+      assert.equal(res.status, 404);
     }
   });
-
-  it('returns disabled results to users and write-only settings to admins', async () => {
-    const settings = getSettings();
-    settings.fresh = {
-      enabled: false,
-      baseUrl: 'https://autobrr.test',
-      apiToken: 'fixture-token',
-      filterId: 7,
-      cachedFilterName: 'Fresh',
-      mediaEligibilityDays: 90,
-      freshVisibilityDays: 7,
-      includeGenreIds: [],
-      excludeGenreIds: [],
-      includeOriginalLanguages: [],
-      excludeOriginalLanguages: [],
-      includeContentRatings: [],
-      excludeContentRatings: [],
-      minimumTmdbScore: 0,
+  it('filters the full Movie/Series population before totals and pagination without writing discoveries or clocks', async () => {
+    for (let id = 1; id <= 45; id++) await add(id, 'movie', id <= 5 ? 1 : 2);
+    await add(1, 'tv', 3);
+    await add(1, 'tv', 4, 'season:2');
+    await add(99, 'movie', 80);
+    const before = await database
+      .getRepository(FreshDiscovery)
+      .find({ order: { id: 'ASC' } });
+    let metadataCalls = 0;
+    presentation = async (rows) => {
+      metadataCalls++;
+      assert.ok(rows.length <= 20);
+      return new Map(
+        rows.map((row) => [
+          freshPresentationKey(row),
+          {
+            id: row.tmdbId,
+            genres: [
+              {
+                id: row.tmdbId <= 5 && row.mediaType === 'movie' ? 16 : 18,
+                name: 'Genre',
+              },
+            ],
+            original_language: row.tmdbId === 6 ? 'hi' : 'en',
+            vote_average: 7,
+            vote_count: row.tmdbId === 7 ? 99 : 100,
+          } as FreshProviderPresentation,
+        ])
+      );
+    };
+    configured = {
+      ...configured,
+      excludeGenreIds: [16],
+      excludeOriginalLanguages: ['hi'],
+      minimumTmdbScore: 7,
+      minimumTmdbVotes: 100,
+    };
+    const server = app();
+    const get = (query = '') =>
+      request(server)
+        .get('/api/v1/fresh' + query)
+        .set('x-test-role', 'user');
+    const first = await get();
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.totalResults, 39);
+    assert.equal(first.body.totalPages, 2);
+    assert.equal(first.body.results.length, 20);
+    assert.equal(first.body.results[0].id, 8);
+    const second = await get('?page=2');
+    assert.equal(second.body.results.length, 19);
+    assert.equal(second.body.results.at(-1).mediaType, 'tv');
+    assert.equal(metadataCalls, 3, 'pagination reuses the complete snapshot');
+    assert.equal(
+      new Set(
+        [...first.body.results, ...second.body.results].map(
+          (row) => row.mediaType + ':' + row.id
+        )
+      ).size,
+      39
+    );
+    const oldest = await get('?sort=oldest');
+    assert.equal(oldest.body.results[0].mediaType, 'tv');
+    const tv = await get('?mediaType=tv');
+    assert.equal(tv.body.totalResults, 1);
+    assert.equal(tv.body.results[0].id, 1);
+    configured = { ...fixtureSettings, minimumTmdbScore: 7 };
+    const relaxed = await get();
+    assert.equal(relaxed.body.totalResults, 46);
+    assert.equal(
+      relaxed.body.results[0].mediaInfo.status,
+      MediaStatus.AVAILABLE
+    );
+    configured.freshVisibilityDays = 90;
+    assert.equal(
+      (await get()).body.totalResults,
+      47,
+      'expired discoveries can reappear without backfill'
+    );
+    assert.deepEqual(
+      await database
+        .getRepository(FreshDiscovery)
+        .find({ order: { id: 'ASC' } }),
+      before
+    );
+    assert.deepEqual(await database.query('SELECT * FROM fresh_work'), []);
+    assert.deepEqual(
+      await database.query('SELECT * FROM fresh_source_state'),
+      []
+    );
+  });
+  it('returns unavailable instead of partial filtered totals when metadata is incomplete', async () => {
+    await add(1);
+    configured.minimumTmdbScore = 7;
+    const response = await request(app())
+      .get('/api/v1/fresh')
+      .set('x-test-role', 'user');
+    assert.equal(response.status, 503);
+    assert.equal(response.body.totalResults, undefined);
+  });
+  it('sorts complete metadata by rating/votes, known values first, with First Seen and typed identity ties', async () => {
+    const metrics = new Map<string, Partial<FreshProviderPresentation>>([
+      ['movie:1', { vote_average: 8, vote_count: 100 }],
+      ['movie:2', { vote_average: 8, vote_count: 100 }],
+      ['movie:3', { vote_average: 8, vote_count: 100 }],
+      ['tv:2', { vote_average: 8, vote_count: 100 }],
+      ['movie:4', { vote_average: 9, vote_count: 10 }],
+      ['movie:5', { vote_average: 7, vote_count: 1000 }],
+      ['movie:6', { vote_average: 0, vote_count: 0 }],
+      ['movie:7', {}],
+      ['movie:8', { vote_average: -1, vote_count: -1 }],
+      ['movie:9', { vote_average: 11, vote_count: 1.5 }],
+    ]);
+    await add(1, 'movie', 3);
+    for (let id = 2; id <= 9; id++)
+      await add(id, 'movie', id === 4 || id === 5 ? 2 : 1);
+    await add(2, 'tv', 1);
+    const before = await database
+      .getRepository(FreshDiscovery)
+      .find({ order: { id: 'ASC' } });
+    let calls = 0;
+    presentation = async (rows) => {
+      calls++;
+      return new Map(
+        rows.map((row) => [
+          freshPresentationKey(row),
+          {
+            id: row.tmdbId,
+            genres: [{ id: row.tmdbId === 4 ? 16 : 18, name: 'Genre' }],
+            original_language: row.tmdbId === 5 ? 'hi' : 'en',
+            ...metrics.get(freshPresentationKey(row)),
+          } as FreshProviderPresentation,
+        ])
+      );
+    };
+    const server = app();
+    const get = async (sort: string) => {
+      const response = await request(server)
+        .get('/api/v1/fresh?sort=' + sort)
+        .set('x-test-role', 'user');
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      return response.body;
+    };
+    const ids = (body: { results: { mediaType: string; id: number }[] }) =>
+      body.results.map((row) => `${row.mediaType}:${row.id}`);
+    assert.deepEqual(ids(await get('vote_average')), [
+      'movie:4',
+      'movie:2',
+      'movie:3',
+      'tv:2',
+      'movie:1',
+      'movie:5',
+      'movie:6',
+      'movie:7',
+      'movie:8',
+      'movie:9',
+    ]);
+    assert.deepEqual(ids(await get('vote_count')), [
+      'movie:5',
+      'movie:2',
+      'movie:3',
+      'tv:2',
+      'movie:1',
+      'movie:4',
+      'movie:6',
+      'movie:7',
+      'movie:8',
+      'movie:9',
+    ]);
+    assert.equal(calls, 1, 'both sort modes reuse the same complete snapshot');
+    configured = {
+      ...configured,
+      excludeGenreIds: [16],
+      excludeOriginalLanguages: ['hi'],
+      minimumTmdbScore: 7,
+    };
+    for (const sort of ['vote_average', 'vote_count']) {
+      const filtered = await get(sort);
+      assert.equal(filtered.totalResults, 4);
+      assert.deepEqual(ids(filtered), [
+        'movie:2',
+        'movie:3',
+        'tv:2',
+        'movie:1',
+      ]);
+    }
+    assert.equal(
+      calls,
+      2,
+      'changed filters invalidate the snapshot, not each sort'
+    );
+    assert.deepEqual(
+      await database
+        .getRepository(FreshDiscovery)
+        .find({ order: { id: 'ASC' } }),
+      before
+    );
+    await add(10, 'movie', 1);
+    metrics.set('movie:10', { vote_average: 10, vote_count: 9999 });
+    assert.equal((await get('vote_count')).results[0].id, 10);
+    assert.equal(
+      calls,
+      3,
+      'discovery generation invalidates metadata ordering'
+    );
+  });
+  it('filters and metric-sorts before pagination with accurate totals, unique pages and Movie/Series selection', async () => {
+    for (let id = 1; id <= 45; id++) await add(id);
+    await add(101, 'tv', 2);
+    await add(101, 'tv', 3, 'season:2');
+    await add(999, 'movie', 80);
+    configured.excludeGenreIds = [16];
+    let calls = 0;
+    presentation = async (rows) => {
+      calls++;
+      assert.ok(rows.length <= 20);
+      return new Map(
+        rows.map((row) => [
+          freshPresentationKey(row),
+          {
+            id: row.tmdbId,
+            genres: [{ id: row.tmdbId <= 5 ? 16 : 18, name: 'Genre' }],
+            original_language: 'en',
+            vote_average:
+              row.mediaType === 'tv'
+                ? 8
+                : row.tmdbId > 40
+                  ? 9
+                  : row.tmdbId > 20
+                    ? 5
+                    : 1,
+            vote_count: row.tmdbId * 100,
+          } as FreshProviderPresentation,
+        ])
+      );
+    };
+    const before = await database
+      .getRepository(FreshDiscovery)
+      .find({ order: { id: 'ASC' } });
+    const server = app();
+    const get = async (query: string) => {
+      const response = await request(server)
+        .get('/api/v1/fresh?' + query)
+        .set('x-test-role', 'user');
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      return response.body;
+    };
+    for (const sort of ['vote_average', 'vote_count']) {
+      const pages = [];
+      for (let page = 1; page <= 3; page++) {
+        const body = await get(`sort=${sort}&page=${page}`);
+        assert.equal(body.totalResults, 41);
+        assert.equal(body.totalPages, 3);
+        assert.equal(body.results.length, page === 3 ? 1 : 20);
+        pages.push(...body.results);
+      }
+      assert.equal(
+        new Set(pages.map((row) => `${row.mediaType}:${row.id}`)).size,
+        41
+      );
+      const expected =
+        sort === 'vote_average'
+          ? [
+              41,
+              42,
+              43,
+              44,
+              45,
+              101,
+              ...Array.from({ length: 20 }, (_, i) => i + 21),
+              ...Array.from({ length: 15 }, (_, i) => i + 6),
+            ]
+          : [101, ...Array.from({ length: 40 }, (_, i) => 45 - i)];
+      assert.deepEqual(
+        pages.map((row) => row.id),
+        expected
+      );
+    }
+    assert.equal(calls, 3, 'no selected-page or sort-specific metadata sweep');
+    const defaults = await get('');
+    assert.deepEqual(
+      defaults.results.map((row: { id: number }) => row.id),
+      Array.from({ length: 20 }, (_, i) => i + 6)
+    );
+    assert.equal(calls, 3, 'First Seen filtering shares the same snapshot');
+    const movie = await get('sort=vote_count&mediaType=movie');
+    assert.equal(movie.totalResults, 40);
+    assert.equal(movie.results[0].id, 45);
+    const tv = await get('sort=vote_average&mediaType=tv');
+    assert.equal(tv.totalResults, 1);
+    assert.equal(tv.results[0].id, 101);
+    assert.deepEqual(
+      await database
+        .getRepository(FreshDiscovery)
+        .find({ order: { id: 'ASC' } }),
+      before
+    );
+    assert.deepEqual(await database.query('SELECT * FROM fresh_work'), []);
+    assert.deepEqual(
+      await database.query('SELECT * FROM fresh_source_state'),
+      []
+    );
+  });
+  it('does not apply metadata sorting to the default feed and fails closed for unavailable metric snapshots', async () => {
+    await add(1);
+    await add(2, 'tv', 2);
+    let calls = 0;
+    presentation = async () => {
+      calls++;
+      return new Map();
+    };
+    const server = app();
+    const get = (sort = '') =>
+      request(server)
+        .get('/api/v1/fresh' + (sort ? '?sort=' + sort : ''))
+        .set('x-test-role', 'user');
+    const defaults = await get();
+    const explicit = await get('freshest');
+    assert.equal(defaults.status, 200);
+    assert.deepEqual(defaults.body, explicit.body);
+    for (const sort of ['vote_average', 'vote_count']) {
+      assert.equal((await get(sort)).status, 503);
+      presentation = async () => {
+        calls++;
+        throw new Error('fixture provider unavailable');
+      };
+      const failed = await get(sort);
+      assert.equal(failed.status, 503);
+      assert.equal(failed.body.totalResults, undefined);
+      presentation = async () => {
+        calls++;
+        return new Map();
+      };
+    }
+    assert.ok(calls >= 6);
+    const invalid = await get('popularity');
+    assert.equal(
+      invalid.status,
+      400,
+      'OpenAPI validates the exact new sort contract'
+    );
+  });
+  it('preserves the complete-evaluation population limit for metric sorts without content filters', async () => {
+    let calls = 0;
+    presentation = async () => {
+      calls++;
+      return new Map();
+    };
+    for (let offset = 0; offset < 5001; offset += 250) {
+      await database.getRepository(FreshDiscovery).insert(
+        Array.from({ length: Math.min(250, 5001 - offset) }, (_, i) => ({
+          sourceKey: freshSourceKey(fixtureSettings),
+          mediaType: 'movie' as const,
+          tmdbId: offset + i + 1,
+          eventKey: 'movie',
+          title: 'Fixture',
+          discoveredAt: new Date(referenceNow - 86400000),
+          visibleUntil: new Date(referenceNow + 86400000),
+        }))
+      );
+    }
+    const server = app();
+    for (const sort of ['vote_average', 'vote_count']) {
+      const response = await request(server)
+        .get('/api/v1/fresh?sort=' + sort)
+        .set('x-test-role', 'user');
+      assert.equal(response.status, 503);
+    }
+    assert.equal(
+      calls,
+      0,
+      'oversized populations must fail before provider calls'
+    );
+  });
+  it('validates content settings through the HTTP contract without configuring synchronization', async () => {
+    for (const invalid of [
+      { minimumTmdbScore: -1 },
+      { minimumTmdbScore: 11 },
+      { minimumTmdbVotes: 1.5 },
+      { minimumTmdbVotes: -1 },
+      { excludeOriginalLanguages: ['Hindi'] },
+      { excludeGenreIds: [-1] },
+    ]) {
+      const response = await request(app())
+        .put('/api/v1/settings/fresh')
+        .set('x-test-role', 'admin')
+        .send({ ...fixtureSettings, ...invalid });
+      assert.equal(response.status, 400, JSON.stringify(response.body));
+    }
+    const saved = {
+      ...fixtureSettings,
+      excludeGenreIds: [16],
+      excludeOriginalLanguages: ['hi'],
+      minimumTmdbScore: 7,
       minimumTmdbVotes: 0,
     };
-    freshService.configure(settings.fresh);
-
-    const result = await request(app).get('/fresh').set('x-test-role', 'user');
-    assert.equal(result.status, 200);
-    assert.deepEqual(result.body.results, []);
-    assert.equal(result.body.status.status, 'disabled');
-
-    const response = await request(app)
-      .get('/settings/fresh')
-      .set('x-test-role', 'admin');
-    assert.equal(response.status, 200);
-    assert.equal(response.body.apiTokenConfigured, true);
-    assert.equal(response.body.apiToken, undefined);
-    assert.deepEqual(Object.keys(response.body).sort(), [
-      'apiTokenConfigured',
-      'baseUrl',
-      'cachedFilterName',
-      'enabled',
-      'excludeContentRatings',
-      'excludeGenreIds',
-      'excludeOriginalLanguages',
-      'filterId',
-      'freshVisibilityDays',
-      'includeContentRatings',
-      'includeGenreIds',
-      'includeOriginalLanguages',
-      'mediaEligibilityDays',
-      'minimumTmdbScore',
-      'minimumTmdbVotes',
-    ]);
-    assert.doesNotMatch(JSON.stringify(response.body), /fixture-token/);
-
-    const diagnostics = await request(app)
-      .get('/settings/fresh/diagnostics')
-      .set('x-test-role', 'admin');
-    assert.equal(diagnostics.status, 200);
-    assert.equal(diagnostics.body.latestAttempt, null);
-    assert.equal(diagnostics.body.currentProjection.status, 'disabled');
-    assert.doesNotMatch(JSON.stringify(diagnostics.body), /fixture-token/);
+    assert.deepEqual(mergeFreshSettingsUpdate(saved, fixtureSettings), saved);
   });
-
-  it('serves persistent candidate diagnostics with admin-only filtering and summary counts', async () => {
+  it('restores in-memory settings when persistence fails without enabling the service', async () => {
     const settings = getSettings();
-    settings.fresh = { ...settings.fresh, enabled: true };
-    freshService.configure(settings.fresh);
-    await dataSource.getRepository(FreshManualResolution).clear();
-    await dataSource.getRepository(FreshAdmissionOverride).clear();
-    await dataSource.getRepository(FreshCandidateVisibility).clear();
-    await dataSource.getRepository(FreshCandidate).clear();
-    await dataSource.getRepository(FreshSyncState).save(
-      new FreshSyncState({
-        id: 1,
-        generation: 3,
-        sourceFingerprint: 'fixture',
-      })
-    );
-    const eligibilityUnknownMedia = await dataSource
-      .getRepository(FreshMedia)
-      .save(
-        new FreshMedia({
-          mediaType: 'movie',
-          tmdbId: 9001,
-          admitted: false,
-          membershipReason: 'eligibility_unknown',
-          lastMatchedGeneration: 3,
-          firstSeenAt: new Date('2026-09-20T00:00:00Z'),
-          lastSeenAt: new Date('2026-09-25T00:00:00Z'),
-          resolvedAt: new Date('2026-09-25T00:00:00Z'),
-          metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
-          displayTitle: 'Legacy Evidence',
-          sortTitle: 'legacy evidence',
-          mediaDate: '2025-01-01',
-        })
-      );
-    const seasonUnknownMedia = await dataSource.getRepository(FreshMedia).save(
-      new FreshMedia({
-        mediaType: 'tv',
-        tmdbId: 305251,
-        admitted: false,
-        active: false,
-        membershipReason: 'season_unknown',
-        automaticReasons: ['season_unknown'],
-        lastMatchedGeneration: 3,
-        firstSeenAt: new Date('2026-09-20T00:00:00Z'),
-        lastSeenAt: new Date('2026-09-25T00:00:00Z'),
-        resolvedAt: new Date('2026-09-25T00:00:00Z'),
-        metadataRefreshedAt: new Date('2026-09-25T00:00:00Z'),
-        displayTitle: 'FIA WEC',
-        sortTitle: 'fia wec',
-        mediaDate: '2012-01-01',
-      })
-    );
-    const candidates = await dataSource.getRepository(FreshCandidate).save([
-      new FreshCandidate({
-        sourceGeneration: 3,
-        mediaType: 'movie',
-        normalizedTitle: 'needs attention',
-        displayTitle: 'Needs Attention',
-        matchYear: 2026,
-        status: FreshCandidateStatus.NO_MATCH,
-        sourceEvidenceKey: 'needs-attention-key',
-        firstObservedAt: new Date('2026-09-20T00:00:00Z'),
-        lastObservedAt: new Date('2026-09-25T00:00:00Z'),
-      }),
-      new FreshCandidate({
-        sourceGeneration: 3,
-        mediaType: 'movie',
-        normalizedTitle: 'identity collision',
-        displayTitle: 'Identity Collision',
-        matchYear: 2026,
-        status: FreshCandidateStatus.RESOLVED,
-        sourceEvidenceKey: 'identity-collision-key',
-        automaticStatus: FreshCandidateStatus.RESOLVED,
-        lastFailureReason: 'source_evidence_collision',
-        firstObservedAt: new Date('2026-09-22T00:00:00Z'),
-        lastObservedAt: new Date('2026-09-23T00:00:00Z'),
-      }),
-      new FreshCandidate({
-        sourceGeneration: 3,
-        mediaType: 'tv',
-        normalizedTitle: 'ambiguous series',
-        displayTitle: 'Ambiguous Series',
-        status: FreshCandidateStatus.AMBIGUOUS,
-        sourceEvidenceKey: 'ambiguous-series-key',
-        firstObservedAt: new Date('2026-09-21T00:00:00Z'),
-        lastObservedAt: new Date('2026-09-24T00:00:00Z'),
-      }),
-      new FreshCandidate({
-        sourceGeneration: 3,
-        mediaType: 'movie',
-        normalizedTitle: 'legacy evidence',
-        displayTitle: 'Legacy Evidence',
-        matchYear: 2025,
-        status: FreshCandidateStatus.RESOLVED,
-        sourceEvidenceKey: 'diagnostic-source-key',
-        tmdbId: eligibilityUnknownMedia.tmdbId,
-        freshMediaId: eligibilityUnknownMedia.id,
-        firstObservedAt: new Date('2026-09-20T00:00:00Z'),
-        lastObservedAt: new Date('2026-09-25T00:00:00Z'),
-      }),
-      new FreshCandidate({
-        sourceGeneration: 3,
-        mediaType: 'movie',
-        effectiveMediaType: 'tv',
-        normalizedTitle: 'fia wec 2026 6 hours of fuji',
-        displayTitle: 'FIA WEC 2026 6 Hours Of Fuji',
-        matchYear: 2026,
-        seasonKey: -1,
-        specialEpisodeKey: -1,
-        explicitSeason: false,
-        explicitSpecial: false,
-        status: FreshCandidateStatus.RESOLVED,
-        automaticStatus: FreshCandidateStatus.NO_MATCH,
-        sourceEvidenceKey: 'fia-wec-source-key',
-        tmdbId: seasonUnknownMedia.tmdbId,
-        freshMediaId: seasonUnknownMedia.id,
-        firstObservedAt: new Date('2026-09-20T00:00:00Z'),
-        lastObservedAt: new Date('2026-09-25T00:00:00Z'),
-      }),
-    ]);
-    await dataSource.getRepository(FreshObservation).save(
-      new FreshObservation({
-        sourceGeneration: 3,
-        releaseId: 'diagnostic-legacy',
-        filterId: 7,
-        candidateId: candidates[3].id,
-        mediaType: 'movie',
-        title: 'Legacy Evidence',
-        sourceTitle: 'Legacy.Evidence.2025.1080p.WEB-DL-GROUP',
-        normalizedTitle: 'legacy evidence',
-        year: 2025,
-        availabilityType: 'unknown',
-        observedAt: new Date('2026-09-20T00:00:00Z'),
-      })
-    );
-    await dataSource.getRepository(FreshManualResolution).save(
-      new FreshManualResolution({
-        sourceEvidenceVersion: 1,
-        sourceEvidenceKey: 'diagnostic-source-key',
-        mediaType: 'movie',
-        tmdbId: 9001,
-        canonicalTitle: 'Legacy Evidence',
-        active: true,
-      })
-    );
-    await dataSource.getRepository(FreshManualResolution).save(
-      new FreshManualResolution({
-        sourceEvidenceVersion: 1,
-        sourceEvidenceKey: 'fia-wec-source-key',
-        mediaType: 'tv',
-        tmdbId: 305251,
-        canonicalTitle: 'FIA WEC',
-        active: true,
-      })
-    );
-    await dataSource.getRepository(FreshAdmissionOverride).save(
-      new FreshAdmissionOverride({
-        mediaType: 'movie',
-        tmdbId: 9001,
-        identityKind: 'movie',
-        seasonKey: -1,
-        specialEpisodeKey: -1,
-        active: true,
-      })
-    );
-    const forbidden = await request(app)
-      .get('/settings/fresh/candidates')
-      .set('x-test-role', 'user');
-    assert.equal(forbidden.status, 403);
-    const response = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&search=attention&mediaType=movie&status=no_match&sort=title.asc'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(response.status, 200);
-    assert.equal(response.body.results.length, 1);
-    assert.equal(response.body.results[0].displayTitle, 'Needs Attention');
-    assert.equal(response.body.results[0].displayStatus, 'no_match');
-    assert.equal(response.body.results[0].actionable, true);
-    assert.deepEqual(response.body.results[0].sourceTitleSamples, []);
-    assert.equal(response.body.summary.noMatch, 1);
-    assert.equal(response.body.summary.ambiguous, 1);
-    assert.equal(response.body.summary.needsAttention, 3);
-    assert.equal(response.body.summary.eligibilityUnknown, 1);
-    assert.equal(response.body.summary.outsideEligibilityWindow, 0);
-
-    const prioritized = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(prioritized.status, 200);
-    assert.deepEqual(
-      prioritized.body.results
-        .slice(0, 2)
-        .map((row: { displayStatus: string }) => row.displayStatus),
-      ['no_match', 'ambiguous']
-    );
-    assert.equal(
-      prioritized.body.results.some(
-        (row: { displayStatus: string }) =>
-          row.displayStatus === 'needs_attention'
-      ),
-      true
-    );
-
-    const attention = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&mediaType=all&status=needs_attention&sort=status'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(attention.status, 200);
-    assert.equal(attention.body.results.length, 3);
-    assert.equal(
-      attention.body.results.every(
-        (row: {
-          actionable: boolean;
-          actions: {
-            resolve: boolean;
-            resetResolution: boolean;
-            admit: boolean;
-            removeOverride: boolean;
-          };
-        }) =>
-          row.actionable &&
-          (row.actions.resolve ||
-            row.actions.resetResolution ||
-            row.actions.admit ||
-            row.actions.removeOverride)
-      ),
-      true
-    );
-    const technicalIdentity = attention.body.results.find(
-      (row: { displayTitle: string }) =>
-        row.displayTitle === 'Identity Collision'
-    );
-    assert.equal(technicalIdentity.displayStatus, 'needs_attention');
-    assert.equal(technicalIdentity.actions.resolve, true);
-    assert.equal(technicalIdentity.actions.admit, false);
-
-    const unknown = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&mediaType=all&status=eligibility_unknown&sort=status'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(unknown.status, 200);
-    assert.equal(unknown.body.results.length, 1);
-    assert.equal(unknown.body.results[0].displayStatus, 'reviewable');
-    assert.equal(unknown.body.results[0].actions.admit, false);
-    assert.deepEqual(unknown.body.results[0].sourceTitleSamples, [
-      'Legacy.Evidence.2025.1080p.WEB-DL-GROUP',
-    ]);
-    assert.deepEqual(unknown.body.results[0].eligibility, {
-      observationType: 'unknown',
-      observationAt: '2026-09-20T00:00:00.000Z',
-      eligibilityDate: '2025-01-01',
-      eligibilityDateSource: 'canonical_fallback',
-      ageDays: 627,
-      eligibilityLimitDays: 90,
-      legacyEvidence: true,
+    const previous = { ...settings.fresh };
+    mock.method(settings, 'save', async () => {
+      throw new Error('fixture persistence failure');
     });
-
-    const unknownSeason = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&mediaType=tv&status=all&sort=priority&seasonEvidence=unknown'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(unknownSeason.status, 200);
-    assert.equal(unknownSeason.body.results.length, 2);
-    const fia = unknownSeason.body.results.find(
-      (row: { displayTitle: string }) => row.displayTitle === 'FIA WEC'
-    );
-    assert.equal(fia.parsedTitle, 'FIA WEC 2026 6 Hours Of Fuji');
-    assert.equal(fia.mediaType, 'tv');
-    assert.equal(fia.tmdbId, 305251);
-    assert.equal(fia.seasonNumber, undefined);
-    assert.equal(fia.displayStatus, 'reviewable');
-    assert.equal(fia.actions.admit, true);
-
-    const resolutionFamily = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority&reasonFamily=resolution'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(resolutionFamily.status, 200);
-    assert.equal(resolutionFamily.body.results.length, 3);
-
-    const manuallyResolved = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&search=movie%3A9001&mediaType=all&status=all&sort=priority&manualResolution=present'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(manuallyResolved.status, 200);
-    assert.equal(manuallyResolved.body.results.length, 1);
-    assert.equal(
-      manuallyResolved.body.results[0].manualResolution.mediaType,
-      'movie'
-    );
-
-    const overridden = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority&admissionOverride=present'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(overridden.status, 200);
-    assert.equal(overridden.body.results.length, 1);
-    assert.equal(overridden.body.results[0].admissionOverride.revision, 1);
-
-    const publicFreshBefore = await request(app)
-      .get('/fresh?page=1')
-      .set('x-test-role', 'user');
-    assert.equal(publicFreshBefore.status, 200);
-    const membershipBefore = await dataSource
-      .getRepository(FreshMedia)
-      .findOneByOrFail({ id: eligibilityUnknownMedia.id });
-    const dismissed = await request(app)
-      .post(`/settings/fresh/candidates/${candidates[0].id}/dismiss`)
+    const response = await request(app())
+      .put('/api/v1/settings/fresh')
       .set('x-test-role', 'admin')
-      .send({ expectedRevision: candidates[0].revision });
-    assert.equal(dismissed.status, 200);
-    const visible = await request(app)
-      .get(
-        '/settings/fresh/candidates?page=1&mediaType=all&status=all&sort=priority'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(visible.body.results.length, 4);
-    assert.equal(
-      visible.body.results.some(
-        (row: { candidateId: number }) => row.candidateId === candidates[0].id
-      ),
-      false
-    );
-    const hidden = await request(app)
-      .get('/settings/fresh/candidates?visibility=hidden')
-      .set('x-test-role', 'admin');
-    assert.deepEqual(
-      hidden.body.results.map(
-        (row: { candidateId: number }) => row.candidateId
-      ),
-      [candidates[0].id]
-    );
-    assert.equal(hidden.body.results[0].show, false);
-    const all = await request(app)
-      .get('/settings/fresh/candidates?visibility=all')
-      .set('x-test-role', 'admin');
-    assert.equal(all.body.results.length, 5);
-    const shown = await request(app)
-      .post(`/settings/fresh/candidates/${candidates[0].id}/show`)
-      .set('x-test-role', 'admin')
-      .send({ expectedRevision: dismissed.body.revision });
-    assert.equal(shown.status, 200);
-    const restored = await request(app)
-      .get('/settings/fresh/candidates')
-      .set('x-test-role', 'admin');
-    assert.equal(restored.body.results.length, 5);
-
-    const bulkCandidates = await Promise.all(
-      candidates
-        .slice(0, 2)
-        .map(({ id }) =>
-          dataSource.getRepository(FreshCandidate).findOneByOrFail({ id })
-        )
-    );
-    const bulkDismissed = await request(app)
-      .post('/settings/fresh/candidates/visibility')
-      .set('x-test-role', 'admin')
-      .send({
-        show: false,
-        candidates: bulkCandidates.map((candidate) => ({
-          candidateId: candidate.id,
-          expectedRevision: candidate.revision,
-        })),
-      });
-    assert.equal(bulkDismissed.status, 200);
-    assert.equal(bulkDismissed.body.candidates.length, 2);
-    const bulkHidden = await request(app)
-      .get('/settings/fresh/candidates?visibility=hidden')
-      .set('x-test-role', 'admin');
-    assert.deepEqual(
-      new Set(
-        bulkHidden.body.results.map(
-          (row: { candidateId: number }) => row.candidateId
-        )
-      ),
-      new Set(bulkCandidates.map(({ id }) => id))
-    );
-    const bulkShown = await request(app)
-      .post('/settings/fresh/candidates/visibility')
-      .set('x-test-role', 'admin')
-      .send({
-        show: true,
-        candidates: bulkDismissed.body.candidates.map(
-          (candidate: { candidateId: number; revision: number }) => ({
-            candidateId: candidate.candidateId,
-            expectedRevision: candidate.revision,
-          })
-        ),
-      });
-    assert.equal(bulkShown.status, 200);
-
-    const beforeAtomicFailure = await Promise.all(
-      bulkCandidates.map(({ id }) =>
-        dataSource.getRepository(FreshCandidate).findOneByOrFail({ id })
-      )
-    );
-    const staleBulk = await request(app)
-      .post('/settings/fresh/candidates/visibility')
-      .set('x-test-role', 'admin')
-      .send({
-        show: false,
-        candidates: beforeAtomicFailure.map((candidate, index) => ({
-          candidateId: candidate.id,
-          expectedRevision: candidate.revision - (index === 1 ? 1 : 0),
-        })),
-      });
-    assert.equal(staleBulk.status, 409);
-    const afterAtomicFailure = await Promise.all(
-      bulkCandidates.map(({ id }) =>
-        dataSource.getRepository(FreshCandidate).findOneByOrFail({ id })
-      )
-    );
-    assert.deepEqual(
-      afterAtomicFailure.map(({ revision }) => revision),
-      beforeAtomicFailure.map(({ revision }) => revision)
-    );
-    const visibleAfterAtomicFailure = await request(app)
-      .get('/settings/fresh/candidates')
-      .set('x-test-role', 'admin');
-    assert.equal(
-      bulkCandidates.every(({ id }) =>
-        visibleAfterAtomicFailure.body.results.some(
-          (row: { candidateId: number }) => row.candidateId === id
-        )
-      ),
-      true
-    );
-    const membershipAfter = await dataSource
-      .getRepository(FreshMedia)
-      .findOneByOrFail({ id: eligibilityUnknownMedia.id });
-    assert.deepEqual(
-      {
-        active: membershipAfter.active,
-        admitted: membershipAfter.admitted,
-        reason: membershipAfter.membershipReason,
-      },
-      {
-        active: membershipBefore.active,
-        admitted: membershipBefore.admitted,
-        reason: membershipBefore.membershipReason,
-      }
-    );
-    const publicFreshAfter = await request(app)
-      .get('/fresh?page=1')
-      .set('x-test-role', 'user');
-    assert.equal(publicFreshAfter.status, 200);
-    assert.deepEqual(publicFreshAfter.body, publicFreshBefore.body);
-
-    const invalidFacet = await request(app)
-      .get('/settings/fresh/candidates?manualResolution=sometimes')
-      .set('x-test-role', 'admin');
-    assert.equal(invalidFacet.status, 400);
-  });
-
-  it('uses canonical display casing without rewriting parsed or source evidence', async () => {
-    await dataSource.getRepository(FreshObservation).clear();
-    await dataSource.getRepository(FreshCandidate).clear();
-    await dataSource.getRepository(FreshMedia).clear();
-    await dataSource.getRepository(FreshSyncState).save(
-      new FreshSyncState({
-        id: 1,
-        generation: 4,
-        sourceFingerprint: 'canonical-title-fixture',
-      })
-    );
-    const media = await dataSource.getRepository(FreshMedia).save(
-      new FreshMedia({
-        mediaType: 'movie',
-        tmdbId: 1480387,
-        active: false,
-        admitted: false,
-        lastMatchedGeneration: 4,
-        firstSeenAt: new Date('2026-09-29T00:00:00Z'),
-        lastSeenAt: new Date('2026-09-29T00:00:00Z'),
-        resolvedAt: new Date('2026-09-29T00:00:00Z'),
-        metadataRefreshedAt: new Date('2026-09-29T00:00:00Z'),
-        displayTitle: 'undertone',
-        sortTitle: 'undertone',
-        mediaDate: '2026-01-01',
-      })
-    );
-    const resolved = await dataSource.getRepository(FreshCandidate).save(
-      new FreshCandidate({
-        sourceGeneration: 4,
-        mediaType: 'movie',
-        effectiveMediaType: 'movie',
-        normalizedTitle: 'undertone',
-        displayTitle: 'Undertone',
-        matchYear: 2026,
-        status: FreshCandidateStatus.RESOLVED,
-        sourceEvidenceKey: 'undertone-source-key',
-        tmdbId: 1480387,
-        freshMediaId: media.id,
-        firstObservedAt: new Date('2026-09-29T00:00:00Z'),
-        lastObservedAt: new Date('2026-09-29T00:00:00Z'),
-      })
-    );
-    await dataSource.getRepository(FreshObservation).save(
-      new FreshObservation({
-        sourceGeneration: 4,
-        releaseId: 'undertone-release',
-        filterId: 7,
-        candidateId: resolved.id,
-        mediaType: 'movie',
-        title: 'Undertone',
-        sourceTitle: 'Undertone.2026.1080p.WEB-DL-GROUP',
-        normalizedTitle: 'undertone',
-        year: 2026,
-        availabilityType: 'digital',
-        observedAt: new Date('2026-09-29T00:00:00Z'),
-      })
-    );
-    await dataSource.getRepository(FreshCandidate).save(
-      new FreshCandidate({
-        sourceGeneration: 4,
-        mediaType: 'movie',
-        normalizedTitle: 'unresolved evidence',
-        displayTitle: 'Unresolved Evidence',
-        matchYear: 2026,
-        status: FreshCandidateStatus.NO_MATCH,
-        sourceEvidenceKey: 'unresolved-title-key',
-        firstObservedAt: new Date('2026-09-29T00:00:00Z'),
-        lastObservedAt: new Date('2026-09-29T00:00:00Z'),
-      })
-    );
-
-    const canonical = await request(app)
-      .get('/settings/fresh/candidates?search=undertone&visibility=all')
-      .set('x-test-role', 'admin');
-    assert.equal(canonical.status, 200);
-    assert.equal(canonical.body.results.length, 1);
-    assert.equal(canonical.body.results[0].displayTitle, 'Undertone');
-    assert.equal(canonical.body.results[0].parsedTitle, 'undertone');
-    assert.deepEqual(canonical.body.results[0].sourceTitleSamples, [
-      'Undertone.2026.1080p.WEB-DL-GROUP',
-    ]);
-
-    const unresolved = await request(app)
-      .get(
-        '/settings/fresh/candidates?search=unresolved%20evidence&visibility=all'
-      )
-      .set('x-test-role', 'admin');
-    assert.equal(unresolved.status, 200);
-    assert.equal(unresolved.body.results.length, 1);
-    assert.equal(
-      unresolved.body.results[0].displayTitle,
-      'Unresolved Evidence'
-    );
-    assert.equal(unresolved.body.results[0].parsedTitle, 'Unresolved Evidence');
+      .send(fixtureSettings);
+    assert.equal(response.status, 400, JSON.stringify(response.body));
+    assert.deepEqual(settings.fresh, previous);
   });
 });

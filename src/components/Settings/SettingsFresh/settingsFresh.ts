@@ -1,256 +1,56 @@
-export interface FreshSettingsResponse {
-  enabled: boolean;
-  baseUrl: string;
-  filterId: number;
-  cachedFilterName: string;
-  mediaEligibilityDays: number;
-  freshVisibilityDays: number;
-  includeGenreIds: number[];
-  excludeGenreIds: number[];
-  includeOriginalLanguages: string[];
-  excludeOriginalLanguages: string[];
-  includeContentRatings: string[];
-  excludeContentRatings: string[];
-  minimumTmdbScore: number;
-  minimumTmdbVotes: number;
-  apiTokenConfigured: boolean;
-}
+import type { FreshSettings } from '@server/lib/settings';
 
-export interface FreshSettingsFormValues {
-  enabled: boolean;
-  protocol: 'http' | 'https';
+export type FreshSettingsResponse = Omit<FreshSettings, 'apiToken'> & {
+  apiTokenConfigured: boolean;
+};
+export type FreshSettingsDraft = Omit<FreshSettings, 'baseUrl'> & {
   hostname: string;
   port: number;
+  ssl: boolean;
   basePath: string;
-  apiToken: string;
-  filterId: number;
-  cachedFilterName: string;
-  mediaEligibilityDays: number;
-  freshVisibilityDays: number;
-  includeGenreIds: number[];
   excludeGenreIds: number[];
-  includeOriginalLanguages: string[];
   excludeOriginalLanguages: string[];
-  includeContentRatings: string[];
-  excludeContentRatings: string[];
   minimumTmdbScore: number;
   minimumTmdbVotes: number;
-}
-
-export interface FreshSettingsUpdate {
-  enabled: boolean;
-  baseUrl: string;
-  apiToken?: string;
-  filterId: number;
-  cachedFilterName: string;
-  mediaEligibilityDays: number;
-  freshVisibilityDays: number;
-  includeGenreIds: number[];
-  excludeGenreIds: number[];
-  includeOriginalLanguages: string[];
-  excludeOriginalLanguages: string[];
-  includeContentRatings: string[];
-  excludeContentRatings: string[];
-  minimumTmdbScore: number;
-  minimumTmdbVotes: number;
-}
-
-export type FreshDraftReconciliation =
-  | { type: 'unchanged' }
-  | { type: 'adopt-server'; values: FreshSettingsFormValues }
-  | { type: 'remote-conflict'; values: FreshSettingsFormValues };
-
-export const freshSettingsFormValuesEqual = (
-  left: FreshSettingsFormValues,
-  right: FreshSettingsFormValues
-): boolean => JSON.stringify(left) === JSON.stringify(right);
-
-export const reconcileFreshSettingsDraft = (
-  authoritative: FreshSettingsFormValues,
-  previousAuthoritative: FreshSettingsFormValues,
-  draft: FreshSettingsFormValues
-): FreshDraftReconciliation => {
-  if (freshSettingsFormValuesEqual(authoritative, previousAuthoritative)) {
-    return { type: 'unchanged' };
-  }
-  if (freshSettingsFormValuesEqual(draft, previousAuthoritative)) {
-    return { type: 'adopt-server', values: authoritative };
-  }
-  return { type: 'remote-conflict', values: authoritative };
 };
 
-export interface FreshFilterOption {
-  id: number;
-  name: string;
-  enabled?: boolean;
-}
-
-export interface FreshFilterSelectOption {
-  value: number;
-  label: string;
-}
-
-export const FRESH_SECTION_STATE_KEY = 'seerr:fresh-settings-sections:v1';
-export type FreshSectionId = 'candidates' | 'pipeline' | 'configuration';
-export type FreshSectionState = Record<FreshSectionId, boolean>;
-export const defaultFreshSectionState: FreshSectionState = {
-  candidates: true,
-  pipeline: false,
-  configuration: false,
-};
-
-export const parseFreshSectionState = (
-  value: string | null
-): FreshSectionState => {
-  if (!value) return { ...defaultFreshSectionState };
-  try {
-    const parsed = JSON.parse(value) as Partial<FreshSectionState>;
-    if (
-      typeof parsed.candidates === 'boolean' &&
-      typeof parsed.pipeline === 'boolean' &&
-      typeof parsed.configuration === 'boolean'
-    ) {
-      return {
-        candidates: parsed.candidates,
-        pipeline: parsed.pipeline,
-        configuration: parsed.configuration,
-      };
-    }
-  } catch {
-    // Stale or malformed client preferences safely use first-visit defaults.
-  }
-  return { ...defaultFreshSectionState };
-};
-
-export const applyFreshSectionTarget = (
-  state: FreshSectionState,
-  location: string
-): FreshSectionState =>
-  location.split('#')[1] === 'candidates'
-    ? { ...state, candidates: true }
-    : state;
-
-const DEFAULT_AUTOBRR_PORT = 7474;
-export const CONFIGURED_TOKEN_MASK = '•'.repeat(28);
-
-export const splitAutobrrBaseUrl = (
-  baseUrl: string
-): Pick<
-  FreshSettingsFormValues,
-  'protocol' | 'hostname' | 'port' | 'basePath'
-> => {
-  if (!baseUrl.trim()) {
-    return {
-      protocol: 'http',
-      hostname: '',
-      port: DEFAULT_AUTOBRR_PORT,
-      basePath: '',
-    };
-  }
-
-  const url = new URL(baseUrl);
-  const protocol = url.protocol === 'https:' ? 'https' : 'http';
+export const toFreshSettingsDraft = (
+  settings: FreshSettingsResponse
+): FreshSettingsDraft => {
+  const url = settings.baseUrl ? new URL(settings.baseUrl) : undefined;
   return {
-    protocol,
-    hostname: url.hostname,
-    port: url.port ? Number(url.port) : protocol === 'https' ? 443 : 80,
-    basePath: url.pathname === '/' ? '' : url.pathname.replace(/\/$/, ''),
+    enabled: settings.enabled,
+    hostname: url?.hostname ?? '',
+    port: url
+      ? Number(url.port || (url.protocol === 'https:' ? 443 : 80))
+      : 7474,
+    ssl: url?.protocol === 'https:',
+    basePath:
+      url && url.pathname !== '/' ? url.pathname.replace(/\/$/, '') : '',
+    apiToken: '',
+    filterId: settings.filterId,
+    cachedFilterName: settings.cachedFilterName,
+    freshVisibilityDays: settings.freshVisibilityDays,
+    excludeGenreIds: [...(settings.excludeGenreIds ?? [])],
+    excludeOriginalLanguages: [...(settings.excludeOriginalLanguages ?? [])],
+    minimumTmdbScore: settings.minimumTmdbScore ?? 0,
+    minimumTmdbVotes: settings.minimumTmdbVotes ?? 0,
   };
 };
-
-export const composeAutobrrBaseUrl = (
-  values: Pick<
-    FreshSettingsFormValues,
-    'protocol' | 'hostname' | 'port' | 'basePath'
-  >
-): string => {
-  const hostname = values.hostname.trim();
-  if (!hostname) return '';
-  const bracketedHostname =
-    hostname.includes(':') && !hostname.startsWith('[')
-      ? `[${hostname}]`
-      : hostname;
-  const url = new URL(
-    `${values.protocol}://${bracketedHostname}:${Number(values.port)}`
-  );
-  url.pathname = values.basePath || '/';
-  return url.toString().replace(/\/$/, '');
-};
-
-export const toFreshSettingsFormValues = (
-  settings: FreshSettingsResponse
-): FreshSettingsFormValues => ({
-  enabled: settings.enabled,
-  ...splitAutobrrBaseUrl(settings.baseUrl),
-  apiToken: settings.apiTokenConfigured ? CONFIGURED_TOKEN_MASK : '',
-  filterId: settings.filterId,
-  cachedFilterName: settings.cachedFilterName,
-  mediaEligibilityDays: settings.mediaEligibilityDays,
-  freshVisibilityDays: settings.freshVisibilityDays,
-  includeGenreIds: [...settings.includeGenreIds],
-  excludeGenreIds: [...settings.excludeGenreIds],
-  includeOriginalLanguages: [...settings.includeOriginalLanguages],
-  excludeOriginalLanguages: [...settings.excludeOriginalLanguages],
-  includeContentRatings: [...settings.includeContentRatings],
-  excludeContentRatings: [...settings.excludeContentRatings],
-  minimumTmdbScore: settings.minimumTmdbScore,
-  minimumTmdbVotes: settings.minimumTmdbVotes,
-});
 
 export const toFreshSettingsUpdate = (
-  values: FreshSettingsFormValues
-): FreshSettingsUpdate => {
-  const update: FreshSettingsUpdate = {
-    enabled: values.enabled,
-    baseUrl: composeAutobrrBaseUrl(values),
-    filterId: Number(values.filterId),
-    cachedFilterName: values.cachedFilterName,
-    mediaEligibilityDays: Number(values.mediaEligibilityDays),
-    freshVisibilityDays: Number(values.freshVisibilityDays),
-    includeGenreIds: values.includeGenreIds.map(Number),
-    excludeGenreIds: values.excludeGenreIds.map(Number),
-    includeOriginalLanguages: [...values.includeOriginalLanguages],
-    excludeOriginalLanguages: [...values.excludeOriginalLanguages],
-    includeContentRatings: [...values.includeContentRatings],
-    excludeContentRatings: [...values.excludeContentRatings],
-    minimumTmdbScore: Number(values.minimumTmdbScore),
-    minimumTmdbVotes: Number(values.minimumTmdbVotes),
-  };
-  const apiToken = values.apiToken.trim();
-  if (apiToken && apiToken !== CONFIGURED_TOKEN_MASK)
-    update.apiToken = apiToken;
-  return update;
-};
-
-export const toFreshConnectionUpdate = (
-  values: FreshSettingsFormValues
-): Pick<FreshSettingsUpdate, 'baseUrl' | 'apiToken'> => {
-  const update = toFreshSettingsUpdate(values);
-  return {
-    baseUrl: update.baseUrl,
-    ...(update.apiToken ? { apiToken: update.apiToken } : {}),
-  };
-};
-
-export const toFreshFilterSelectOptions = (
-  filters: FreshFilterOption[]
-): FreshFilterSelectOption[] =>
-  filters.map((filter) => ({ value: filter.id, label: filter.name }));
-
-export const selectedFreshFilter = (
-  options: FreshFilterSelectOption[],
-  filterId: number,
-  unavailableLabel = `Unavailable filter (ID ${filterId})`
-): FreshFilterSelectOption | null =>
-  options.find((option) => option.value === Number(filterId)) ??
-  (filterId ? { value: filterId, label: unavailableLabel } : null);
-
-export const loadFreshFilters = async (
-  request: () => Promise<FreshFilterOption[]>
-): Promise<{ ok: true; filters: FreshFilterOption[] } | { ok: false }> => {
-  try {
-    return { ok: true, filters: await request() };
-  } catch {
-    return { ok: false };
-  }
+  values: FreshSettingsDraft
+): FreshSettings => {
+  const { hostname, port, ssl, basePath, ...settings } = values;
+  const host = hostname.trim();
+  if (/[\s/@?#]/.test(host)) throw new Error('Invalid hostname');
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error('Invalid port');
+  const bracketed =
+    host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+  const url = host
+    ? new URL(`${ssl ? 'https' : 'http'}://${bracketed}:${port}`)
+    : undefined;
+  if (url) url.pathname = basePath || '/';
+  return { ...settings, baseUrl: url ? url.toString().replace(/\/$/, '') : '' };
 };

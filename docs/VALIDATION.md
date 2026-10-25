@@ -51,6 +51,14 @@ implementation. Frozen installation authenticates the lockfile contract.
 Translation, formatting, lint, type, unit-test, and production-build failures are
 real validation failures and propagate non-zero.
 
+Historical import regression tests use synthetic, isolated fixtures to cover
+idempotency, factual history and the absence of invented current Library or
+viewing state. The retired October 4 private-artifact acceptance test is not part
+of application or hosted validation; no private history file is required. This
+does not change the historical import implementation or deployment procedures.
+The application test command exits non-zero for genuine test failures while
+retaining the selected reporters and explicit skip/todo semantics.
+
 Workflow inventory verification compares `.github/workflows/` with the reviewed
 downstream inventory. An upstream workflow addition, removal, or rename fails
 until its mutation/publication safety is explicitly reviewed and the inventory

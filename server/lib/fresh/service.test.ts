@@ -1,481 +1,239 @@
-import type { AutobrrFilterOption } from '@server/api/autobrr';
-import { FreshContinuityStatus } from '@server/constants/fresh';
-import FreshCandidate from '@server/entity/FreshCandidate';
-import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
-import FreshMedia from '@server/entity/FreshMedia';
-import FreshObservation from '@server/entity/FreshObservation';
-import { FreshSyncState } from '@server/entity/FreshSyncState';
-import Media from '@server/entity/Media';
-import { MediaRequest } from '@server/entity/MediaRequest';
-import { Watchlist } from '@server/entity/Watchlist';
-import type { FreshDiagnosticsSnapshot } from '@server/lib/fresh';
+import FreshDiscovery from '@server/entity/FreshDiscovery';
+import FreshSourceState from '@server/entity/FreshSourceState';
+import FreshWork from '@server/entity/FreshWork';
+import { SynchronizationPolicy } from '@server/job/synchronizationPolicy';
+import { freshSourceKey } from '@server/lib/fresh/engine';
+import { FreshService } from '@server/lib/fresh/service';
+import Settings from '@server/lib/settings';
 import {
-  FreshService,
-  normalizeFreshSettings,
-  publicFreshSettings,
-  type FreshServiceDependencies,
-} from '@server/lib/fresh/service';
-import type { FreshSettings } from '@server/lib/settings';
+  createFixtureDatabase,
+  fixtureSettings,
+} from '@server/test/freshFixtures';
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 
-const settings: FreshSettings = {
-  enabled: true,
-  baseUrl: 'https://autobrr.test/api/',
-  apiToken: 'fixture-token',
-  filterId: 7,
-  cachedFilterName: 'Fresh Movies & TV',
-  mediaEligibilityDays: 90,
-  freshVisibilityDays: 7,
-  includeGenreIds: [],
-  excludeGenreIds: [],
-  includeOriginalLanguages: [],
-  excludeOriginalLanguages: [],
-  includeContentRatings: [],
-  excludeContentRatings: [],
-  minimumTmdbScore: 0,
-  minimumTmdbVotes: 0,
-};
-
-const diagnostics: FreshDiagnosticsSnapshot = {
-  operation: 'sync',
-  outcome: 'succeeded',
-  startedAt: '2026-09-26T10:00:00.000Z',
-  completedAt: '2026-09-26T10:00:01.000Z',
-  stages: {
-    configuration: 'succeeded',
-    filter_authentication: 'succeeded',
-    source_history: 'succeeded',
-    observation_persistence: 'succeeded',
-    checkpoint_commit: 'succeeded',
-    resolution_search: 'succeeded',
-    projection_update: 'succeeded',
-    retention: 'succeeded',
-    reconciliation: 'not_started',
-  },
-  counts: {
-    newAutobrrReleases: 0,
-    persistedObservations: 0,
-    replayedObservations: 0,
-    uniqueCandidates: 0,
-    alreadyResolved: 0,
-    resolutionAttempts: 0,
-    resolved: 0,
-    noMatch: 0,
-    ambiguous: 0,
-    transientFailures: 0,
-    outsideFreshWindow: 0,
-    newFreshMedia: 0,
-    existingFreshMediaUpdated: 0,
-    expiredFreshMedia: 0,
-    currentFreshMedia: 0,
-  },
-  decisions: [],
-  checkpoint: {},
-};
-
-function fixture() {
-  let runs = 0;
-  let resolveRun: (() => void) | undefined;
-  const filters: AutobrrFilterOption[] = [
-    { id: 7, name: 'Fresh Movies & TV', enabled: true },
-  ];
-  const deps = {
-    engine: {
-      run: async () => {
-        runs++;
-        await new Promise<void>((resolve) => (resolveRun = resolve));
-        return { diagnostics };
+describe('Fresh V2 coordination and containment', () => {
+  it('reads current health without provider calls, database writes or checkpoint advancement', async () => {
+    const database = await createFixtureDatabase();
+    const sourceKey = freshSourceKey(fixtureSettings);
+    const now = Date.now();
+    const service = new FreshService(
+      {
+        run: async () => assert.fail('status must not run the engine'),
+        cancel: () => assert.fail('status must not cancel work'),
       },
-      cancel: () => undefined,
-    },
-    database: {
-      getRepository: () => ({
-        findOneBy: async () => undefined,
-        countBy: async () => 0,
-      }),
-    } as unknown as FreshServiceDependencies['database'],
-    createAutobrr: () => ({ filters: async () => filters }),
-    now: () => new Date('2026-09-26T10:00:00.000Z'),
-  } satisfies FreshServiceDependencies;
-  return {
-    deps,
-    filters,
-    runs: () => runs,
-    complete: () => resolveRun?.(),
-  };
-}
-
-describe('Fresh application service', () => {
-  it('normalizes settings and never exposes the API token', () => {
-    const normalized = normalizeFreshSettings(settings);
-    assert.equal(normalized.baseUrl, 'https://autobrr.test');
-    assert.deepEqual(publicFreshSettings(normalized), {
-      enabled: true,
-      baseUrl: 'https://autobrr.test',
-      filterId: 7,
-      cachedFilterName: 'Fresh Movies & TV',
-      mediaEligibilityDays: 90,
-      freshVisibilityDays: 7,
-      includeGenreIds: [],
-      excludeGenreIds: [],
-      includeOriginalLanguages: [],
-      excludeOriginalLanguages: [],
-      includeContentRatings: [],
-      excludeContentRatings: [],
-      minimumTmdbScore: 0,
-      minimumTmdbVotes: 0,
-      apiTokenConfigured: true,
-    });
-    assert.doesNotMatch(
-      JSON.stringify(publicFreshSettings(normalized)),
-      /fixture/
+      database,
+      new SynchronizationPolicy('contained')
     );
-    assert.throws(() =>
-      normalizeFreshSettings({ ...settings, apiToken: 'bad\nheader' })
-    );
-    assert.throws(() =>
-      normalizeFreshSettings({ ...settings, mediaEligibilityDays: 366 })
-    );
-  });
-
-  it('does no synchronization work when disabled', async () => {
-    const f = fixture();
-    const service = new FreshService(f.deps);
-    service.configure({
-      ...settings,
-      enabled: false,
-      baseUrl: '',
-      apiToken: '',
-      filterId: 0,
-    });
-    await service.sync();
-    assert.equal(f.runs(), 0);
-    assert.equal((await service.status()).status, 'disabled');
-  });
-
-  it('joins concurrent manual and scheduled synchronization', async () => {
-    const f = fixture();
-    const service = new FreshService(f.deps);
-    service.configure(settings);
-    const first = service.sync();
-    const second = service.sync();
-    assert.equal(f.runs(), 1);
-    assert.equal(service.running(), true);
-    f.complete();
-    await Promise.all([first, second]);
-    assert.equal(service.running(), false);
-  });
-
-  it('requires a successful diagnostics outcome for commissioning', async () => {
-    const service = new FreshService({
-      ...fixture().deps,
-      engine: {
-        cancel: () => undefined,
-        run: async () => ({
-          diagnostics: { ...diagnostics, outcome: 'failed' as const },
+    try {
+      await database.getRepository(FreshSourceState).save(
+        new FreshSourceState({
+          sourceKey,
+          backfillComplete: true,
+          checkpoint: '50',
+          lastIngestedAt: new Date(now - 3600000),
+        })
+      );
+      await database.getRepository(FreshDiscovery).save([
+        new FreshDiscovery({
+          sourceKey,
+          mediaType: 'movie',
+          tmdbId: 1,
+          eventKey: 'movie',
+          title: 'Movie',
+          discoveredAt: new Date(now - 86400000),
+          visibleUntil: new Date(now + 86400000),
         }),
-      },
-    });
-    service.configure(settings);
-
-    await service.sync();
-    await assert.rejects(
-      () => service.sync(false, true),
-      /fresh_sync_incomplete/
-    );
+        new FreshDiscovery({
+          sourceKey,
+          mediaType: 'tv',
+          tmdbId: 2,
+          eventKey: 'season:1',
+          title: 'Series',
+          discoveredAt: new Date(now - 86400000),
+          visibleUntil: new Date(now + 86400000),
+        }),
+        new FreshDiscovery({
+          sourceKey,
+          mediaType: 'tv',
+          tmdbId: 2,
+          eventKey: 'season:2',
+          title: 'Series',
+          discoveredAt: new Date(now - 86400000),
+          visibleUntil: new Date(now + 86400000),
+        }),
+        new FreshDiscovery({
+          sourceKey,
+          mediaType: 'movie',
+          tmdbId: 3,
+          eventKey: 'movie',
+          title: 'Expired',
+          discoveredAt: new Date(now - 30 * 86400000),
+          visibleUntil: new Date(now - 86400000),
+        }),
+      ]);
+      await database.getRepository(FreshWork).save(
+        ['pending', 'retry'].map(
+          (outcome, i) =>
+            new FreshWork({
+              sourceKey,
+              groupKey: 'fixture-' + i,
+              mediaType: 'movie',
+              title: 'Movie',
+              sourceTitle: 'Movie.2026',
+              outcome: outcome as 'pending' | 'retry',
+              firstObservedAt: new Date(now - 86400000),
+            })
+        )
+      );
+      service.configure(fixtureSettings);
+      const snapshot = async () =>
+        Promise.all([
+          database.getRepository(FreshSourceState).find(),
+          database.getRepository(FreshDiscovery).find(),
+          database.getRepository(FreshWork).find(),
+        ]);
+      const before = await snapshot();
+      const queries = mock.method(database.logger, 'logQuery', () => undefined);
+      try {
+        const first = await service.status();
+        const second = await service.status();
+        assert.deepEqual(second, first);
+        assert.equal(first.status, 'stale');
+        assert.equal(first.itemCount, 2);
+        assert.equal(first.pendingWork, 2);
+        assert.equal(first.checkpoint, '50');
+        assert.equal(first.refreshing, false);
+        assert.equal(
+          queries.mock.calls.length,
+          8,
+          'four database reads per enabled status evaluation, no status cache'
+        );
+        assert.ok(
+          queries.mock.calls.every((call) =>
+            /^\s*SELECT\b/i.test(call.arguments[0] ?? '')
+          )
+        );
+        service.configure({ ...fixtureSettings, enabled: false });
+        assert.equal((await service.status()).status, 'disabled');
+        assert.equal(
+          queries.mock.calls.length,
+          8,
+          'disabled status performs no database reads'
+        );
+      } finally {
+        queries.mock.restore();
+      }
+      assert.deepEqual(await snapshot(), before);
+    } finally {
+      await database.destroy();
+    }
   });
-
-  it('serializes administrator mutations behind an active synchronization', async () => {
-    const events: string[] = [];
-    let finishSync: (() => void) | undefined;
-    const service = new FreshService({
-      ...fixture().deps,
-      engine: {
-        cancel: () => undefined,
-        run: async () => {
-          events.push('sync:start');
-          await new Promise<void>((resolve) => {
-            finishSync = resolve;
-          });
-          events.push('sync:end');
-          return { diagnostics };
-        },
-        resolveManually: async () => {
-          events.push('manual');
-          return {
-            candidate: new FreshCandidate({ id: 1 }),
-            media: new FreshMedia({ mediaType: 'tv', tmdbId: 305251 }),
-          };
-        },
-      },
-    });
-    service.configure(settings);
-
-    const synchronization = service.sync();
-    const mutation = service.resolveCandidate(1, 'tv', 305251, 7, 42);
-    await new Promise((resolve) => setImmediate(resolve));
-    assert.deepEqual(events, ['sync:start']);
-    finishSync?.();
-    await Promise.all([synchronization, mutation]);
-    assert.deepEqual(events, ['sync:start', 'sync:end', 'manual']);
-  });
-
-  it('returns sanitized browser-safe filter options', async () => {
-    const f = fixture();
-    const service = new FreshService(f.deps);
-    service.configure(settings);
-    assert.deepEqual(await service.filters(), f.filters);
-  });
-
-  it('reevaluates persisted membership without running source synchronization', async () => {
-    const f = fixture();
-    let reevaluations = 0;
-    const service = new FreshService({
-      ...f.deps,
-      engine: {
-        ...f.deps.engine,
-        reevaluate: async () => {
-          reevaluations++;
-          return 12;
-        },
-      },
-    });
-    service.configure(settings);
-    await service.reevaluate();
-    assert.equal(reevaluations, 1);
-    assert.equal(f.runs(), 0);
-  });
-
-  it('rebuilds only Fresh-owned state before using the normal initial sync path', async () => {
-    const cleared: unknown[] = [];
-    let synchronizedSettings: FreshSettings | undefined;
-    let reconcile: boolean | undefined;
-    const service = new FreshService({
-      ...fixture().deps,
-      database: {
-        getRepository: (entity: unknown) =>
-          entity === FreshSyncState
-            ? { findOneBy: async () => undefined }
-            : { countBy: async () => 0 },
-        transaction: async (work: (manager: unknown) => Promise<void>) =>
-          work({
-            getRepository: (entity: unknown) => ({
-              createQueryBuilder: () => ({
-                delete: () => ({
-                  execute: async () => {
-                    cleared.push(entity);
-                  },
-                }),
-              }),
-            }),
-          }),
-      } as unknown as FreshServiceDependencies['database'],
-      engine: {
-        cancel: () => undefined,
-        run: async (receivedSettings, receivedReconcile) => {
-          synchronizedSettings = receivedSettings;
-          reconcile = receivedReconcile;
-          assert.deepEqual(cleared, [
-            FreshObservation,
-            FreshCandidate,
-            FreshSyncState,
-          ]);
-          return { diagnostics };
-        },
-      },
-    });
-    service.configure(settings);
-
-    await service.rebuild();
-
-    assert.deepEqual(cleared, [
-      FreshObservation,
-      FreshCandidate,
-      FreshSyncState,
-    ]);
-    assert.equal((cleared as unknown[]).includes(Media), false);
-    assert.equal((cleared as unknown[]).includes(Watchlist), false);
-    assert.equal((cleared as unknown[]).includes(MediaRequest), false);
-    assert.equal(
-      (cleared as unknown[]).includes(FreshCandidateVisibility),
-      false
-    );
-    assert.deepEqual(synchronizedSettings, {
-      ...settings,
-      baseUrl: 'https://autobrr.test',
-    });
-    assert.equal(synchronizedSettings?.apiToken, 'fixture-token');
-    assert.equal(synchronizedSettings?.filterId, 7);
-    assert.equal(reconcile, false);
-  });
-
-  it('coalesces concurrent rebuild and sync requests at the Fresh coordinator', async () => {
-    let transactions = 0;
-    let runs = 0;
-    let finish:
-      | ((value: { diagnostics: FreshDiagnosticsSnapshot }) => void)
-      | undefined;
-    const service = new FreshService({
-      ...fixture().deps,
-      database: {
-        getRepository: (entity: unknown) =>
-          entity === FreshSyncState
-            ? { findOneBy: async () => undefined }
-            : { countBy: async () => 0 },
-        transaction: async (work: (manager: unknown) => Promise<void>) => {
-          transactions++;
-          return work({
-            getRepository: () => ({
-              createQueryBuilder: () => ({
-                delete: () => ({ execute: async () => undefined }),
-              }),
-            }),
-          });
-        },
-      } as unknown as FreshServiceDependencies['database'],
-      engine: {
-        cancel: () => undefined,
-        run: async () => {
-          runs++;
-          return new Promise((resolve) => {
-            finish = resolve;
-          });
-        },
-      },
-    });
-    service.configure(settings);
-
-    const rebuild = service.rebuild();
-    await new Promise((resolve) => setImmediate(resolve));
-    const joinedSync = service.sync();
-    const joinedRebuild = service.rebuild();
-    assert.equal(transactions, 1);
-    assert.equal(runs, 1);
-    assert.equal((await service.status()).status, 'rebuilding');
-    finish?.({ diagnostics });
-    await Promise.all([rebuild, joinedSync, joinedRebuild]);
-    assert.equal(transactions, 1);
-    assert.equal(runs, 1);
-  });
-
-  it('fails rebuild truthfully when the normal initial sync fails', async () => {
-    const failedDiagnostics: FreshDiagnosticsSnapshot = {
-      ...diagnostics,
-      outcome: 'failed',
-      failingStage: 'source_history',
-      failureReason: 'source_unavailable',
+  it('persists content filters across settings reload without changing connection or visibility', async () => {
+    const first = new Settings();
+    first.fresh = {
+      ...fixtureSettings,
+      freshVisibilityDays: 90,
+      excludeGenreIds: [16, 10762, 10766],
+      excludeOriginalLanguages: ['hi'],
+      minimumTmdbScore: 7,
+      minimumTmdbVotes: 0,
     };
-    const service = new FreshService({
-      ...fixture().deps,
-      database: {
-        getRepository: (entity: unknown) =>
-          entity === FreshSyncState
-            ? { findOneBy: async () => undefined }
-            : { countBy: async () => 0 },
-        transaction: async (work: (manager: unknown) => Promise<void>) =>
-          work({
-            getRepository: () => ({
-              createQueryBuilder: () => ({
-                delete: () => ({ execute: async () => undefined }),
-              }),
-            }),
-          }),
-      } as unknown as FreshServiceDependencies['database'],
-      engine: {
-        cancel: () => undefined,
-        run: async () => ({ diagnostics: failedDiagnostics }),
-      },
-    });
-    service.configure(settings);
-
-    await assert.rejects(() => service.rebuild(), /fresh_rebuild_failed/);
-    const result = await service.diagnostics();
-    assert.equal(result.latestAttempt?.outcome, 'failed');
-    assert.equal(result.latestAttempt?.failureReason, 'source_unavailable');
-    assert.doesNotMatch(JSON.stringify(result), /fixture-token/);
+    await first.save();
+    const restarted = new Settings();
+    // This new fixture has no legacy migration ledger; exercise disk reload and
+    // current normalization without invoking unrelated historical migrations.
+    await restarted.load(undefined, true);
+    assert.deepEqual(restarted.fresh, first.fresh);
+    assert.equal(restarted.fresh.freshVisibilityDays, 90);
   });
-
-  it('does not start initial sync when the transactional reset fails', async () => {
-    let runs = 0;
-    const service = new FreshService({
-      ...fixture().deps,
-      database: {
-        getRepository: (entity: unknown) =>
-          entity === FreshSyncState
-            ? { findOneBy: async () => undefined }
-            : { countBy: async () => 0 },
-        transaction: async () => {
-          throw new Error('database reset failed with private provider detail');
-        },
-      } as unknown as FreshServiceDependencies['database'],
-      engine: {
+  it('cannot bypass commissioning order by passing the completion flag', async () => {
+    const database = await createFixtureDatabase();
+    const service = new FreshService(
+      {
         cancel: () => undefined,
         run: async () => {
-          runs++;
-          return { diagnostics };
+          throw new Error('must not run');
         },
       },
-    });
-    service.configure(settings);
-
-    await assert.rejects(() => service.rebuild(), /database reset failed/);
-    assert.equal(runs, 0);
-    assert.equal(service.running(), false);
+      database,
+      new SynchronizationPolicy('commissioning')
+    );
+    try {
+      service.configure(fixtureSettings);
+      assert.throws(() => service.sync(), /contained/);
+      assert.throws(() => service.sync(true), /contained/);
+    } finally {
+      await database.destroy();
+    }
   });
-
-  it('returns defensive copies of bounded in-memory diagnostics', async () => {
-    const f = fixture();
-    const service = new FreshService(f.deps);
-    service.configure(settings);
-    const run = service.sync();
-    f.complete();
-    await run;
-    const first = await service.diagnostics();
-    first.latestAttempt?.decisions.push({
-      title: 'mutated client copy',
-      mediaType: 'movie',
-      normalizedTitle: 'mutated',
-      stage: 'configuration',
-      outcome: 'rejected',
-      reason: 'client_mutation',
+  it('joins concurrent sync callers and releases single-flight after completion', async () => {
+    const database = await createFixtureDatabase();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    const second = await service.diagnostics();
-    assert.equal(second.latestAttempt?.decisions.length, 0);
+    let calls = 0;
+    const engine = {
+      cancel: () => undefined,
+      run: async () => {
+        calls++;
+        await gate;
+        return {
+          ingested: 0,
+          examined: 0,
+          resolved: 0,
+          skipped: 0,
+          retried: 0,
+          backfillComplete: true,
+          sourceFailed: false,
+          cancelled: false,
+        };
+      },
+    };
+    try {
+      const service = new FreshService(
+        engine,
+        database,
+        new SynchronizationPolicy('normal')
+      );
+      service.configure(fixtureSettings);
+      const first = service.sync();
+      const second = service.sync();
+      assert.equal(first, second);
+      assert.equal(service.running(), true);
+      release();
+      await first;
+      assert.equal(calls, 1);
+      assert.equal(service.running(), false);
+      await service.sync();
+      assert.equal(calls, 2);
+    } finally {
+      await database.destroy();
+    }
   });
-
-  it('returns persistent pipeline state when no in-memory attempt exists', async () => {
-    const f = fixture();
-    const persistentState = new FreshSyncState({
-      checkpointReleaseId: '4084',
-      continuityStatus: FreshContinuityStatus.CURRENT,
-      lastSuccessfulSyncAt: new Date('2026-09-26T10:00:00.000Z'),
-      lastSuccessfulReconciliationAt: new Date('2026-09-26T03:15:00.000Z'),
-    });
-    const service = new FreshService({
-      ...f.deps,
-      database: {
-        getRepository: (entity: unknown) =>
-          entity === FreshSyncState
-            ? { findOneBy: async () => persistentState }
-            : entity === FreshMedia
-              ? { countBy: async () => 194 }
-              : {},
-      } as unknown as FreshServiceDependencies['database'],
-    });
-    service.configure(settings);
-
-    const result = await service.diagnostics();
-    assert.equal(result.latestAttempt, null);
-    assert.deepEqual(result.currentProjection, {
-      status: 'ready',
-      refreshing: false,
-      lastRefresh: '2026-09-26T10:00:00.000Z',
-      lastReconciliation: '2026-09-26T03:15:00.000Z',
-      checkpoint: '4084',
-      itemCount: 194,
-      continuityStatus: FreshContinuityStatus.CURRENT,
-      error: undefined,
-    });
+  it('suppresses direct and startup sync in contained mode', async () => {
+    const database = await createFixtureDatabase();
+    let calls = 0;
+    const service = new FreshService(
+      {
+        cancel: () => undefined,
+        run: async () => {
+          calls++;
+          throw new Error('must not execute');
+        },
+      },
+      database,
+      new SynchronizationPolicy('contained')
+    );
+    try {
+      service.configure(fixtureSettings);
+      assert.throws(() => service.sync(), /contained/);
+      service.startCatchUp();
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.equal(calls, 0);
+    } finally {
+      await database.destroy();
+    }
   });
 });

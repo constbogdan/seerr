@@ -1,5 +1,15 @@
 import { createHash } from 'crypto';
 
+export const freshSourceKey = (settings: {
+  baseUrl: string;
+  filterId: number;
+}) =>
+  createHash('sha256')
+    .update(
+      JSON.stringify([settings.baseUrl.replace(/\/$/, ''), settings.filterId])
+    )
+    .digest('hex');
+
 export const FRESH_COMPARISON_VERSION = 2;
 export const FRESH_SOURCE_EVIDENCE_VERSION = 1;
 

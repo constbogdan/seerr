@@ -18,6 +18,7 @@ describe('hydration run lease migration', () => {
     try {
       await database.initialize();
       await database.runMigrations();
+      await database.undoLastMigration(); // Fresh V2
       await database.undoLastMigration();
       await database.undoLastMigration();
       await database.undoLastMigration();
@@ -27,10 +28,7 @@ describe('hydration run lease migration', () => {
       );
 
       const applied = await database.runMigrations();
-      assert.equal(
-        applied.at(-1)?.name,
-        'AddTmdbCollectionMembership1790000000046'
-      );
+      assert.equal(applied.at(-1)?.name, 'AddFreshV21790000000048');
       assert.deepEqual(
         await database.query(
           `SELECT "id", "source", "status", "heartbeatAt", "leaseExpiresAt" FROM "hydration_run" WHERE "id" = 9001`
