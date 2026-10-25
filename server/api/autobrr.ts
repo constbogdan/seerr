@@ -11,6 +11,33 @@ export interface AutobrrFilterOption extends AutobrrFilter {
   enabled?: boolean;
 }
 
+export interface FreshFilterConfiguration extends AutobrrFilterOption {
+  years: number[];
+}
+
+/** Filter years are matching evidence, never a second source-admission rule. */
+export const parseFilterYears = (value: unknown): number[] => {
+  if (value == null || value === '') return [];
+  const tokens = Array.isArray(value)
+    ? value.map(String)
+    : typeof value === 'string'
+      ? value.split(',')
+      : [];
+  if (!tokens.length || tokens.length > 200)
+    throw new Error('Invalid filter years');
+  const years = new Set<number>();
+  for (const token of tokens) {
+    const match = token.trim().match(/^(\d{4})(?:\s*-\s*(\d{4}))?$/);
+    if (!match) throw new Error('Invalid filter years');
+    const from = Number(match[1]);
+    const to = Number(match[2] ?? match[1]);
+    if (from < 1800 || to > 9999 || to < from || to - from > 200)
+      throw new Error('Invalid filter years');
+    for (let year = from; year <= to; year++) years.add(year);
+  }
+  return [...years].sort((a, b) => a - b);
+};
+
 // Deliberately no URLs, raw names, action diagnostics, or transport objects.
 export interface FreshRelease {
   releaseId: string;
@@ -24,6 +51,9 @@ export interface FreshRelease {
   explicitSpecial: boolean;
   observedAt: number;
   availabilityType: FreshAvailabilityType;
+  tmdbId?: number;
+  tvdbId?: number;
+  imdbId?: string;
 }
 
 export type FreshAvailabilityType = 'digital' | 'physical' | 'unknown';
@@ -175,7 +205,6 @@ export function parseReleasePage(
       Number(row.year) <= 9999
         ? Number(row.year)
         : 0;
-    if (mediaType === 'movie' && !year) continue;
     const sourceTitle = sanitizedSourceTitle(row);
     if (!sourceTitle) continue;
     const seasonNumber = boundedNumber(row.season, 10000);
@@ -203,6 +232,15 @@ export function parseReleasePage(
       explicitSpecial,
       observedAt,
       availabilityType: availabilityType(row.source),
+      ...(Number.isSafeInteger(row.tmdb_id) && Number(row.tmdb_id) > 0
+        ? { tmdbId: Number(row.tmdb_id) }
+        : {}),
+      ...(Number.isSafeInteger(row.tvdb_id) && Number(row.tvdb_id) > 0
+        ? { tvdbId: Number(row.tvdb_id) }
+        : {}),
+      ...(typeof row.imdb_id === 'string' && /^tt\d{1,12}$/.test(row.imdb_id)
+        ? { imdbId: row.imdb_id }
+        : {}),
     });
     if (mediaType === 'movie') counts.eligibleMovies++;
     else counts.eligibleTv++;
@@ -273,6 +311,22 @@ export default class Autobrr extends ExternalAPI {
         maxContentLength: 2 * 1024 * 1024,
       });
       return parseFilters(response.data);
+    } catch {
+      throw new Error('Fresh filter source unavailable or invalid');
+    }
+  }
+
+  async filter(filterId: number): Promise<FreshFilterConfiguration> {
+    try {
+      const response = await this.axios.get<unknown>(`filters/${filterId}`, {
+        maxRedirects: 0,
+        maxContentLength: 2 * 1024 * 1024,
+      });
+      const value = response.data;
+      const [filter] = parseFilters([value]);
+      if (filter.id !== filterId || filter.enabled === false || !record(value))
+        throw new Error();
+      return { ...filter, years: parseFilterYears(value.years) };
     } catch {
       throw new Error('Fresh filter source unavailable or invalid');
     }

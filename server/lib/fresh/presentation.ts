@@ -3,7 +3,6 @@ import type {
   TmdbMovieDetails,
   TmdbTvDetails,
 } from '@server/api/themoviedb/interfaces';
-import type FreshMedia from '@server/entity/FreshMedia';
 import logger from '@server/logger';
 
 export const FRESH_PRESENTATION_CONCURRENCY = 4;
@@ -18,12 +17,13 @@ export interface FreshPresentationProvider {
   getTvShow(input: { tvId: number; language?: string }): Promise<TmdbTvDetails>;
 }
 
-const identityKey = (item: Pick<FreshMedia, 'mediaType' | 'tmdbId'>) =>
+type FreshPresentationIdentity = { mediaType: 'movie' | 'tv'; tmdbId: number };
+const identityKey = (item: FreshPresentationIdentity) =>
   `${item.mediaType}:${item.tmdbId}`;
 
 /** Resolves only the already selected Fresh page through Seerr's TMDB cache. */
 export const resolveFreshPagePresentation = async (
-  page: Pick<FreshMedia, 'mediaType' | 'tmdbId'>[],
+  page: FreshPresentationIdentity[],
   locale: string,
   provider?: FreshPresentationProvider
 ): Promise<Map<string, FreshProviderPresentation>> => {

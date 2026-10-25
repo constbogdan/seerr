@@ -40,6 +40,35 @@ import { DataSource } from 'typeorm';
 
 setupTestDb();
 
+const requiredHistoryAcceptanceArtifact = ({
+  artifactPath = process.env.SEERR_HISTORY_ACCEPTANCE_ARTIFACT,
+  directory = process.cwd(),
+  exists = existsSync,
+}: {
+  artifactPath?: string;
+  directory?: string;
+  exists?: typeof existsSync;
+} = {}): string => {
+  const candidates = artifactPath
+    ? [artifactPath]
+    : [1, 2].map((parents) =>
+        path.resolve(
+          directory,
+          ...Array<string>(parents).fill('..'),
+          'seerr-harness',
+          'config',
+          'migration',
+          'wholphin-history-v1.json'
+        )
+      );
+  const resolved = candidates.find((candidate) => exists(candidate));
+  assert.ok(
+    resolved,
+    'Required private history acceptance fixture is unavailable. Set SEERR_HISTORY_ACCEPTANCE_ARTIFACT to the approved wholphin-history-v1.json file. This test is mandatory, including in CI; securely provision the fixture before running validation. Do not commit private history or substitute another artifact.'
+  );
+  return resolved;
+};
+
 const content = (): WholphinHistoryContent => ({
   schema: 'wholphin-history-v1',
   jellyfinServerScope: 'server-a',
@@ -726,34 +755,61 @@ describe('generic historical-data import', () => {
     }
   });
 
-  it('accepts the approved October 4 artifact with truthful counts and no invented current state', async () => {
-    const artifactPath = [
-      process.env.SEERR_HISTORY_ACCEPTANCE_ARTIFACT,
-      path.resolve(
-        process.cwd(),
-        '..',
-        'seerr-harness',
-        'config',
-        'migration',
-        'wholphin-history-v1.json'
-      ),
-      path.resolve(
-        process.cwd(),
-        '..',
-        '..',
-        'seerr-harness',
-        'config',
-        'migration',
-        'wholphin-history-v1.json'
-      ),
-    ].find((candidate): candidate is string =>
-      Boolean(candidate && existsSync(candidate))
+  it('fails clearly when the mandatory private history acceptance fixture is missing', () => {
+    assert.throws(
+      () =>
+        requiredHistoryAcceptanceArtifact({
+          artifactPath: '',
+          directory: path.resolve('isolated-test-workspace'),
+          exists: () => false,
+        }),
+      /Set SEERR_HISTORY_ACCEPTANCE_ARTIFACT.*mandatory, including in CI/
     );
+  });
 
-    assert.ok(
-      artifactPath,
-      'approved history artifact is required; set SEERR_HISTORY_ACCEPTANCE_ARTIFACT when it is not in a supported workspace location'
+  it('does not silently replace an explicitly configured missing acceptance fixture', () => {
+    const checked: string[] = [];
+    assert.throws(() =>
+      requiredHistoryAcceptanceArtifact({
+        artifactPath: 'missing-approved-fixture.json',
+        exists: (candidate) => {
+          checked.push(String(candidate));
+          return false;
+        },
+      })
     );
+    assert.deepEqual(checked, ['missing-approved-fixture.json']);
+  });
+
+  it('finds the explicitly configured fixture or the existing supported workspace locations', () => {
+    assert.equal(
+      requiredHistoryAcceptanceArtifact({
+        artifactPath: 'approved-fixture.json',
+        exists: (candidate) => candidate === 'approved-fixture.json',
+      }),
+      'approved-fixture.json'
+    );
+    const directory = path.resolve('isolated-test-workspace', 'source');
+    const expected = path.resolve(
+      directory,
+      '..',
+      'seerr-harness',
+      'config',
+      'migration',
+      'wholphin-history-v1.json'
+    );
+    assert.equal(
+      requiredHistoryAcceptanceArtifact({
+        artifactPath: '',
+        directory,
+        exists: (candidate) => candidate === expected,
+      }),
+      expected
+    );
+  });
+
+  it('accepts the approved October 4 artifact with truthful counts and no invented current state', async () => {
+    const artifactPath = requiredHistoryAcceptanceArtifact();
     const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
     const inspection = await historicalDataImport.inspect(artifact);
     assert.equal(

@@ -41,6 +41,8 @@ interface SearchOptions {
 
 interface SingleSearchOptions extends SearchOptions {
   year?: number;
+  /** Broader Movie release-year evidence; does not change primary-year callers. */
+  releaseYear?: number;
 }
 
 const CommonSortOptionsIterable = [
@@ -281,6 +283,7 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     includeAdult = false,
     language = this.locale,
     year,
+    releaseYear,
   }: SingleSearchOptions): Promise<TmdbSearchMovieResponse> =>
     this.get<TmdbSearchMovieResponse>('/search/movie', {
       params: {
@@ -289,6 +292,7 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
         include_adult: includeAdult,
         language,
         primary_release_year: year,
+        year: releaseYear,
       },
     });
 
@@ -338,6 +342,26 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
         first_air_date_year: year,
       },
     });
+
+  /** Cached, error-preserving alias evidence for automatic discovery. */
+  public getDiscoveryAliases = async (
+    mediaType: 'movie' | 'tv',
+    id: number
+  ): Promise<string[]> => {
+    const response = await this.get<{
+      id: number;
+      titles?: { title: string }[];
+      results?: { title: string }[];
+    }>(`/${mediaType}/${id}/alternative_titles`);
+    const titles = response.titles ?? response.results;
+    if (
+      response.id !== id ||
+      !Array.isArray(titles) ||
+      titles.some((value) => typeof value.title !== 'string')
+    )
+      throw new Error('Invalid TMDB alias response');
+    return titles.map((value) => value.title);
+  };
 
   public getPerson = async ({
     personId,

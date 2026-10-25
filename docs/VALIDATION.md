@@ -51,6 +51,18 @@ implementation. Frozen installation authenticates the lockfile contract.
 Translation, formatting, lint, type, unit-test, and production-build failures are
 real validation failures and propagate non-zero.
 
+The approved October 4 private history acceptance artifact remains a mandatory
+test input, not an optional or CI-skipped test. Set
+`SEERR_HISTORY_ACCEPTANCE_ARTIFACT` to the approved `wholphin-history-v1.json`
+when it is not in a supported local harness location. Isolated validation copies
+and hosted runners must receive that fixture through an approved private staging
+mechanism. Never commit the artifact, substitute synthetic history for its
+acceptance assertions, or treat a missing fixture as successful validation. Its
+existing content-hash, factual-count and no-invented-current-state assertions
+remain authoritative. The application test command exits non-zero for genuine
+test failures while retaining the selected reporters and explicit skip/todo
+semantics.
+
 Workflow inventory verification compares `.github/workflows/` with the reviewed
 downstream inventory. An upstream workflow addition, removal, or rename fails
 until its mutation/publication safety is explicitly reviewed and the inventory

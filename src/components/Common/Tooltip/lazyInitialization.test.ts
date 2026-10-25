@@ -11,7 +11,6 @@ const directConsumers = [
   '../../Library/SeriesDetail.tsx',
   '../../TitleCard/index.tsx',
   '../CancelScheduledRemovalButton.tsx',
-  '../../Fresh/CandidateDiagnosticsShortcut.tsx',
   '../../Settings/SettingsRemoval/index.tsx',
 ].map((file) => ({
   file,

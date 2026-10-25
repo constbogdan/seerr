@@ -1,5 +1,6 @@
 export type FreshMediaType = 'movie' | 'tv';
 
+/** Retained only by legacy entity/migration contracts, never V2 runtime policy. */
 export enum FreshContinuityStatus {
   UNINITIALIZED = 1,
   CURRENT = 2,
@@ -18,11 +19,4 @@ export enum FreshCandidateStatus {
 }
 
 export const FRESH_SYNC_STATE_ID = 1;
-export const DEFAULT_MEDIA_ELIGIBILITY_DAYS = 90;
-export const MIN_MEDIA_ELIGIBILITY_DAYS = 1;
-export const MAX_MEDIA_ELIGIBILITY_DAYS = 365;
-export const DEFAULT_FRESH_VISIBILITY_DAYS = 7;
-export const MIN_FRESH_VISIBILITY_DAYS = 1;
-export const MAX_FRESH_VISIBILITY_DAYS = 90;
 export const FRESH_PAGE_SIZE = 20;
-export const FRESH_CANDIDATE_PAGE_SIZE = 25;

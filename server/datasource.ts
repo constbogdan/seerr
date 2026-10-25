@@ -12,11 +12,14 @@ import DiscoverSlider from '@server/entity/DiscoverSlider';
 import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
 import FreshCandidate from '@server/entity/FreshCandidate';
 import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
+import FreshDiscovery from '@server/entity/FreshDiscovery';
 import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
 import FreshManualResolution from '@server/entity/FreshManualResolution';
 import FreshMedia from '@server/entity/FreshMedia';
 import FreshObservation from '@server/entity/FreshObservation';
+import FreshSourceState from '@server/entity/FreshSourceState';
 import { FreshSyncState } from '@server/entity/FreshSyncState';
+import FreshWork from '@server/entity/FreshWork';
 import Issue from '@server/entity/Issue';
 import IssueComment from '@server/entity/IssueComment';
 import {
@@ -77,6 +80,9 @@ const entities = [
   FreshCandidate,
   FreshCandidateVisibility,
   FreshDiscoveryHistory,
+  FreshDiscovery,
+  FreshSourceState,
+  FreshWork,
   FreshManualResolution,
   FreshMedia,
   FreshObservation,

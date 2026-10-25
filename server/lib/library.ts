@@ -19,7 +19,7 @@ import {
   CanonicalSeasonIdentity,
 } from '@server/entity/CanonicalMedia';
 import { CurrentViewingState } from '@server/entity/CurrentViewingState';
-import FreshMedia from '@server/entity/FreshMedia';
+import FreshDiscovery from '@server/entity/FreshDiscovery';
 import {
   LibraryFile,
   LibraryFileEpisode,
@@ -66,6 +66,7 @@ import {
   filterActiveCurrentViewingStates,
   loadActiveCurrentViewingStatesForMedia,
 } from '@server/lib/currentViewingTargets';
+import { freshSourceKey } from '@server/lib/fresh/normalize';
 import { historicalImportStatus } from '@server/lib/historicalDataInspection';
 import {
   normalizeExactJellyfinId,
@@ -88,7 +89,7 @@ import libraryPresentation, {
 import { getSettings } from '@server/lib/settings';
 import { storageRootDisplayLabel } from '@server/lib/storageRootDisplayNames';
 import { getHostname } from '@server/utils/getHostname';
-import { In, type SelectQueryBuilder } from 'typeorm';
+import { Between, In, type SelectQueryBuilder } from 'typeorm';
 
 export interface LibraryQuery {
   take: number;
@@ -2030,8 +2031,18 @@ export class LibraryService {
             }>()
         : Promise.resolve([]),
       tmdbPairs.length
-        ? getRepository(FreshMedia).find({
-            where: tmdbPairs.map((pair) => ({ ...pair, active: true })),
+        ? getRepository(FreshDiscovery).find({
+            where: tmdbPairs.map((pair) => ({
+              ...pair,
+              sourceKey: freshSourceKey(getSettings().fresh),
+              discoveredAt: Between(
+                new Date(
+                  Date.now() -
+                    getSettings().fresh.freshVisibilityDays * 86400000
+                ),
+                new Date()
+              ),
+            })),
           })
         : Promise.resolve([]),
       seriesIds.length

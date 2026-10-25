@@ -8,7 +8,6 @@ import {
   type FreshMediaResult,
   type FreshStatus,
 } from '@app/components/Fresh/api';
-import CandidateDiagnosticsShortcut from '@app/components/Fresh/CandidateDiagnosticsShortcut';
 import useDiscover from '@app/hooks/useDiscover';
 import { useUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
@@ -17,6 +16,7 @@ import { ArrowPathIcon, BarsArrowDownIcon } from '@heroicons/react/24/solid';
 import type { FreshSort } from '@server/lib/fresh';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
+import { useEffect, useRef } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.Fresh', {
@@ -26,15 +26,13 @@ const messages = defineMessages('components.Fresh', {
   series: 'Series',
   freshest: 'Freshest / First Seen',
   oldest: 'Oldest First Seen',
-  title: 'Title',
-  year: 'Year',
-  tmdbRatingAsc: 'TMDB Rating Ascending',
-  tmdbRatingDesc: 'TMDB Rating Descending',
+  highestRating: 'TMDB Rating — Highest First',
+  mostVotes: 'TMDB Votes — Most First',
   disabled: 'Fresh is not enabled.',
   configure: 'Configure Fresh',
-  preparing: 'Fresh is preparing its first synchronization.',
+  preparing: 'Fresh is processing the available release history.',
   unavailable: 'Fresh is temporarily unavailable.',
-  stale: 'Showing the last successful Fresh projection.',
+  stale: 'Showing saved Fresh discoveries while synchronization recovers.',
   retry: 'Retry',
   mediaType: 'Media type',
   sort: 'Sort Fresh media',
@@ -44,17 +42,24 @@ const messages = defineMessages('components.Fresh', {
 const allowedSorts = new Set<FreshSort>([
   'freshest',
   'oldest',
-  'title',
-  'year',
-  'vote_average.asc',
-  'vote_average.desc',
+  'vote_average',
+  'vote_count',
 ]);
+
+export const resetFreshSortPages = (
+  previous: FreshSort,
+  next: FreshSort,
+  setPageCount: (count: number) => void
+): FreshSort => {
+  if (previous !== next) setPageCount(1);
+  return next;
+};
 
 const Fresh = () => {
   const intl = useIntl();
   const router = useRouter();
   const { hasPermission } = useUser();
-  const updateQuery = useUpdateQueryParams({});
+  const updateQuery = useUpdateQueryParams({ page: undefined });
   const mediaType = ['movie', 'tv'].includes(String(router.query.mediaType))
     ? String(router.query.mediaType)
     : 'all';
@@ -65,6 +70,16 @@ const Fresh = () => {
     { status: FreshStatus },
     { mediaType: string; sort: FreshSort }
   >(FRESH_API_PATH, { mediaType, sort });
+  const previousSort = useRef(sort);
+  const { setPageCount } = discover;
+  useEffect(() => {
+    // Reset only query changes, not an ordinary remount/Details → Back.
+    previousSort.current = resetFreshSortPages(
+      previousSort.current,
+      sort,
+      setPageCount
+    );
+  }, [sort, setPageCount]);
   const status = discover.firstResultData?.status;
   const set = (key: string, value?: string) => updateQuery(key, value);
 
@@ -74,9 +89,6 @@ const Fresh = () => {
       <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
         <Header>{intl.formatMessage(messages.fresh)}</Header>
         <div className="mt-2 flex min-w-0 flex-wrap gap-2">
-          <CandidateDiagnosticsShortcut
-            show={hasPermission(Permission.ADMIN)}
-          />
           <MediaTypeFilter
             ariaLabel={intl.formatMessage(messages.mediaType)}
             value={mediaType}
@@ -112,15 +124,11 @@ const Fresh = () => {
               <option value="oldest">
                 {intl.formatMessage(messages.oldest)}
               </option>
-              <option value="title">
-                {intl.formatMessage(messages.title)}
+              <option value="vote_average">
+                {intl.formatMessage(messages.highestRating)}
               </option>
-              <option value="year">{intl.formatMessage(messages.year)}</option>
-              <option value="vote_average.desc">
-                {intl.formatMessage(messages.tmdbRatingDesc)}
-              </option>
-              <option value="vote_average.asc">
-                {intl.formatMessage(messages.tmdbRatingAsc)}
+              <option value="vote_count">
+                {intl.formatMessage(messages.mostVotes)}
               </option>
             </select>
           </div>
@@ -138,11 +146,8 @@ const Fresh = () => {
             </Link>
           )}
         </div>
-      ) : status?.status === 'preparing' ? (
-        <div className="mt-32 text-center text-2xl text-gray-400">
-          {intl.formatMessage(messages.preparing)}
-        </div>
-      ) : discover.error || status?.status === 'unavailable' ? (
+      ) : (discover.error || status?.status === 'unavailable') &&
+        !discover.titles.length ? (
         <div className="mt-32 text-center text-gray-400" role="alert">
           <p className="text-2xl">{intl.formatMessage(messages.unavailable)}</p>
           <Button className="mt-4" onClick={() => discover.mutate?.()}>
@@ -151,7 +156,9 @@ const Fresh = () => {
         </div>
       ) : (
         <>
-          {(status?.status === 'stale' || status?.refreshing) && (
+          {(status?.status === 'stale' ||
+            status?.status === 'preparing' ||
+            status?.refreshing) && (
             <div
               className="mb-4 flex items-center rounded-md bg-gray-800 p-3 text-gray-300"
               role="status"
@@ -165,14 +172,23 @@ const Fresh = () => {
                 }`}
               />
               {intl.formatMessage(
-                status.refreshing ? messages.refreshing : messages.stale
+                status.status === 'preparing'
+                  ? messages.preparing
+                  : status.refreshing
+                    ? messages.refreshing
+                    : messages.stale
               )}
             </div>
           )}
           <ListView
+            showRatings
             items={discover.titles}
-            isEmpty={discover.isEmpty}
-            isLoading={discover.isLoadingInitialData || discover.isLoadingMore}
+            isEmpty={discover.isEmpty && status?.status !== 'preparing'}
+            isLoading={
+              discover.isLoadingInitialData ||
+              discover.isLoadingMore ||
+              (status?.status === 'preparing' && !discover.titles.length)
+            }
             isReachingEnd={discover.isReachingEnd}
             onScrollBottom={discover.fetchMore}
             mutateParent={discover.mutate}

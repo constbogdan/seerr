@@ -208,16 +208,11 @@ export interface FreshSettings {
   apiToken: string;
   filterId: number;
   cachedFilterName: string;
-  mediaEligibilityDays: number;
   freshVisibilityDays: number;
-  includeGenreIds: number[];
-  excludeGenreIds: number[];
-  includeOriginalLanguages: string[];
-  excludeOriginalLanguages: string[];
-  includeContentRatings: string[];
-  excludeContentRatings: string[];
-  minimumTmdbScore: number;
-  minimumTmdbVotes: number;
+  excludeGenreIds?: number[];
+  excludeOriginalLanguages?: string[];
+  minimumTmdbScore?: number;
+  minimumTmdbVotes?: number;
 }
 
 const finalFreshSettings = (value?: Partial<FreshSettings>): FreshSettings => ({
@@ -226,14 +221,9 @@ const finalFreshSettings = (value?: Partial<FreshSettings>): FreshSettings => ({
   apiToken: value?.apiToken ?? '',
   filterId: value?.filterId ?? 0,
   cachedFilterName: value?.cachedFilterName ?? '',
-  mediaEligibilityDays: value?.mediaEligibilityDays ?? 90,
   freshVisibilityDays: value?.freshVisibilityDays ?? 7,
-  includeGenreIds: value?.includeGenreIds ?? [],
   excludeGenreIds: value?.excludeGenreIds ?? [],
-  includeOriginalLanguages: value?.includeOriginalLanguages ?? [],
   excludeOriginalLanguages: value?.excludeOriginalLanguages ?? [],
-  includeContentRatings: value?.includeContentRatings ?? [],
-  excludeContentRatings: value?.excludeContentRatings ?? [],
   minimumTmdbScore: value?.minimumTmdbScore ?? 0,
   minimumTmdbVotes: value?.minimumTmdbVotes ?? 0,
 });
@@ -432,7 +422,6 @@ export type JobId =
   | 'current-jellyfin-viewing-sync'
   | 'library-history-hydration'
   | 'fresh-sync'
-  | 'fresh-reconciliation'
   | 'removal-candidate-selection'
   | 'scheduled-removal-processing'
   | 'series-relocation'
@@ -759,9 +748,6 @@ class Settings {
         'fresh-sync': {
           schedule: '0 */5 * * * *',
         },
-        'fresh-reconciliation': {
-          schedule: '0 15 3 * * *',
-        },
         'removal-candidate-selection': {
           schedule: '0 0 1 */14 * *',
         },
@@ -806,23 +792,7 @@ class Settings {
         },
         apiRequestTimeout: 10000,
       },
-      fresh: {
-        enabled: false,
-        baseUrl: '',
-        apiToken: '',
-        filterId: 0,
-        cachedFilterName: '',
-        mediaEligibilityDays: 90,
-        freshVisibilityDays: 7,
-        includeGenreIds: [],
-        excludeGenreIds: [],
-        includeOriginalLanguages: [],
-        excludeOriginalLanguages: [],
-        includeContentRatings: [],
-        excludeContentRatings: [],
-        minimumTmdbScore: 0,
-        minimumTmdbVotes: 0,
-      },
+      fresh: finalFreshSettings(),
       removal: DEFAULT_REMOVAL_SETTINGS,
       overflow: DEFAULT_OVERFLOW_SETTINGS,
       watchlistRoulette: DEFAULT_WATCHLIST_ROULETTE_SETTINGS,

@@ -11,6 +11,7 @@ import ActionStateGrid from '@app/components/TitleCard/ActionStateGrid';
 import TitleCardCornerBadge from '@app/components/TitleCard/CornerBadge';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
+import TitleCardRatingBadge from '@app/components/TitleCard/RatingBadge';
 import { resolveTitleCardRequestActionLabel } from '@app/components/TitleCard/requestActionLabel';
 import { buildTitleCardStateIndicators } from '@app/components/TitleCard/stateIndicators';
 import {
@@ -46,6 +47,7 @@ interface TitleCardProps {
   year?: string;
   title: string;
   userScore?: number;
+  showRating?: boolean;
   mediaType: MediaType;
   status?: MediaStatus;
   canExpand?: boolean;
@@ -84,6 +86,8 @@ const TitleCard = ({
   summary,
   year,
   title,
+  userScore,
+  showRating = false,
   status,
   mediaType,
   isAddedToWatchlist = false,
@@ -747,9 +751,10 @@ const TitleCard = ({
                 )}
               </div>
               <div
-                className="col-start-2 row-start-1 self-start justify-self-end"
+                className={`col-start-2 row-start-1 self-start justify-self-end ${showRating ? 'flex flex-col items-end gap-1' : ''}`}
                 data-testid="title-card-action-state-region"
               >
+                {showRating && <TitleCardRatingBadge score={userScore} />}
                 <ActionStateGrid
                   actions={rightSideActions}
                   states={rightSideStates}

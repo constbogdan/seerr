@@ -1,0 +1,1730 @@
+{
+  "series": [
+    {
+      "query": "Task",
+      "year": 2025,
+      "expectedId": 228305,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 228305,
+          "title": "Task",
+          "originalTitle": "Task",
+          "date": "2025-09-07"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 228305,
+          "title": "Task",
+          "originalTitle": "Task",
+          "date": "2025-09-07"
+        }
+      ]
+    },
+    {
+      "query": "Fired Up",
+      "year": 2026,
+      "expectedId": 239156,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 10325,
+          "title": "Fired Up",
+          "originalTitle": "Fired Up",
+          "date": "1997-04-10"
+        },
+        {
+          "id": 239156,
+          "title": "Fired Up!",
+          "originalTitle": "來！金來號！",
+          "date": "2026-07-31"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 239156,
+          "title": "Fired Up!",
+          "originalTitle": "來！金來號！",
+          "date": "2026-07-31"
+        }
+      ]
+    },
+    {
+      "query": "Death Valley",
+      "year": 2025,
+      "expectedId": 254897,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 40245,
+          "title": "Death Valley",
+          "originalTitle": "Death Valley",
+          "date": "2011-08-29"
+        },
+        {
+          "id": 254897,
+          "title": "Death Valley",
+          "originalTitle": "Death Valley",
+          "date": "2025-05-25"
+        },
+        {
+          "id": 337238,
+          "title": "Death Valley",
+          "originalTitle": "Death Valley",
+          "date": "2014-10-01"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 254897,
+          "title": "Death Valley",
+          "originalTitle": "Death Valley",
+          "date": "2025-05-25"
+        }
+      ]
+    },
+    {
+      "query": "Doc",
+      "year": 2025,
+      "expectedId": 255055,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 10042,
+          "title": "Doc",
+          "originalTitle": "Doc",
+          "date": "2001-03-11"
+        },
+        {
+          "id": 101048,
+          "title": "Doc",
+          "originalTitle": "Doc – Nelle tue mani",
+          "date": "2020-03-26"
+        },
+        {
+          "id": 255055,
+          "title": "Doc",
+          "originalTitle": "Doc",
+          "date": "2025-01-07"
+        },
+        {
+          "id": 314006,
+          "title": "DOC",
+          "originalTitle": "DOC",
+          "date": "2026-03-04"
+        },
+        {
+          "id": 6901,
+          "title": "Doc",
+          "originalTitle": "Doc",
+          "date": "1975-09-13"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 255055,
+          "title": "Doc",
+          "originalTitle": "Doc",
+          "date": "2025-01-07"
+        },
+        {
+          "id": 280962,
+          "title": "More than a peek - BBB: The Doc.",
+          "originalTitle": "BBB: O Documentário",
+          "date": "2025-01-07"
+        },
+        {
+          "id": 299439,
+          "title": "Doc Caros Körperkenner",
+          "originalTitle": "Doc Caros Körperkenner",
+          "date": "2025-09-02"
+        },
+        {
+          "id": 288772,
+          "title": "Doc Caro – Leben hautnah",
+          "originalTitle": "Doc Caro – Leben hautnah",
+          "date": "2025-04-30"
+        },
+        {
+          "id": 310550,
+          "title": "Doc Schmock and Moe",
+          "originalTitle": "Doc Schmock and Moe",
+          "date": "2025-12-31"
+        },
+        {
+          "id": 290493,
+          "title": "Doc Esser – Ich will hundert werden!",
+          "originalTitle": "Doc Esser – Ich will hundert werden!",
+          "date": "2025-02-14"
+        },
+        {
+          "id": 332575,
+          "title": "Contes d’Oc",
+          "originalTitle": "Contes d’Oc",
+          "date": "2025-04-28"
+        },
+        {
+          "id": 306776,
+          "title": "Un jour, un doc week-end",
+          "originalTitle": "Un jour, un doc week-end",
+          "date": "2025-05-11"
+        },
+        {
+          "id": 250994,
+          "title": "Ameku M.D.: Doctor Detective",
+          "originalTitle": "天久鷹央の推理カルテ",
+          "date": "2025-01-02"
+        },
+        {
+          "id": 287349,
+          "title": "Ameku M.D.: Doctor Detective",
+          "originalTitle": "天久鷹央の推理カルテ",
+          "date": "2025-04-22"
+        },
+        {
+          "id": 292615,
+          "title": "DOCTOR PRICE",
+          "originalTitle": "DOCTOR PRICE",
+          "date": "2025-07-06"
+        },
+        {
+          "id": 262493,
+          "title": "Doctor's Mine",
+          "originalTitle": "หมอน่ารักคนนี้เป็นของผม",
+          "date": "2025-07-20"
+        },
+        {
+          "id": 221436,
+          "title": "The Outlaw Doctor",
+          "originalTitle": "化外之醫",
+          "date": "2025-03-08"
+        },
+        {
+          "id": 283684,
+          "title": "My Doctor",
+          "originalTitle": "我家的医生",
+          "date": "2025-05-09"
+        },
+        {
+          "id": 283019,
+          "title": "Poisonous Love",
+          "originalTitle": "พิษรัก",
+          "date": "2025-09-20"
+        },
+        {
+          "id": 320173,
+          "title": "My Top Doctor Stole My Heart",
+          "originalTitle": "诱他失控",
+          "date": "2025-12-20"
+        },
+        {
+          "id": 287193,
+          "title": "Doctor Love",
+          "originalTitle": "دكتور حب",
+          "date": "2025-03-23"
+        },
+        {
+          "id": 301958,
+          "title": "Doctor Love Edition",
+          "originalTitle": "รักนี้เวอร์ชั่นคุณหมอ",
+          "date": "2025-10-05"
+        },
+        {
+          "id": 336294,
+          "title": "The Doctor Will See You Now",
+          "originalTitle": "The Doctor Will See You Now",
+          "date": "2025-09-08"
+        },
+        {
+          "id": 306404,
+          "title": "O Bombeiro Bilionario e Sua Doce Esposa",
+          "originalTitle": "O Bombeiro Bilionario e Sua Doce Esposa",
+          "date": "2025-12-01"
+        },
+        {
+          "id": 336294,
+          "title": "The Doctor Will See You Now",
+          "originalTitle": "The Doctor Will See You Now",
+          "date": "2025-09-08"
+        },
+        {
+          "id": 306404,
+          "title": "O Bombeiro Bilionario e Sua Doce Esposa",
+          "originalTitle": "O Bombeiro Bilionario e Sua Doce Esposa",
+          "date": "2025-12-01"
+        },
+        {
+          "id": 273135,
+          "title": "Sarcastic Family",
+          "originalTitle": "毒舌家庭",
+          "date": "2025-11-27"
+        },
+        {
+          "id": 293591,
+          "title": "Diary of a Junior Doctor",
+          "originalTitle": "Diary of a Junior Doctor",
+          "date": "2025-06-03"
+        },
+        {
+          "id": 316682,
+          "title": "Dochters",
+          "originalTitle": "Dochters",
+          "date": "2025-01-28"
+        },
+        {
+          "id": 299313,
+          "title": "Collection Documentaire Via Stella",
+          "originalTitle": "Collection Documentaire Via Stella",
+          "date": "2025-08-22"
+        },
+        {
+          "id": 282117,
+          "title": "DocuMe",
+          "originalTitle": "DocuMe",
+          "date": "2025-02-03"
+        },
+        {
+          "id": 298265,
+          "title": "BTS BRING THE SOUL DOCU-SERIES",
+          "originalTitle": "BTS BRING THE SOUL DOCU-SERIES",
+          "date": "2025-08-13"
+        },
+        {
+          "id": 295142,
+          "title": "Supreme Over The Sky",
+          "originalTitle": "凌天独尊",
+          "date": "2025-07-02"
+        },
+        {
+          "id": 302498,
+          "title": "Doctor Geiger",
+          "originalTitle": "Doctor Geiger",
+          "date": "2025-10-08"
+        },
+        {
+          "id": 307444,
+          "title": "Doctor Who Rebirth",
+          "originalTitle": "Doctor Who Rebirth",
+          "date": "2025-12-03"
+        },
+        {
+          "id": 260822,
+          "title": "From Bureaucrat to Villainess: Dad's Been Reincarnated!",
+          "originalTitle": "悪役令嬢転生おじさん",
+          "date": "2025-01-10"
+        },
+        {
+          "id": 283368,
+          "title": "Miss Governor",
+          "originalTitle": "Miss Governor",
+          "date": "2025-05-22"
+        },
+        {
+          "id": 338999,
+          "title": "SOCO: Limited Crime Docu Drama",
+          "originalTitle": "SOCO: Limited Crime Docu Drama",
+          "date": "2025-10-24"
+        },
+        {
+          "id": 339329,
+          "title": "A Week Away: The Docuseries",
+          "originalTitle": "A Week Away: The Docuseries",
+          "date": "2025-10-23"
+        },
+        {
+          "id": 262997,
+          "title": "Why is He Still Single?",
+          "originalTitle": "他为什么依然单身",
+          "date": "2025-11-16"
+        },
+        {
+          "id": 300741,
+          "title": "The Game: You Never Play Alone",
+          "originalTitle": "The Game: You Never Play Alone",
+          "date": "2025-10-02"
+        },
+        {
+          "id": 290773,
+          "title": "Beautiful",
+          "originalTitle": "她独美",
+          "date": "2025-05-15"
+        },
+        {
+          "id": 289485,
+          "title": "WWE: Unreal",
+          "originalTitle": "WWE: Unreal",
+          "date": "2025-07-29"
+        },
+        {
+          "id": 289486,
+          "title": "Cold Case: The Tylenol Murders",
+          "originalTitle": "Cold Case: The Tylenol Murders",
+          "date": "2025-05-26"
+        },
+        {
+          "id": 288893,
+          "title": "Secret Files of XSA",
+          "originalTitle": "X局密档",
+          "date": "2025-04-16"
+        },
+        {
+          "id": 288586,
+          "title": "Twelve Dates 'Til Christmas",
+          "originalTitle": "Twelve Dates 'Til Christmas",
+          "date": "2025-12-05"
+        },
+        {
+          "id": 283396,
+          "title": "Juan Gabriel: I Must, I Can, I Will",
+          "originalTitle": "Juan Gabriel: Debo, puedo y quiero",
+          "date": "2025-10-30"
+        },
+        {
+          "id": 252620,
+          "title": "Sweet Tooth, Good Dentist",
+          "originalTitle": "แฟนที่ทันตแพทย์ส่วนใหญ่แนะนำ",
+          "date": "2025-03-21"
+        },
+        {
+          "id": 304261,
+          "title": "Rise of Her Lady Physician",
+          "originalTitle": "女医进击录",
+          "date": "2025-10-31"
+        },
+        {
+          "id": 288764,
+          "title": "My Frosty Coworker Is Only Sweet to Me",
+          "originalTitle": "低体温男子になつかれました。",
+          "date": "2025-05-08"
+        },
+        {
+          "id": 280885,
+          "title": "Carlos Alcaraz: My Way",
+          "originalTitle": "Carlos Alcaraz: A mi manera",
+          "date": "2025-04-23"
+        },
+        {
+          "id": 294163,
+          "title": "Mission: Investigate – Once Brothers",
+          "originalTitle": "Uppdrag granskning: En gång bröder",
+          "date": "2025-06-18"
+        },
+        {
+          "id": 330885,
+          "title": "Лікарі",
+          "originalTitle": "Лікарі",
+          "date": "2025-10-06"
+        },
+        {
+          "id": 320172,
+          "title": "The Racer and His Dr. Perfect",
+          "originalTitle": "诱他失控",
+          "date": "2025-12-20"
+        },
+        {
+          "id": 293935,
+          "title": "Sakurazaka46 4th Generation Story - What We Can Do Now",
+          "originalTitle": "櫻坂46 四期生物語 ーいま、わたしたちに、できることー",
+          "date": "2025-05-12"
+        },
+        {
+          "id": 296193,
+          "title": "Estados Unidos no Conectando Línguas",
+          "originalTitle": "Estados Unidos no Conectando Línguas",
+          "date": "2025-09-18"
+        }
+      ]
+    },
+    {
+      "query": "East of Eden",
+      "year": 2026,
+      "expectedId": 258165,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 258165,
+          "title": "East of Eden",
+          "originalTitle": "East of Eden",
+          "date": "2026-10-01"
+        },
+        {
+          "id": 27291,
+          "title": "East of Eden",
+          "originalTitle": "East of Eden",
+          "date": "1981-02-08"
+        },
+        {
+          "id": 20960,
+          "title": "East of Eden",
+          "originalTitle": "에덴의 동쪽",
+          "date": "2008-08-26"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 258165,
+          "title": "East of Eden",
+          "originalTitle": "East of Eden",
+          "date": "2026-10-01"
+        }
+      ]
+    },
+    {
+      "query": "Adults",
+      "year": 2025,
+      "expectedId": 260458,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 260458,
+          "title": "Adults",
+          "originalTitle": "Adults",
+          "date": "2025-05-28"
+        },
+        {
+          "id": 91451,
+          "title": "ADULTS",
+          "originalTitle": "AIKUISET",
+          "date": "2019-03-15"
+        },
+        {
+          "id": 247357,
+          "title": "Adults",
+          "originalTitle": "Взрослые",
+          "date": "2024-08-05"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 260458,
+          "title": "Adults",
+          "originalTitle": "Adults",
+          "date": "2025-05-28"
+        }
+      ]
+    },
+    {
+      "query": "A Decent Man",
+      "year": 2025,
+      "expectedId": 270443,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 270443,
+          "title": "A Decent Man",
+          "originalTitle": "Porządny człowiek",
+          "date": "2025-03-21"
+        },
+        {
+          "id": 338658,
+          "title": "A Decent Man",
+          "originalTitle": "A Decent Man",
+          "date": ""
+        }
+      ],
+      "narrow": [
+        {
+          "id": 270443,
+          "title": "A Decent Man",
+          "originalTitle": "Porządny człowiek",
+          "date": "2025-03-21"
+        }
+      ]
+    },
+    {
+      "query": "Maigret",
+      "year": 2025,
+      "expectedId": 271051,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 64581,
+          "title": "Maigret",
+          "originalTitle": "Maigret",
+          "date": "1991-12-01"
+        },
+        {
+          "id": 26992,
+          "title": "Maigret",
+          "originalTitle": "Maigret",
+          "date": "1960-10-31"
+        },
+        {
+          "id": 19390,
+          "title": "Maigret",
+          "originalTitle": "Maigret",
+          "date": "1992-02-09"
+        },
+        {
+          "id": 69533,
+          "title": "Maigret",
+          "originalTitle": "Maigret",
+          "date": "2016-03-28"
+        },
+        {
+          "id": 271051,
+          "title": "Maigret",
+          "originalTitle": "Maigret",
+          "date": "2025-10-05"
+        },
+        {
+          "id": 41457,
+          "title": "Maigret",
+          "originalTitle": "Maigret",
+          "date": "1964-10-23"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 271051,
+          "title": "Maigret",
+          "originalTitle": "Maigret",
+          "date": "2025-10-05"
+        }
+      ]
+    },
+    {
+      "query": "The Lowdown",
+      "year": 2025,
+      "expectedId": 273247,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 273247,
+          "title": "The Lowdown",
+          "originalTitle": "The Lowdown",
+          "date": "2025-09-23"
+        },
+        {
+          "id": 32977,
+          "title": "The Lowdown",
+          "originalTitle": "The Lowdown",
+          "date": "1988-05-17"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 273247,
+          "title": "The Lowdown",
+          "originalTitle": "The Lowdown",
+          "date": "2025-09-23"
+        }
+      ]
+    },
+    {
+      "query": "Lucky",
+      "year": 2026,
+      "expectedId": 278624,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 278624,
+          "title": "Lucky",
+          "originalTitle": "Lucky",
+          "date": "2026-07-14"
+        },
+        {
+          "id": 14822,
+          "title": "Lucky",
+          "originalTitle": "Lucky",
+          "date": "2003-04-08"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 278624,
+          "title": "Lucky",
+          "originalTitle": "Lucky",
+          "date": "2026-07-14"
+        }
+      ]
+    },
+    {
+      "query": "Furia",
+      "year": 2025,
+      "expectedId": 280880,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 280880,
+          "title": "Rage (Furia)",
+          "originalTitle": "Furia",
+          "date": "2025-07-11"
+        },
+        {
+          "id": 130219,
+          "title": "Furia",
+          "originalTitle": "Furia",
+          "date": "2021-09-26"
+        },
+        {
+          "id": 292533,
+          "title": "Wrath",
+          "originalTitle": "Fúria",
+          "date": "2026-07-29"
+        },
+        {
+          "id": 153811,
+          "title": "Fúria",
+          "originalTitle": "Fúria",
+          "date": "2021-12-19"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 280880,
+          "title": "Rage (Furia)",
+          "originalTitle": "Furia",
+          "date": "2025-07-11"
+        }
+      ]
+    },
+    {
+      "query": "Youth",
+      "year": 2026,
+      "expectedId": 285418,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 285418,
+          "title": "Youth",
+          "originalTitle": "Youth",
+          "date": "2026-09-21"
+        },
+        {
+          "id": 312854,
+          "title": "Youth",
+          "originalTitle": "Cavanlıq",
+          "date": "2012-03-03"
+        },
+        {
+          "id": 82762,
+          "title": "Youth",
+          "originalTitle": "最亲爱的你",
+          "date": "2018-07-13"
+        },
+        {
+          "id": 116373,
+          "title": "Youth",
+          "originalTitle": "知青",
+          "date": "2012-05-29"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 285418,
+          "title": "Youth",
+          "originalTitle": "Youth",
+          "date": "2026-09-21"
+        }
+      ]
+    },
+    {
+      "query": "Franklin",
+      "year": 2025,
+      "expectedId": 288913,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 1458,
+          "title": "Franklin",
+          "originalTitle": "Franklin",
+          "date": "1997-11-03"
+        },
+        {
+          "id": 197591,
+          "title": "Franklin",
+          "originalTitle": "Franklin",
+          "date": "2024-04-11"
+        },
+        {
+          "id": 288913,
+          "title": "Franklin",
+          "originalTitle": "فرانكلين",
+          "date": "2025-05-15"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 288913,
+          "title": "Franklin",
+          "originalTitle": "فرانكلين",
+          "date": "2025-05-15"
+        }
+      ]
+    },
+    {
+      "query": "Toxic",
+      "year": 2025,
+      "expectedId": 289196,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 289196,
+          "title": "Toxic",
+          "originalTitle": "Toxic",
+          "date": "2025-05-05"
+        },
+        {
+          "id": 242063,
+          "title": "TOXIC",
+          "originalTitle": "TOXIC",
+          "date": "2023-11-08"
+        },
+        {
+          "id": 334430,
+          "title": "Toxic",
+          "originalTitle": "Toxic",
+          "date": "2026-10-04"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 289196,
+          "title": "Toxic",
+          "originalTitle": "Toxic",
+          "date": "2025-05-05"
+        }
+      ]
+    },
+    {
+      "query": "CIA",
+      "year": 2026,
+      "expectedId": 289560,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 289560,
+          "title": "CIA",
+          "originalTitle": "CIA",
+          "date": "2026-02-23"
+        },
+        {
+          "id": 275634,
+          "title": "CIA",
+          "originalTitle": "CIA",
+          "date": "1992-02-11"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 289560,
+          "title": "CIA",
+          "originalTitle": "CIA",
+          "date": "2026-02-23"
+        }
+      ]
+    },
+    {
+      "query": "Scrubs",
+      "year": 2026,
+      "expectedId": 295778,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 4556,
+          "title": "Scrubs",
+          "originalTitle": "Scrubs",
+          "date": "2001-10-02"
+        },
+        {
+          "id": 295778,
+          "title": "Scrubs",
+          "originalTitle": "Scrubs",
+          "date": "2026-02-25"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 295778,
+          "title": "Scrubs",
+          "originalTitle": "Scrubs",
+          "date": "2026-02-25"
+        }
+      ]
+    },
+    {
+      "query": "Crowd Control",
+      "year": 2025,
+      "expectedId": 298732,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 298732,
+          "title": "Crowd Control",
+          "originalTitle": "Crowd Control",
+          "date": "2025-09-08"
+        },
+        {
+          "id": 109763,
+          "title": "Crowd Control",
+          "originalTitle": "Crowd Control",
+          "date": "2014-11-24"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 298732,
+          "title": "Crowd Control",
+          "originalTitle": "Crowd Control",
+          "date": "2025-09-08"
+        }
+      ]
+    },
+    {
+      "query": "A Tale of Two Cities",
+      "year": 2026,
+      "expectedId": 301626,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 301626,
+          "title": "A Tale of Two Cities",
+          "originalTitle": "A Tale of Two Cities",
+          "date": "2026-09-06"
+        },
+        {
+          "id": 46321,
+          "title": "A Tale of Two Cities",
+          "originalTitle": "A Tale of Two Cities",
+          "date": "1980-10-05"
+        },
+        {
+          "id": 23595,
+          "title": "A Tale of Two Cities",
+          "originalTitle": "A Tale of Two Cities",
+          "date": "1989-05-21"
+        },
+        {
+          "id": 21812,
+          "title": "A Tale of Two Cities",
+          "originalTitle": "A Tale of Two Cities",
+          "date": "1965-04-11"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 301626,
+          "title": "A Tale of Two Cities",
+          "originalTitle": "A Tale of Two Cities",
+          "date": "2026-09-06"
+        }
+      ]
+    },
+    {
+      "query": "Slo Pitch",
+      "year": 2026,
+      "expectedId": 310890,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 310890,
+          "title": "Slo Pitch",
+          "originalTitle": "Slo Pitch",
+          "date": "2026-09-25"
+        },
+        {
+          "id": 127554,
+          "title": "Slo Pitch",
+          "originalTitle": "Slo Pitch",
+          "date": "2020-08-03"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 310890,
+          "title": "Slo Pitch",
+          "originalTitle": "Slo Pitch",
+          "date": "2026-09-25"
+        }
+      ]
+    },
+    {
+      "query": "Apocalypse",
+      "year": 2026,
+      "expectedId": 315479,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 315479,
+          "title": "Apocalypse",
+          "originalTitle": "Apocalypse",
+          "date": "2026-09-13"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 315479,
+          "title": "Apocalypse",
+          "originalTitle": "Apocalypse",
+          "date": "2026-09-13"
+        }
+      ]
+    },
+    {
+      "query": "Winter",
+      "year": 2026,
+      "expectedId": 321532,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 321532,
+          "title": "Winter",
+          "originalTitle": "Winter",
+          "date": "2026-09-30"
+        },
+        {
+          "id": 62050,
+          "title": "Winter",
+          "originalTitle": "Winter",
+          "date": "2015-02-04"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 321532,
+          "title": "Winter",
+          "originalTitle": "Winter",
+          "date": "2026-09-30"
+        }
+      ]
+    },
+    {
+      "query": "Line of Fire",
+      "year": 2026,
+      "expectedId": 321958,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 321958,
+          "title": "Line of Fire",
+          "originalTitle": "Line of Fire",
+          "date": "2026-09-21"
+        },
+        {
+          "id": 844,
+          "title": "Line of Fire",
+          "originalTitle": "Line of Fire",
+          "date": "2003-12-02"
+        },
+        {
+          "id": 132873,
+          "title": "Line of Fire",
+          "originalTitle": "Line of Fire",
+          "date": "2002-12-31"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 321958,
+          "title": "Line of Fire",
+          "originalTitle": "Line of Fire",
+          "date": "2026-09-21"
+        }
+      ]
+    },
+    {
+      "query": "Treasure Island",
+      "year": 2026,
+      "expectedId": 333101,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 333101,
+          "title": "Treasure Island",
+          "originalTitle": "Treasure Island",
+          "date": "2026-10-11"
+        },
+        {
+          "id": 43065,
+          "title": "Treasure Island",
+          "originalTitle": "Treasure Island",
+          "date": "2012-01-01"
+        },
+        {
+          "id": 23956,
+          "title": "Treasure Island",
+          "originalTitle": "宝島",
+          "date": "1978-10-08"
+        },
+        {
+          "id": 293526,
+          "title": "Treasure Island",
+          "originalTitle": "Treasure Island",
+          "date": "1968-11-03"
+        },
+        {
+          "id": 29544,
+          "title": "Treasure Island",
+          "originalTitle": "Treasure Island",
+          "date": "1957-09-29"
+        },
+        {
+          "id": 19310,
+          "title": "Treasure Island",
+          "originalTitle": "Treasure Island",
+          "date": "1977-10-16"
+        },
+        {
+          "id": 263157,
+          "title": "Treasure Island",
+          "originalTitle": "Остров сокровищ",
+          "date": "1982-12-31"
+        },
+        {
+          "id": 89111,
+          "title": "Treasure Island",
+          "originalTitle": "Die Schatzinsel",
+          "date": "2007-11-26"
+        },
+        {
+          "id": 2106,
+          "title": "Treasure Island",
+          "originalTitle": "Treasure Island",
+          "date": ""
+        }
+      ],
+      "narrow": [
+        {
+          "id": 333101,
+          "title": "Treasure Island",
+          "originalTitle": "Treasure Island",
+          "date": "2026-10-11"
+        }
+      ]
+    },
+    {
+      "query": "Cautiva",
+      "year": 2026,
+      "expectedId": 333631,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 333631,
+          "title": "Captive",
+          "originalTitle": "Cautiva",
+          "date": "2026-09-18"
+        },
+        {
+          "id": 313081,
+          "title": "Cautiva",
+          "originalTitle": "Cautiva",
+          "date": "1986-03-24"
+        }
+      ],
+      "narrow": [
+        {
+          "id": 333631,
+          "title": "Captive",
+          "originalTitle": "Cautiva",
+          "date": "2026-09-18"
+        }
+      ]
+    },
+    {
+      "query": "Marked",
+      "year": 2026,
+      "expectedId": 335294,
+      "truncated": false,
+      "broad": [
+        {
+          "id": 293808,
+          "title": "Marked",
+          "originalTitle": "Marked",
+          "date": "2025-07-31"
+        },
+        {
+          "id": 335294,
+          "title": "Marked",
+          "originalTitle": "Marked",
+          "date": "2026-09-02"
+        },
+        {
+          "id": 58299,
+          "title": "Marked",
+          "originalTitle": "Marked",
+          "date": ""
+        }
+      ],
+      "narrow": [
+        {
+          "id": 335294,
+          "title": "Marked",
+          "originalTitle": "Marked",
+          "date": "2026-09-02"
+        }
+      ]
+    },
+    {
+      "query": "The Party",
+      "year": 2026,
+      "expectedId": 336024,
+      "truncated": true,
+      "broad": [
+        {
+          "id": 336024,
+          "title": "The Party",
+          "originalTitle": "The Party",
+          "date": "2026-10-11"
+        },
+        {
+          "id": 121072,
+          "title": "The Party",
+          "originalTitle": "Festen",
+          "date": "2019-04-14"
+        },
+        {
+          "id": 113225,
+          "title": "The Party",
+          "originalTitle": "O Rebu",
+          "date": "2014-07-14"
+        },
+        {
+          "id": 255516,
+          "title": "The Party",
+          "originalTitle": "The Party",
+          "date": "2023-03-28"
+        },
+        {
+          "id": 293479,
+          "title": "The Party",
+          "originalTitle": "The Party",
+          "date": "2025-05-30"
+        },
+        {
+          "id": 28146,
+          "title": "The Party",
+          "originalTitle": "The Party",
+          "date": ""
+        }
+      ],
+      "narrow": [
+        {
+          "id": 336024,
+          "title": "The Party",
+          "originalTitle": "The Party",
+          "date": "2026-10-11"
+        }
+      ]
+    }
+  ],
+  "movies": [
+    {
+      "query": "How To Make A Killing",
+      "year": 2026,
+      "previousId": 467905,
+      "expectedId": null,
+      "expectedKind": "ambiguous",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 467905,
+          "title": "How to Make a Killing",
+          "originalTitle": "How to Make a Killing",
+          "releaseDate": "2026-02-16",
+          "voteCount": 826,
+          "voteAverage": 6.912,
+          "popularity": 18.8121
+        },
+        {
+          "id": 1210732,
+          "title": "How to Make a Killing",
+          "originalTitle": "Un ours dans le Jura",
+          "releaseDate": "2025-01-01",
+          "voteCount": 417,
+          "voteAverage": 6.442,
+          "popularity": 4.8976
+        }
+      ],
+      "narrow": [
+        {
+          "id": 467905,
+          "title": "How to Make a Killing",
+          "originalTitle": "How to Make a Killing",
+          "releaseDate": "2026-02-16",
+          "voteCount": 825,
+          "voteAverage": 6.912,
+          "popularity": 18.8121
+        }
+      ]
+    },
+    {
+      "query": "The Fix",
+      "year": 2026,
+      "previousId": 1228834,
+      "expectedId": 1228834,
+      "expectedKind": "resolved",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 1228834,
+          "title": "The Fix",
+          "originalTitle": "The Fix",
+          "releaseDate": "2026-09-10",
+          "voteCount": 76,
+          "voteAverage": 6.3,
+          "popularity": 170.3138
+        },
+        {
+          "id": 931940,
+          "title": "The Fix",
+          "originalTitle": "The Fix",
+          "releaseDate": "2024-06-23",
+          "voteCount": 82,
+          "voteAverage": 5.22,
+          "popularity": 2.6252
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1228834,
+          "title": "The Fix",
+          "originalTitle": "The Fix",
+          "releaseDate": "2026-09-10",
+          "voteCount": 76,
+          "voteAverage": 6.322,
+          "popularity": 170.3138
+        }
+      ]
+    },
+    {
+      "query": "Together",
+      "year": 2025,
+      "previousId": 1242011,
+      "expectedId": null,
+      "expectedKind": "incomplete",
+      "truncated": true,
+      "broad": [
+        {
+          "id": 1242011,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-07-14",
+          "voteCount": 1419,
+          "voteAverage": 6.902,
+          "popularity": 11.1401
+        },
+        {
+          "id": 1677182,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-08-16",
+          "voteCount": 1,
+          "voteAverage": 10,
+          "popularity": 1.2496
+        },
+        {
+          "id": 1477704,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-01-09",
+          "voteCount": 1,
+          "voteAverage": 5,
+          "popularity": 1.531
+        },
+        {
+          "id": 1614737,
+          "title": "Together",
+          "originalTitle": "Zajedno",
+          "releaseDate": "2025-03-28",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.8885
+        },
+        {
+          "id": 1439431,
+          "title": "Together",
+          "originalTitle": "Magkasama",
+          "releaseDate": "2025-02-07",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.8307
+        },
+        {
+          "id": 1435396,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-03-28",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.4141
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1242011,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-07-14",
+          "voteCount": 1418,
+          "voteAverage": 6.902,
+          "popularity": 11.1401
+        },
+        {
+          "id": 1677182,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-08-16",
+          "voteCount": 1,
+          "voteAverage": 10,
+          "popularity": 1.2496
+        },
+        {
+          "id": 1477704,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-01-09",
+          "voteCount": 1,
+          "voteAverage": 5,
+          "popularity": 1.531
+        },
+        {
+          "id": 1435396,
+          "title": "Together",
+          "originalTitle": "Together",
+          "releaseDate": "2025-03-28",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.4141
+        },
+        {
+          "id": 1614737,
+          "title": "Together",
+          "originalTitle": "Zajedno",
+          "releaseDate": "2025-03-28",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.8885
+        },
+        {
+          "id": 1439431,
+          "title": "Together",
+          "originalTitle": "Magkasama",
+          "releaseDate": "2025-02-07",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.8307
+        }
+      ]
+    },
+    {
+      "query": "Runner",
+      "year": 2026,
+      "previousId": 1377237,
+      "expectedId": null,
+      "expectedKind": "ambiguous",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 1377237,
+          "title": "Runner",
+          "originalTitle": "Runner",
+          "releaseDate": "2026-09-07",
+          "voteCount": 704,
+          "voteAverage": 8.343,
+          "popularity": 130.9361
+        },
+        {
+          "id": 1477049,
+          "title": "Runner",
+          "originalTitle": "Corredora",
+          "releaseDate": "2026-05-29",
+          "voteCount": 2,
+          "voteAverage": 7,
+          "popularity": 2.1644
+        },
+        {
+          "id": 1712475,
+          "title": "RUNNER",
+          "originalTitle": "RUNNER",
+          "releaseDate": "2026-10-23",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 1.1956
+        },
+        {
+          "id": 1760216,
+          "title": "Runner",
+          "originalTitle": "Ο Πακετάς",
+          "releaseDate": "2026-09-10",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 1.4471
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1377237,
+          "title": "Runner",
+          "originalTitle": "Runner",
+          "releaseDate": "2026-09-07",
+          "voteCount": 702,
+          "voteAverage": 8.343,
+          "popularity": 130.9361
+        },
+        {
+          "id": 1477049,
+          "title": "Runner",
+          "originalTitle": "Corredora",
+          "releaseDate": "2026-05-29",
+          "voteCount": 2,
+          "voteAverage": 7,
+          "popularity": 2.1644
+        },
+        {
+          "id": 1712475,
+          "title": "RUNNER",
+          "originalTitle": "RUNNER",
+          "releaseDate": "2026-10-23",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 1.1956
+        },
+        {
+          "id": 1760216,
+          "title": "Runner",
+          "originalTitle": "Ο Πακετάς",
+          "releaseDate": "2026-09-10",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 1.4471
+        }
+      ]
+    },
+    {
+      "query": "Undertone",
+      "year": 2025,
+      "previousId": 1471951,
+      "expectedId": null,
+      "expectedKind": "ambiguous",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 1480387,
+          "title": "undertone",
+          "originalTitle": "undertone",
+          "releaseDate": "2026-03-12",
+          "voteCount": 724,
+          "voteAverage": 5.968,
+          "popularity": 17.0315
+        },
+        {
+          "id": 1471951,
+          "title": "Undertone",
+          "originalTitle": "Undertone",
+          "releaseDate": "2025-08-08",
+          "voteCount": 1,
+          "voteAverage": 4,
+          "popularity": 1.4518
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1471951,
+          "title": "Undertone",
+          "originalTitle": "Undertone",
+          "releaseDate": "2025-08-08",
+          "voteCount": 1,
+          "voteAverage": 4,
+          "popularity": 1.4518
+        }
+      ]
+    },
+    {
+      "query": "Best of the Best",
+      "year": 2026,
+      "previousId": 1514863,
+      "expectedId": 1514863,
+      "expectedKind": "resolved",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 1514863,
+          "title": "Best of the Best",
+          "originalTitle": "Best of the Best",
+          "releaseDate": "2026-09-18",
+          "voteCount": 90,
+          "voteAverage": 5.7,
+          "popularity": 7.4157
+        },
+        {
+          "id": 238751,
+          "title": "Best of the Best",
+          "originalTitle": "Best of the Best",
+          "releaseDate": "1989-11-10",
+          "voteCount": 362,
+          "voteAverage": 6.507,
+          "popularity": 6.0252
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1514863,
+          "title": "Best of the Best",
+          "originalTitle": "Best of the Best",
+          "releaseDate": "2026-09-18",
+          "voteCount": 90,
+          "voteAverage": 5.7,
+          "popularity": 7.4157
+        }
+      ]
+    },
+    {
+      "query": "Whistle",
+      "year": 2025,
+      "previousId": 1526225,
+      "expectedId": null,
+      "expectedKind": "ambiguous",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 1193501,
+          "title": "Whistle",
+          "originalTitle": "Whistle",
+          "releaseDate": "2026-01-20",
+          "voteCount": 725,
+          "voteAverage": 6.308,
+          "popularity": 15.097
+        },
+        {
+          "id": 1526225,
+          "title": "Whistle",
+          "originalTitle": "Whistle",
+          "releaseDate": "2025-09-05",
+          "voteCount": 1,
+          "voteAverage": 10,
+          "popularity": 2.3453
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1526225,
+          "title": "Whistle",
+          "originalTitle": "Whistle",
+          "releaseDate": "2025-09-05",
+          "voteCount": 1,
+          "voteAverage": 10,
+          "popularity": 2.3453
+        }
+      ]
+    },
+    {
+      "query": "Ela",
+      "year": 2026,
+      "previousId": 1772434,
+      "expectedId": 1772434,
+      "expectedKind": "resolved",
+      "truncated": true,
+      "broad": [
+        {
+          "id": 1772434,
+          "title": "Ela",
+          "originalTitle": "Ela",
+          "releaseDate": "2026-07-14",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.8983
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1772434,
+          "title": "Ela",
+          "originalTitle": "Ela",
+          "releaseDate": "2026-07-14",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.8983
+        }
+      ]
+    },
+    {
+      "query": "Ghost Light",
+      "year": 2026,
+      "previousId": 1778286,
+      "expectedId": null,
+      "expectedKind": "ambiguous",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 1778286,
+          "title": "Ghost Light",
+          "originalTitle": "Ghost Light",
+          "releaseDate": "2026-09-29",
+          "voteCount": 2,
+          "voteAverage": 8.25,
+          "popularity": 3.5044
+        },
+        {
+          "id": 1757894,
+          "title": "Ghost Light",
+          "originalTitle": "Ghost Light",
+          "releaseDate": "2026-05-31",
+          "voteCount": 1,
+          "voteAverage": 10,
+          "popularity": 0.4985
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1778286,
+          "title": "Ghost Light",
+          "originalTitle": "Ghost Light",
+          "releaseDate": "2026-09-29",
+          "voteCount": 2,
+          "voteAverage": 8.25,
+          "popularity": 3.5044
+        },
+        {
+          "id": 1757894,
+          "title": "Ghost Light",
+          "originalTitle": "Ghost Light",
+          "releaseDate": "2026-05-31",
+          "voteCount": 1,
+          "voteAverage": 10,
+          "popularity": 0.4985
+        }
+      ]
+    },
+    {
+      "query": "the twist",
+      "year": 2026,
+      "previousId": 1789777,
+      "expectedId": 1789777,
+      "expectedKind": "resolved",
+      "truncated": false,
+      "broad": [
+        {
+          "id": 79891,
+          "title": "The Twist",
+          "originalTitle": "Folies bourgeoises",
+          "releaseDate": "1976-06-23",
+          "voteCount": 13,
+          "voteAverage": 4.1,
+          "popularity": 2.7558
+        },
+        {
+          "id": 1789777,
+          "title": "The Twist",
+          "originalTitle": "The Twist",
+          "releaseDate": "2026-05-15",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.943
+        }
+      ],
+      "narrow": [
+        {
+          "id": 1789777,
+          "title": "The Twist",
+          "originalTitle": "The Twist",
+          "releaseDate": "2026-05-15",
+          "voteCount": 0,
+          "voteAverage": 0,
+          "popularity": 0.943
+        }
+      ]
+    }
+  ]
+}

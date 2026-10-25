@@ -70,10 +70,7 @@ describe('migration/entity schema authority', () => {
       });
       await current.initialize();
       const currentApplied = await current.runMigrations();
-      assert.equal(
-        currentApplied.at(-1)?.name,
-        'AddTmdbCollectionMembership1790000000046'
-      );
+      assert.equal(currentApplied.at(-1)?.name, 'AddFreshV21790000000048');
 
       assert.deepEqual(
         await current.query(

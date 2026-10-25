@@ -15,6 +15,8 @@ export interface FreshStatus {
     | 'unavailable'
     | 'disabled';
   refreshing: boolean;
+  backfillComplete: boolean;
+  pendingWork: number;
   lastRefresh?: string;
   itemCount: number;
   error?: string;

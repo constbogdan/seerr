@@ -19,10 +19,7 @@ describe('Series relocation migration', () => {
     try {
       await database.initialize();
       const applied = await database.runMigrations();
-      assert.equal(
-        applied.at(-1)?.name,
-        'AddTmdbCollectionMembership1790000000046'
-      );
+      assert.equal(applied.at(-1)?.name, 'AddFreshV21790000000048');
       const runner = database.createQueryRunner();
       assert.equal(await runner.hasTable('series_relocation_execution'), true);
       const table = await runner.getTable('series_relocation_execution');
@@ -35,6 +32,8 @@ describe('Series relocation migration', () => {
       );
       assert.deepEqual(await database.query('PRAGMA foreign_key_check'), []);
 
+      await database.undoLastMigration();
+      assert.equal(await runner.hasTable('fresh_discovery'), false);
       await database.undoLastMigration();
       assert.equal(
         await runner.hasColumn('canonical_media', 'tmdbCollectionId'),
