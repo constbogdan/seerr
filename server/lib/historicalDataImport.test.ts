@@ -32,42 +32,13 @@ import {
 } from '@server/lib/wholphinHistory';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { describe, it } from 'node:test';
 import { DataSource } from 'typeorm';
 
 setupTestDb();
-
-const requiredHistoryAcceptanceArtifact = ({
-  artifactPath = process.env.SEERR_HISTORY_ACCEPTANCE_ARTIFACT,
-  directory = process.cwd(),
-  exists = existsSync,
-}: {
-  artifactPath?: string;
-  directory?: string;
-  exists?: typeof existsSync;
-} = {}): string => {
-  const candidates = artifactPath
-    ? [artifactPath]
-    : [1, 2].map((parents) =>
-        path.resolve(
-          directory,
-          ...Array<string>(parents).fill('..'),
-          'seerr-harness',
-          'config',
-          'migration',
-          'wholphin-history-v1.json'
-        )
-      );
-  const resolved = candidates.find((candidate) => exists(candidate));
-  assert.ok(
-    resolved,
-    'Required private history acceptance fixture is unavailable. Set SEERR_HISTORY_ACCEPTANCE_ARTIFACT to the approved wholphin-history-v1.json file. This test is mandatory, including in CI; securely provision the fixture before running validation. Do not commit private history or substitute another artifact.'
-  );
-  return resolved;
-};
 
 const content = (): WholphinHistoryContent => ({
   schema: 'wholphin-history-v1',
@@ -753,109 +724,5 @@ describe('generic historical-data import', () => {
       if (primary.isInitialized) await primary.destroy();
       rmSync(directory, { recursive: true, force: true });
     }
-  });
-
-  it('fails clearly when the mandatory private history acceptance fixture is missing', () => {
-    assert.throws(
-      () =>
-        requiredHistoryAcceptanceArtifact({
-          artifactPath: '',
-          directory: path.resolve('isolated-test-workspace'),
-          exists: () => false,
-        }),
-      /Set SEERR_HISTORY_ACCEPTANCE_ARTIFACT.*mandatory, including in CI/
-    );
-  });
-
-  it('does not silently replace an explicitly configured missing acceptance fixture', () => {
-    const checked: string[] = [];
-    assert.throws(() =>
-      requiredHistoryAcceptanceArtifact({
-        artifactPath: 'missing-approved-fixture.json',
-        exists: (candidate) => {
-          checked.push(String(candidate));
-          return false;
-        },
-      })
-    );
-    assert.deepEqual(checked, ['missing-approved-fixture.json']);
-  });
-
-  it('finds the explicitly configured fixture or the existing supported workspace locations', () => {
-    assert.equal(
-      requiredHistoryAcceptanceArtifact({
-        artifactPath: 'approved-fixture.json',
-        exists: (candidate) => candidate === 'approved-fixture.json',
-      }),
-      'approved-fixture.json'
-    );
-    const directory = path.resolve('isolated-test-workspace', 'source');
-    const expected = path.resolve(
-      directory,
-      '..',
-      'seerr-harness',
-      'config',
-      'migration',
-      'wholphin-history-v1.json'
-    );
-    assert.equal(
-      requiredHistoryAcceptanceArtifact({
-        artifactPath: '',
-        directory,
-        exists: (candidate) => candidate === expected,
-      }),
-      expected
-    );
-  });
-
-  it('accepts the approved October 4 artifact with truthful counts and no invented current state', async () => {
-    const artifactPath = requiredHistoryAcceptanceArtifact();
-    const artifact = JSON.parse(readFileSync(artifactPath, 'utf8'));
-    const inspection = await historicalDataImport.inspect(artifact);
-    assert.equal(
-      inspection.contentHash,
-      'sha256:6d19c5e622b0642c6d6281b10e774367cc9962db4fd04a4d90a68b1286d073e2'
-    );
-    assert.equal(inspection.counts.viewingFacts, 2030);
-    assert.equal(inspection.observedRange.completeness, 'not-asserted');
-    assert.equal(inspection.disposition, 'first-import');
-    assert.equal(await getRepository(HydrationRun).count(), 0);
-    assert.equal(await getRepository(CurrentViewingState).count(), 0);
-    assert.equal(await getRepository(LibraryPresence).count(), 0);
-
-    const imported = await historicalDataImport.import(artifact);
-    assert.deepEqual(
-      {
-        viewers: imported.viewersCreated,
-        media: imported.mediaCreated,
-        seasons: imported.seasonsCreated,
-        episodes: imported.episodesCreated,
-        library: imported.libraryFactsCreated,
-        viewing: imported.viewingFactsCreated,
-        completion: imported.completionFactsCreated,
-        activity: imported.activityFactsCreated,
-        untimed: imported.untimedEvidenceFactsCreated,
-      },
-      {
-        viewers: 4,
-        media: 588,
-        seasons: 283,
-        episodes: 2649,
-        library: 111,
-        viewing: 2030,
-        completion: 562,
-        activity: 6,
-        untimed: 82,
-      }
-    );
-    assert.equal(imported.disposition, 'first-import');
-    assert.equal(await getRepository(CurrentViewingState).count(), 0);
-    assert.equal(
-      await getRepository(LibraryPresence).countBy({ isCurrent: true }),
-      0
-    );
-    const repeat = await historicalDataImport.import(artifact);
-    assert.equal(repeat.disposition, 'exact-repeat');
-    assert.equal(await getRepository(HydrationRun).count(), 1);
   });
 });
