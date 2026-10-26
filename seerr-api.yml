@@ -49,6 +49,22 @@ servers:
         default: http://localhost:5055
 
 components:
+  responses:
+    SubtitleReportError:
+      description: Report rejected. No issue is created for rejected authentication, identity or policy checks.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [message]
+            properties:
+              message: { type: string }
+              errors:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
   schemas:
     LibraryUser:
       type: object
@@ -1677,6 +1693,9 @@ components:
         jellyfinForgotPasswordUrl:
           type: string
           example: 'http://my.jellyfin.host/web/index.html#!/forgotpassword.html'
+        subtitleReportingEnabled:
+          type: boolean
+          description: Enable token-only subtitle reporting (disabled by default). Requires a safe HTTPS externalHostname; its exact origin is the only permitted Jellyfin Web Origin. Existing linked-user issue permissions remain required. Omission preserves the existing setting on updates.
         adminUser:
           type: string
           example: 'admin'
@@ -3730,6 +3749,10 @@ components:
               meaning: 'Some material may not be suitable for children under 10.'
               order: 2
   securitySchemes:
+    jellyfinToken:
+      type: http
+      scheme: bearer
+      description: Jellyfin user access token, verified against the configured server. Seerr cookies and API keys are not accepted.
     cookieAuth:
       type: apiKey
       name: connect.sid
@@ -3740,6 +3763,84 @@ components:
       name: X-Api-Key
 
 paths:
+  /integrations/jellyfin/subtitle-issues:
+    options:
+      security: []
+      summary: Allowed Jellyfin Web origin preflight
+      responses:
+        '204':
+          description: Preflight accepted only when reporting is enabled; only the HTTPS origin of the configured Jellyfin External URL is allowed.
+        '403':
+          $ref: '#/components/responses/SubtitleReportError'
+        '503':
+          $ref: '#/components/responses/SubtitleReportError'
+    post:
+      tags: [media]
+      summary: Report a subtitle issue using a Jellyfin user token
+      description: |
+        Resolves authoritative typed identity in the verified user's Jellyfin context.
+        Regular Seasons use their authoritative parent Series and positive index,
+        reporting all Episodes of that Season. Season 0-wide reporting is rejected;
+        individual Specials Episodes remain supported. Series-wide reports retain 0/0.
+        Requires an existing linked Seerr user with CREATE_ISSUES or MANAGE_ISSUES.
+        Subtitle reporting must be explicitly enabled in Jellyfin service settings;
+        it is disabled by default, including for native requests.
+        Only this token-only operation is exempt from cookie CSRF; browser Origins
+        must match the configured Jellyfin external hostname origin. Native requests
+        may omit Origin. HTTPS is required except for loopback development.
+        Duplicate open reports are acknowledged without comments or notifications.
+      security:
+        - jellyfinToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [itemId]
+              properties:
+                itemId:
+                  type: string
+                  maxLength: 36
+                  pattern: '^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'
+      responses:
+        '201':
+          description: Subtitle issue created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, enum: [created] }
+        '200':
+          description: Equivalent open issue already exists. No reporter or issue details are disclosed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, enum: [already-reported] }
+        '400':
+          $ref: '#/components/responses/SubtitleReportError'
+        '401':
+          $ref: '#/components/responses/SubtitleReportError'
+        '403':
+          $ref: '#/components/responses/SubtitleReportError'
+        '404':
+          $ref: '#/components/responses/SubtitleReportError'
+        '422':
+          $ref: '#/components/responses/SubtitleReportError'
+        '429':
+          $ref: '#/components/responses/SubtitleReportError'
+        '502':
+          $ref: '#/components/responses/SubtitleReportError'
+        '503':
+          $ref: '#/components/responses/SubtitleReportError'
   /status:
     get:
       summary: Get Seerr status
@@ -3888,7 +3989,7 @@ paths:
                 $ref: '#/components/schemas/JellyfinSettings'
     post:
       summary: Update Jellyfin settings
-      description: Updates Jellyfin settings with the provided values.
+      description: Updates Jellyfin settings with the provided values. Subtitle reporting is disabled by default and reuses the existing connection, externalHostname origin and linked users. Enabling requires an HTTPS externalHostname without credentials, query or fragment.
       tags:
         - settings
       requestBody:
@@ -3898,6 +3999,15 @@ paths:
             schema:
               $ref: '#/components/schemas/JellyfinSettings'
       responses:
+        '400':
+          description: Invalid subtitle-reporting enable flag or unsafe HTTPS External URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '200':
           description: 'Values were successfully updated'
           content:

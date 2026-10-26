@@ -28,6 +28,7 @@ import { MediaServerType } from '@server/constants/server';
 import type Issue from '@server/entity/Issue';
 import type { MovieDetails } from '@server/models/Movie';
 import type { TvDetails } from '@server/models/Tv';
+import { hasIssueSeason } from '@server/utils/issueScope';
 import axios from 'axios';
 import { Field, Form, Formik } from 'formik';
 import Link from 'next/link';
@@ -334,14 +335,14 @@ const IssueDetails = () => {
                     <span>{intl.formatMessage(messages.problemseason)}</span>
                     <span className="media-fact-value">
                       {intl.formatMessage(
-                        issueData.problemSeason > 0
+                        hasIssueSeason(issueData)
                           ? messages.season
                           : messages.allseasons,
                         { seasonNumber: issueData.problemSeason }
                       )}
                     </span>
                   </div>
-                  {issueData.problemSeason > 0 && (
+                  {hasIssueSeason(issueData) && (
                     <div className="media-fact">
                       <span>{intl.formatMessage(messages.problemepisode)}</span>
                       <span className="media-fact-value">
@@ -600,14 +601,14 @@ const IssueDetails = () => {
                   <span>{intl.formatMessage(messages.problemseason)}</span>
                   <span className="media-fact-value">
                     {intl.formatMessage(
-                      issueData.problemSeason > 0
+                      hasIssueSeason(issueData)
                         ? messages.season
                         : messages.allseasons,
                       { seasonNumber: issueData.problemSeason }
                     )}
                   </span>
                 </div>
-                {issueData.problemSeason > 0 && (
+                {hasIssueSeason(issueData) && (
                   <div className="media-fact">
                     <span>{intl.formatMessage(messages.problemepisode)}</span>
                     <span className="media-fact-value">

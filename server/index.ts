@@ -27,6 +27,7 @@ import { getSettings } from '@server/lib/settings';
 import { ensureActiveWatchlistIntentOccurrences } from '@server/lib/watchlistLifecycle';
 import logger from '@server/logger';
 import clearCookies from '@server/middleware/clearcookies';
+import { isSubtitleReportRequest } from '@server/middleware/subtitleReporting';
 import routes from '@server/routes';
 import avatarproxy from '@server/routes/avatarproxy';
 import imageproxy from '@server/routes/imageproxy';
@@ -220,18 +221,20 @@ app
       }
     });
     if (settings.network.csrfProtection) {
-      server.use(
-        csurf({
-          cookie: {
-            httpOnly: true,
-            sameSite: true,
-            secure: !dev,
-            key: '_csrf',
-            path: '/',
-          },
-        })
+      const csrf = csurf({
+        cookie: {
+          httpOnly: true,
+          sameSite: true,
+          secure: !dev,
+          key: '_csrf',
+          path: '/',
+        },
+      });
+      server.use((req, res, next) =>
+        isSubtitleReportRequest(req) ? next() : csrf(req, res, next)
       );
       server.use((req, res, next) => {
+        if (isSubtitleReportRequest(req)) return next();
         res.cookie('XSRF-TOKEN', req.csrfToken(), {
           sameSite: true,
           secure: !dev,

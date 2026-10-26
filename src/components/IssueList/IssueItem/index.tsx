@@ -12,6 +12,7 @@ import { MediaType } from '@server/constants/media';
 import type Issue from '@server/entity/Issue';
 import type { MovieDetails } from '@server/models/Movie';
 import type { TvDetails } from '@server/models/Tv';
+import { hasIssueSeason } from '@server/utils/issueScope';
 import Link from 'next/link';
 import { useInView } from 'react-intersection-observer';
 import { FormattedRelativeTime, useIntl } from 'react-intl';
@@ -76,12 +77,12 @@ const IssueItem = ({ issue }: IssueItemProps) => {
       <>
         <span className="card-field-name">
           {intl.formatMessage(messages.seasons, {
-            seasonCount: issue.problemSeason ? 1 : 0,
+            seasonCount: hasIssueSeason(issue) ? 1 : 0,
           })}
         </span>
         <span className="mr-4 uppercase">
           <Badge>
-            {issue.problemSeason > 0
+            {hasIssueSeason(issue)
               ? issue.problemSeason
               : intl.formatMessage(globalMessages.all)}
           </Badge>
@@ -89,7 +90,7 @@ const IssueItem = ({ issue }: IssueItemProps) => {
       </>
     );
 
-    if (issue.problemSeason > 0) {
+    if (hasIssueSeason(issue)) {
       problemSeasonEpisodeLine.push(
         <>
           <span className="card-field-name">

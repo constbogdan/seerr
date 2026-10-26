@@ -81,6 +81,17 @@ availability, and completion never create or remove membership. Cross-user
 enriched views require administrator authority or the purpose-built
 `WATCHLIST_VIEW` permission; `MANAGE_REQUESTS` alone is insufficient.
 
+### Subtitle issue reporting — backend and disabled Web candidate pending review
+
+The token-only backend candidate and its security/deployment boundaries are in
+[Subtitle issue reporting](SUBTITLE_REPORTING.md). It reuses existing Issues and
+linked Jellyfin users without provisioning accounts or making media requests.
+The Jellyfin Web candidate uses direct HTTPS, not the previously proposed proxy.
+Its trusted Seerr origin is empty and reporting remains disabled until explicitly
+configured after review. Real Chromium acceptance uses only an isolated HTTPS
+fixture and in-memory database; the Fresh V2 harness is preserved. Mosaic is not
+implemented. No live issue creation or deployment is part of these stages.
+
 ### Local harness
 
 The `seerr-harness` workspace is a separate repository for running queue or the

@@ -27,6 +27,7 @@ import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
 import { plexFullScanner } from '@server/lib/scanners/plex';
 import type { JobId, Library, MainSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import { isValidSubtitleReportingSettings } from '@server/lib/settings/subtitleReporting';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import discoverSettingRoutes from '@server/routes/settings/discover';
@@ -332,6 +333,14 @@ settingsRoutes.get('/jellyfin', (_req, res) => {
 settingsRoutes.post('/jellyfin', async (req, res, next) => {
   const userRepository = getRepository(User);
   const settings = getSettings();
+  const tempJellyfinSettings = { ...settings.jellyfin, ...req.body };
+  if (!isValidSubtitleReportingSettings(tempJellyfinSettings)) {
+    return next({
+      status: 400,
+      message:
+        'Subtitle reporting requires a boolean enable flag and a safe HTTPS Jellyfin External URL without credentials, query or fragment.',
+    });
+  }
 
   try {
     const admin = await userRepository.findOneOrFail({
@@ -339,8 +348,6 @@ settingsRoutes.post('/jellyfin', async (req, res, next) => {
       select: ['id', 'jellyfinUserId', 'jellyfinDeviceId'],
       order: { id: 'ASC' },
     });
-
-    const tempJellyfinSettings = { ...settings.jellyfin, ...req.body };
 
     const jellyfinClient = new JellyfinAPI(
       getHostname(tempJellyfinSettings),
