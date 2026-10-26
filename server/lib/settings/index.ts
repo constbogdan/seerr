@@ -67,6 +67,7 @@ export interface JellyfinSettings {
   urlBase?: string;
   externalHostname?: string;
   jellyfinForgotPasswordUrl?: string;
+  subtitleReportingEnabled?: boolean;
   libraries: Library[];
   serverId: string;
   apiKey: string;
@@ -571,6 +572,7 @@ class Settings {
         urlBase: '',
         externalHostname: '',
         jellyfinForgotPasswordUrl: '',
+        subtitleReportingEnabled: false,
         libraries: [],
         serverId: '',
         apiKey: '',

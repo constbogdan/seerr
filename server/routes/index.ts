@@ -49,11 +49,14 @@ import personRoutes from './person';
 import requestRoutes from './request';
 import searchRoutes from './search';
 import serviceRoutes from './service';
+import subtitleReportingRoutes from './subtitleReporting';
 import tvRoutes from './tv';
 import user from './user';
 
 const router = Router();
 
+// Token-only integration must never inherit session/API-key impersonation.
+router.use('/integrations/jellyfin/subtitle-issues', subtitleReportingRoutes);
 router.use(checkUser);
 
 router.get<unknown, StatusResponse>('/status', async (req, res) => {

@@ -5,6 +5,7 @@ import Issue from '@server/entity/Issue';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import { Permission } from '@server/lib/permissions';
 import logger from '@server/logger';
+import { hasIssueSeason } from '@server/utils/issueScope';
 import { sortBy } from 'lodash';
 import type {
   EntitySubscriberInterface,
@@ -44,7 +45,7 @@ export class IssueSubscriber implements EntitySubscriberInterface<Issue> {
       const [firstComment] = sortBy(entity.comments, 'id');
       const extra: { name: string; value: string }[] = [];
 
-      if (entity.media.mediaType === MediaType.TV && entity.problemSeason > 0) {
+      if (entity.media.mediaType === MediaType.TV && hasIssueSeason(entity)) {
         extra.push({
           name: 'Affected Season',
           value: entity.problemSeason.toString(),

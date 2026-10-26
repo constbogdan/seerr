@@ -8,6 +8,7 @@ import type {
   IssueRequestBody,
   IssueResultsResponse,
 } from '@server/interfaces/api/issueInterfaces';
+import { createIssue } from '@server/lib/createIssue';
 import { Permission } from '@server/lib/permissions';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
@@ -144,21 +145,14 @@ issueRoutes.post<Record<string, string>, Issue, IssueRequestBody>(
       createdBy = user;
     }
 
-    const issue = new Issue({
+    const newIssue = await createIssue(issueRepository.manager, {
       createdBy,
       issueType: req.body.issueType,
       problemSeason: req.body.problemSeason,
       problemEpisode: req.body.problemEpisode,
       media,
-      comments: [
-        new IssueComment({
-          user: createdBy,
-          message: req.body.message,
-        }),
-      ],
+      message: req.body.message,
     });
-
-    const newIssue = await issueRepository.save(issue);
 
     return res.status(201).json(newIssue);
   }
