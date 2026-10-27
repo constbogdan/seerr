@@ -17,6 +17,10 @@ import {
 } from '@server/lib/scanners/jellyfin';
 import type { Library } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import {
+  assertTargetCurrent,
+  type TargetedReconciliationControl,
+} from '@server/lib/targetedReconciliation';
 
 export interface JellyfinTargetedMediaTarget {
   mediaId: number;
@@ -81,14 +85,19 @@ interface TargetedAvailabilityDependencies {
   prepareIdentityMappings: () => Promise<void>;
   getAnimeIdentity: (anidbId: number) => AnidbItem | undefined;
   isSeparate4kEnabled: (mediaType: MediaType) => boolean;
-  createContext: () => Promise<JellyfinScannerContext | undefined>;
+  createContext: (
+    control?: TargetedReconciliationControl
+  ) => Promise<JellyfinScannerContext | undefined>;
   getMovieTitles: (
     tmdbId: number
   ) => Promise<{ titles: string[]; imdbId?: string }>;
   getTvTitles: (
     tmdbId: number
   ) => Promise<{ titles: string[]; tvdbId?: number }>;
-  processItems: (items: JellyfinLibraryItem[]) => Promise<{
+  processItems: (
+    items: JellyfinLibraryItem[],
+    control?: TargetedReconciliationControl
+  ) => Promise<{
     status: 'completed' | 'skipped' | 'aborted' | 'failed';
     durationMs: number;
     errorType?: string;
@@ -171,8 +180,8 @@ const defaultDependencies = (): TargetedAvailabilityDependencies => {
         tvdbId: show.external_ids?.tvdb_id,
       };
     },
-    processItems: (items) =>
-      new JellyfinScanner().processKnownJellyfinItems(items),
+    processItems: (items, control) =>
+      new JellyfinScanner().processKnownJellyfinItems(items, control),
     isSatisfied: defaultIsSatisfied,
     now: Date.now,
   };
@@ -186,12 +195,19 @@ export class JellyfinTargetedAvailability {
   }
 
   public async reconcile(
-    target: JellyfinTargetedMediaTarget
+    target: JellyfinTargetedMediaTarget,
+    control?: TargetedReconciliationControl
   ): Promise<TargetedReadiness> {
-    const lookup = await this.lookup(target);
+    assertTargetCurrent(control);
+    const lookup = await this.lookup(target, control);
+    assertTargetCurrent(control);
     if (lookup.state !== 'ready') return lookup;
 
-    const processing = await this.dependencies.processItems(lookup.items);
+    const processing = await this.dependencies.processItems(
+      lookup.items,
+      control
+    );
+    assertTargetCurrent(control);
     if (processing.status !== 'completed') {
       return {
         state: 'unknown',
@@ -203,7 +219,9 @@ export class JellyfinTargetedAvailability {
       };
     }
 
-    if (!(await this.dependencies.isSatisfied(target))) {
+    const satisfied = await this.dependencies.isSatisfied(target);
+    assertTargetCurrent(control);
+    if (!satisfied) {
       return {
         state: 'not_ready',
         reason: 'canonical_state_unresolved',
@@ -223,7 +241,8 @@ export class JellyfinTargetedAvailability {
   }
 
   public async lookup(
-    target: JellyfinTargetedMediaTarget
+    target: JellyfinTargetedMediaTarget,
+    control?: TargetedReconciliationControl
   ): Promise<TargetedLookup> {
     const startedAt = this.dependencies.now();
     let requestCount = 0;
@@ -231,9 +250,14 @@ export class JellyfinTargetedAvailability {
       ? 'exact-id'
       : 'bounded-search';
     let exactFailureReason: TargetedReadinessReason | undefined;
+    const countRequest = () => {
+      assertTargetCurrent(control);
+      requestCount += 1;
+    };
 
     try {
-      const context = await this.dependencies.createContext();
+      assertTargetCurrent(control);
+      const context = await this.dependencies.createContext(control);
       if (!context) {
         return {
           state: 'unknown',
@@ -249,7 +273,7 @@ export class JellyfinTargetedAvailability {
       );
 
       if (target.jellyfinMediaId) {
-        requestCount += 1;
+        countRequest();
         const exact = await context.client.getItemData(target.jellyfinMediaId);
         if (exact) {
           if (exact.ProviderIds.AniDB) {
@@ -260,7 +284,7 @@ export class JellyfinTargetedAvailability {
             target,
             context,
             separate4kEnabled,
-            () => (requestCount += 1)
+            countRequest
           );
           if (exactReady.items.length > 0 && exactReady.complete) {
             return {
@@ -276,6 +300,7 @@ export class JellyfinTargetedAvailability {
       }
 
       method = 'bounded-search';
+      assertTargetCurrent(control);
       const canonical =
         target.mediaType === MediaType.MOVIE
           ? await this.dependencies.getMovieTitles(target.tmdbId)
@@ -296,7 +321,7 @@ export class JellyfinTargetedAvailability {
       const candidates: JellyfinLibraryItemExtended[] = [];
       for (const library of libraries) {
         for (const title of canonical.titles) {
-          requestCount += 1;
+          countRequest();
           candidates.push(
             ...(await context.client.searchItems({
               parentId: library.id,
@@ -321,7 +346,7 @@ export class JellyfinTargetedAvailability {
         identityTarget,
         context,
         separate4kEnabled,
-        () => (requestCount += 1)
+        countRequest
       );
       if (ready.items.length > 0 && ready.complete) {
         return {

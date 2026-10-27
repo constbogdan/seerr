@@ -12,6 +12,7 @@ const DEFAULT_TTL = 300;
 const DEFAULT_ROLLING_BUFFER = 10000;
 
 export interface ExternalAPIOptions {
+  signal?: AbortSignal;
   nodeCache?: CacheStore;
   headers?: Record<string, unknown>;
   timeout?: number;
@@ -41,6 +42,7 @@ class ExternalAPI {
       baseURL: baseUrl,
       params,
       timeout: options.timeout,
+      ...(options.signal && { signal: options.signal }),
       headers: {
         'Content-Type': 'application/json',
         Accept: 'application/json',

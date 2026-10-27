@@ -219,6 +219,11 @@ export interface JellyfinItemsOptions {
   allowEmptyOnAvailabilitySyncError?: boolean;
 }
 
+export interface JellyfinRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 export const MAX_JELLYFIN_ITEM_IDS = 100;
 const JELLYFIN_USER_DATA_TIMEOUT_MS = 15_000;
 
@@ -229,7 +234,8 @@ class JellyfinAPI extends ExternalAPI {
   constructor(
     jellyfinHost: string,
     authToken?: string | null,
-    deviceId?: string | null
+    deviceId?: string | null,
+    requestOptions: JellyfinRequestOptions = {}
   ) {
     const settings = getSettings();
     const safeDeviceId =
@@ -251,6 +257,8 @@ class JellyfinAPI extends ExternalAPI {
       jellyfinHost,
       {},
       {
+        timeout: requestOptions.timeoutMs,
+        signal: requestOptions.signal,
         headers: {
           Authorization: authHeaderVal,
           'Content-Type': 'application/json',
@@ -581,9 +589,13 @@ class JellyfinAPI extends ExternalAPI {
   }
 
   public async getItemData(
-    id: string
+    id: string,
+    options: Pick<
+      JellyfinItemsOptions,
+      'allowEmptyOnAvailabilitySyncError'
+    > = {}
   ): Promise<JellyfinLibraryItemExtended | undefined> {
-    const items = await this.getItems({ ids: [id], limit: 1 });
+    const items = await this.getItems({ ids: [id], limit: 1, ...options });
     return items[0];
   }
 

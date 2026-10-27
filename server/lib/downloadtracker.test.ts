@@ -671,18 +671,26 @@ describe('DownloadTracker updateDownloads', () => {
     const outcome = await tracker.updateDownloads();
 
     assert.equal(history.mock.callCount(), 1);
-    assert.deepEqual(outcome.confirmedImports, [
-      {
-        mediaType: MediaType.MOVIE,
-        externalId: 100,
-        downloadId: 'download-1',
-        serverAliases: [
-          { id: 1, is4k: false },
-          { id: 2, is4k: false },
-        ],
-        episodes: [],
-      },
-    ]);
+    assert.equal(outcome.confirmedImports?.[0].evidence?.[0].historyEventId, 1);
+    assert.ok(outcome.confirmedImports?.[0].evidence?.[0].observationId);
+    assert.deepEqual(
+      outcome.confirmedImports?.map(({ evidence, ...imported }) => {
+        void evidence;
+        return imported;
+      }),
+      [
+        {
+          mediaType: MediaType.MOVIE,
+          externalId: 100,
+          downloadId: 'download-1',
+          serverAliases: [
+            { id: 1, is4k: false },
+            { id: 2, is4k: false },
+          ],
+          episodes: [],
+        },
+      ]
+    );
   });
 
   it('requires matching provider media identity when history supplies it', async () => {

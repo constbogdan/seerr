@@ -59,6 +59,7 @@ export interface ProcessableSeason {
 }
 
 class BaseScanner<T> {
+  protected processingGuard?: () => void;
   private bundleSize;
   private updateRate;
   protected progress = 0;
@@ -203,6 +204,7 @@ class BaseScanner<T> {
         }
 
         if (changedExisting) {
+          this.processingGuard?.();
           await mediaRepository.save(existing);
           this.log(
             `Media for ${title} exists. Changes were detected and the title will be updated.`,
@@ -256,6 +258,7 @@ class BaseScanner<T> {
             is4k && this.enable4kMovie ? jellyfinMediaId : undefined;
         }
 
+        this.processingGuard?.();
         await mediaRepository.save(newMedia);
         this.log(`Saved new media: ${title}`);
       }
@@ -546,6 +549,7 @@ class BaseScanner<T> {
                 : media.status4k === MediaStatus.DELETED
                   ? MediaStatus.DELETED
                   : MediaStatus.UNKNOWN;
+        this.processingGuard?.();
         await mediaRepository.save(media);
         this.log(`Updating existing title: ${title}`);
       } else {
@@ -643,6 +647,7 @@ class BaseScanner<T> {
                   ? MediaStatus.PROCESSING
                   : MediaStatus.UNKNOWN,
         });
+        this.processingGuard?.();
         await mediaRepository.save(newMedia);
         this.log(`Saved ${title}`);
       }

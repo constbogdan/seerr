@@ -28,7 +28,10 @@ import {
   fanOutConfirmedImports,
 } from '@server/lib/acquisitionMonitor';
 import { BackgroundDatabaseWriteCoordinator } from '@server/lib/backgroundDatabaseWriteCoordinator';
-import { DownloadTracker } from '@server/lib/downloadtracker';
+import {
+  DownloadTracker,
+  type ConfirmedServarrImport,
+} from '@server/lib/downloadtracker';
 import { LibraryService } from '@server/lib/library';
 import { resolveCurrentRemovalTargetsForEligibility } from '@server/lib/libraryBulkEligibilityResolver';
 import {
@@ -841,7 +844,7 @@ describe('LibraryTargetedRefresh lifecycle', () => {
     const persisted = new Promise<void>((resolve) => {
       signalPersisted = resolve;
     });
-    let jellyfinImports: unknown;
+    let jellyfinImports: ConfirmedServarrImport[] = [];
     let signalJellyfin: (() => void) | undefined;
     const jellyfinReceived = new Promise<void>((resolve) => {
       signalJellyfin = resolve;
@@ -894,15 +897,23 @@ describe('LibraryTargetedRefresh lifecycle', () => {
       await monitor.refresh('background');
       await jellyfinReceived;
       await new Promise<void>((resolve) => setImmediate(resolve));
-      assert.deepEqual(jellyfinImports, [
-        {
-          mediaType: MediaType.MOVIE,
-          externalId: 10,
-          downloadId: 'monitor-import',
-          serverAliases: [{ id: 1, is4k: false }],
-          episodes: [],
-        },
-      ]);
+      assert.equal(jellyfinImports[0].evidence?.[0].historyEventId, 1);
+      assert.ok(jellyfinImports[0].evidence?.[0].observationId);
+      assert.deepEqual(
+        jellyfinImports.map(({ evidence, ...imported }) => {
+          void evidence;
+          return imported;
+        }),
+        [
+          {
+            mediaType: MediaType.MOVIE,
+            externalId: 10,
+            downloadId: 'monitor-import',
+            serverAliases: [{ id: 1, is4k: false }],
+            episodes: [],
+          },
+        ]
+      );
       assert.equal(refresh.getStatus().pendingTargets, 1);
       await clock.runNext();
       await persisted;

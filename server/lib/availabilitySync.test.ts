@@ -2315,4 +2315,81 @@ describe('AvailabilitySync', () => {
       );
     });
   });
+
+  describe('incomplete observations are not absence', () => {
+    for (const failure of [
+      'item-500',
+      'item-network',
+      'seasons-error',
+      'seasons-malformed',
+      'sonarr-error',
+    ]) {
+      it(`preserves Seasons during ${failure} and still reconciles authoritative removal afterward`, async () => {
+        configureJellyfin();
+        configureSonarr();
+        const repository = getRepository(Media);
+        await repository.save(
+          new Media({
+            tmdbId: 99001,
+            tvdbId: 99001,
+            mediaType: MediaType.TV,
+            status: MediaStatus.AVAILABLE,
+            jellyfinMediaId: 'fixture-series',
+            externalServiceId: 100,
+            seasons: [
+              new Season({ seasonNumber: 1, status: MediaStatus.AVAILABLE }),
+              new Season({
+                seasonNumber: 2,
+                status: MediaStatus.PARTIALLY_AVAILABLE,
+              }),
+            ],
+          })
+        );
+        getItemDataImpl = async () => {
+          if (failure.startsWith('item'))
+            throw new Error(failure === 'item-500' ? '500' : 'network timeout');
+          return failure === 'sonarr-error'
+            ? undefined
+            : fakeJellyfinShow('fixture-series', '99001');
+        };
+        getSeasonsImpl = async () => {
+          if (failure === 'seasons-error') throw new Error('network failure');
+          return undefined as unknown as JellyfinLibraryItem[];
+        };
+        if (failure === 'sonarr-error')
+          getSeriesByIdImpl = async () => {
+            throw new Error('503');
+          };
+        await availabilitySync.run();
+        const preserved = await repository.findOneOrFail({
+          where: { tmdbId: 99001 },
+          relations: ['seasons'],
+        });
+        assert.equal(
+          preserved.seasons.find((season) => season.seasonNumber === 1)?.status,
+          MediaStatus.AVAILABLE
+        );
+        assert.equal(
+          preserved.seasons.find((season) => season.seasonNumber === 2)?.status,
+          MediaStatus.PARTIALLY_AVAILABLE
+        );
+        getItemDataImpl = async () => undefined;
+        getSeasonsImpl = async () => [];
+        getSeriesByIdImpl = async () => {
+          throw new Error('404');
+        };
+        await availabilitySync.run();
+        const removed = await repository.findOneOrFail({
+          where: { tmdbId: 99001 },
+          relations: ['seasons'],
+        });
+        assert.equal(removed.status, MediaStatus.DELETED);
+        assert.ok(
+          removed.seasons.every(
+            (season) => season.status === MediaStatus.DELETED
+          )
+        );
+      });
+    }
+  });
 });
