@@ -744,6 +744,22 @@ export class LibraryHistoryHydrationService {
           );
         }
         const now = this.dependencies.now();
+        if (
+          presence &&
+          (sourceSystem === 'radarr' || sourceSystem === 'sonarr') &&
+          presence.servarrHasFile === true &&
+          servarrHasFile === false
+        ) {
+          // A managed title can outlive its files. End the physical interval
+          // before recording no-file truth so its history/observation survives.
+          presence.isCurrent = false;
+          presence.removedAt = now;
+          presence.removalSource ??= LibraryRemovalSource.EXTERNAL;
+          presence.reconciliationState = LibraryReconciliationState.CURRENT;
+          await repository.save(presence);
+          summary.presencesClosed++;
+          presence = null;
+        }
         if (!presence) {
           const prior = await repository.countBy({
             sourceSystem,
