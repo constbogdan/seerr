@@ -63,7 +63,10 @@ describe('TitleCard interaction contracts', () => {
     );
     assert.equal(resolveTitleCardRequestActionLabel('View', 'Request'), 'View');
     assert.match(source, /resolveTitleCardRequestActionLabel\(/);
-    assert.match(source, /icon=\{requestActionIcon\}/);
+    assert.match(
+      source,
+      /useLowerRightStatus\s*\? lowerRightStatusIcon\s*: requestActionIcon/
+    );
     assert.match(source, /requestActionClassName \?\? ''/);
     assert.match(
       requestIconButton,

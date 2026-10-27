@@ -349,7 +349,8 @@ describe('Fresh ratings and shared card integration', () => {
       assert.match(markup, /href="\/tv\/202"/);
       assert.match(markup, /View A Movie/);
       assert.match(markup, /View A Series/);
-      assert.match(markup, /data-state-slot="availability"/);
+      assert.doesNotMatch(markup, /data-state-slot="availability"/);
+      assert.match(markup, /role="img" aria-label="Available"/);
       assert.match(markup, /data-testid="title-card-request-region"/);
       assert.match(markup, /aria-label="Request"/);
     }

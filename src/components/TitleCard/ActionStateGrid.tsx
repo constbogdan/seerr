@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 export type TitleCardOverlayItem = {
   id: string;
   content: ReactNode;
+  row?: number;
 };
 
 type ActionStateGridProps = {
@@ -41,7 +42,7 @@ const ActionStateGrid = ({ actions, states }: ActionStateGridProps) => {
           className="flex h-7 w-7 items-center justify-center"
           data-state-slot={state.id}
           key={state.id}
-          style={{ gridColumn: 1, gridRow: index + 1 }}
+          style={{ gridColumn: 1, gridRow: state.row ?? index + 1 }}
         >
           {state.content}
         </div>

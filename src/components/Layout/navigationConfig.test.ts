@@ -75,7 +75,10 @@ describe('shared application navigation', () => {
   });
 
   it('gives administrators the same complete feature-enabled inventory', () => {
-    assert.deepEqual(visibleIds(Permission.ADMIN), expectedFullInventory);
+    assert.deepEqual(
+      visibleIds(Permission.ADMIN),
+      expectedFullInventory.filter((id) => id !== 'blocklist')
+    );
   });
 
   it('does not expose administrator or delegated destinations without permission', () => {
@@ -94,20 +97,63 @@ describe('shared application navigation', () => {
     );
   });
 
-  it('uses the route-equivalent OR permission rules for Issues and Blocklist', () => {
+  it('preserves Issues permissions while hiding Blocklist navigation for every role', () => {
     assert.ok(visibleIds(Permission.CREATE_ISSUES).includes('issues'));
     assert.ok(visibleIds(Permission.VIEW_ISSUES).includes('issues'));
     assert.ok(visibleIds(Permission.MANAGE_ISSUES).includes('issues'));
-    assert.ok(visibleIds(Permission.VIEW_BLOCKLIST).includes('blocklist'));
-    assert.ok(visibleIds(Permission.MANAGE_BLOCKLIST).includes('blocklist'));
+    for (const permission of [
+      Permission.ADMIN,
+      Permission.VIEW_BLOCKLIST,
+      Permission.MANAGE_BLOCKLIST,
+    ]) {
+      assert.ok(!visibleIds(permission).includes('blocklist'));
+      assert.ok(!bottomIds(permission, 'admin').includes('blocklist'));
+      assert.ok(!bottomIds(permission, 'regular').includes('blocklist'));
+    }
     assert.ok(visibleIds(Permission.MANAGE_USERS).includes('users'));
   });
 
   it('removes only Fresh when the Fresh feature is disabled', () => {
     assert.deepEqual(
       visibleIds(Permission.ADMIN, false),
-      expectedFullInventory.filter((id) => id !== 'fresh')
+      expectedFullInventory.filter((id) => id !== 'fresh' && id !== 'blocklist')
     );
+  });
+
+  it('retains the direct Blocklist page, API and existing permission checks', () => {
+    const destination = navigationDestinationRules.find(
+      ({ id }) => id === 'blocklist'
+    );
+    assert.ok(destination);
+    assert.equal(destination.href, '/blocklist');
+    assert.equal(destination.permissionType, 'or');
+    assert.deepEqual(destination.requiredPermission, [
+      Permission.MANAGE_BLOCKLIST,
+      Permission.VIEW_BLOCKLIST,
+    ]);
+    const page = readFileSync(
+      path.join(__dirname, '../../pages/blocklist/index.tsx'),
+      'utf8'
+    );
+    assert.match(
+      page,
+      /useRouteGuard\(\[Permission\.MANAGE_BLOCKLIST, Permission\.VIEW_BLOCKLIST\]/
+    );
+    assert.match(page, /return <Blocklist \/>/);
+    for (const detail of ['MovieDetails', 'TvDetails']) {
+      const source = readFileSync(
+        path.join(__dirname, `../${detail}/index.tsx`),
+        'utf8'
+      );
+      assert.match(source, /<BlocklistModal/);
+      assert.match(source, /onClick=\{\(\) => setShowBlocklistModal\(true\)\}/);
+      assert.match(source, /axios\.post\('\/api\/v1\/blocklist'/);
+    }
+    const manage = readFileSync(
+      path.join(__dirname, '../ManageSlideOver/index.tsx'),
+      'utf8'
+    );
+    assert.match(manage, /globalMessages\.blocklist/);
   });
 
   it('matches nested routes without activating sibling destinations', () => {

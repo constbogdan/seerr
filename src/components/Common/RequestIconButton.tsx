@@ -11,6 +11,9 @@ type RequestIconButtonProps = Omit<
   icon?: ReactNode;
 };
 
+export const requestIconButtonClassName =
+  'h-7 w-7 rounded-md border-transparent bg-gray-900/90 !p-0 text-purple-400 shadow-md hover:border-transparent hover:bg-gray-700 hover:text-purple-300 focus:border-transparent focus:ring-purple-300 active:border-transparent active:bg-gray-800 active:text-purple-300';
+
 const RequestIconButton = ({
   buttonSize = 'sm',
   className,
@@ -20,10 +23,7 @@ const RequestIconButton = ({
   <Button
     buttonType="primary"
     buttonSize={buttonSize}
-    className={twMerge(
-      'h-7 w-7 rounded-md border-transparent bg-gray-900/90 !p-0 text-purple-400 shadow-md hover:border-transparent hover:bg-gray-700 hover:text-purple-300 focus:border-transparent focus:ring-purple-300 active:border-transparent active:bg-gray-800 active:text-purple-300',
-      className
-    )}
+    className={twMerge(requestIconButtonClassName, className)}
     {...props}
   >
     {icon ?? <ArrowDownTrayIcon className="h-4 w-4" aria-hidden="true" />}
