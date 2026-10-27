@@ -2,7 +2,9 @@ import Spinner from '@app/assets/spinner.svg';
 import BlocklistModal from '@app/components/BlocklistModal';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
-import RequestIconButton from '@app/components/Common/RequestIconButton';
+import RequestIconButton, {
+  requestIconButtonClassName,
+} from '@app/components/Common/RequestIconButton';
 import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
 import { UserAvatar } from '@app/components/Library/LibraryEngagement';
@@ -30,6 +32,11 @@ import defineMessages from '@app/utils/defineMessages';
 import { withProperties } from '@app/utils/typeHelpers';
 import { Transition } from '@headlessui/react';
 import { EyeIcon, NoSymbolIcon } from '@heroicons/react/24/outline';
+import {
+  ArrowDownTrayIcon,
+  ServerIcon,
+  ServerStackIcon,
+} from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type { Watchlist } from '@server/entity/Watchlist';
 import type { LibraryUser } from '@server/interfaces/api/libraryInterfaces';
@@ -39,6 +46,7 @@ import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import { mutate } from 'swr';
+import { twMerge } from 'tailwind-merge';
 
 interface TitleCardProps {
   id: number;
@@ -444,6 +452,67 @@ const TitleCard = ({
             icon: <NoSymbolIcon className="h-4 w-4 sm:h-5 sm:w-5" />,
           }
         : undefined;
+  const showWatchlistAction =
+    showDetail ||
+    (!toggleWatchlist &&
+      (mediaType === 'movie' || mediaType === 'tv') &&
+      !cornerAction &&
+      !persistentMetadata);
+  const hideBlocklistPresentation =
+    (mediaType === 'movie' || mediaType === 'tv') &&
+    !cornerAction &&
+    !persistentMetadata &&
+    !actionsDisabled;
+  const useLowerRightStatus =
+    (mediaType === 'movie' || mediaType === 'tv') &&
+    !cornerAction &&
+    !persistentMetadata;
+  const lowerRightStatus =
+    inProgress && stateIndicators.some((indicator) => indicator.inProgress)
+      ? {
+          Icon: ArrowDownTrayIcon,
+          className: 'animate-pulse text-blue-400',
+          label: globalMessages.processing,
+        }
+      : {
+          [MediaStatus.UNKNOWN]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-purple-400',
+            label: globalMessages.notrequested,
+          },
+          [MediaStatus.PENDING]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-orange-400',
+            label: globalMessages.requested,
+          },
+          [MediaStatus.PROCESSING]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-blue-400',
+            label: globalMessages.processing,
+          },
+          [MediaStatus.DELETED]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-red-400',
+            label: globalMessages.deleted,
+          },
+          [MediaStatus.PARTIALLY_AVAILABLE]: {
+            Icon: ServerIcon,
+            className: 'text-green-400',
+            label: globalMessages.partiallyavailable,
+          },
+          [MediaStatus.AVAILABLE]: {
+            Icon: ServerStackIcon,
+            className: 'text-green-400',
+            label: globalMessages.available,
+          },
+          [MediaStatus.BLOCKLISTED]: undefined,
+        }[currentStatus ?? MediaStatus.UNKNOWN];
+  const lowerRightStatusIcon = lowerRightStatus && (
+    <lowerRightStatus.Icon
+      className={`h-4 w-4 ${lowerRightStatus.className}`}
+      aria-hidden="true"
+    />
+  );
   const rightSideActions = [
     ...(cornerAction
       ? [
@@ -453,7 +522,7 @@ const TitleCard = ({
           },
         ]
       : []),
-    ...(showDetail && !actionsDisabled
+    ...(showWatchlistAction && !actionsDisabled
       ? [
           ...(currentStatus !== MediaStatus.BLOCKLISTED &&
           user?.userType !== UserType.PLEX
@@ -480,7 +549,10 @@ const TitleCard = ({
                 },
               ]
             : []),
-          ...(showHideButton && blocklistAction
+          ...(!hideBlocklistPresentation &&
+          showDetail &&
+          showHideButton &&
+          blocklistAction
             ? [
                 {
                   id: 'blocklist',
@@ -503,34 +575,45 @@ const TitleCard = ({
         ]
       : []),
   ];
-  const rightSideStates = stateIndicators.map((indicator) => ({
-    id: indicator.id,
-    content: (
-      <div
-        className={`z-40 flex ${
-          indicator.id === 'availability' ? 'pointer-events-none' : ''
-        }`}
-      >
-        <StatusBadgeMini
-          status={indicator.status}
-          inProgress={indicator.inProgress}
-          label={
-            indicator.id === 'watched'
-              ? intl.formatMessage(messages.watched)
-              : undefined
-          }
-          shrink
-        />
-      </div>
-    ),
-  }));
+  const rightSideStates = stateIndicators
+    .filter(
+      (indicator) =>
+        !hideBlocklistPresentation ||
+        indicator.status !== MediaStatus.BLOCKLISTED ||
+        indicator.inProgress
+    )
+    .map((indicator, index) => ({
+      id: indicator.id,
+      row: index + 1,
+      content: (
+        <div
+          className={`z-40 flex ${
+            indicator.id === 'availability' ? 'pointer-events-none' : ''
+          }`}
+        >
+          <StatusBadgeMini
+            status={indicator.status}
+            inProgress={indicator.inProgress}
+            label={
+              indicator.id === 'watched'
+                ? intl.formatMessage(messages.watched)
+                : undefined
+            }
+            shrink
+          />
+        </div>
+      ),
+    }))
+    .filter(({ id }) => !useLowerRightStatus || id !== 'availability');
   const canRequestTitle =
     showRequestButton &&
     (requestActionEnabled ??
       (!actionsDisabled &&
         (!currentStatus ||
           currentStatus === MediaStatus.UNKNOWN ||
-          currentStatus === MediaStatus.DELETED)));
+          currentStatus === MediaStatus.DELETED ||
+          (useLowerRightStatus &&
+            currentStatus === MediaStatus.PARTIALLY_AVAILABLE))));
   const resolvedRequestActionLabel = resolveTitleCardRequestActionLabel(
     requestActionLabel,
     intl.formatMessage(globalMessages.request)
@@ -555,7 +638,7 @@ const TitleCard = ({
         className={`text-white ${
           persistentMetadata
             ? 'self-end'
-            : `px-2 ${canRequestTitle ? 'pb-11' : 'pb-2'}`
+            : `px-2 ${canRequestTitle || (useLowerRightStatus && lowerRightStatus) ? 'pb-11' : 'pb-2'}`
         }`}
       >
         {year && <div className="text-sm font-medium">{year}</div>}
@@ -776,10 +859,16 @@ const TitleCard = ({
                   {persistentMetadata}
                 </div>
               )}
-              {canRequestTitle && (
+              {(canRequestTitle ||
+                (useLowerRightStatus && lowerRightStatus)) && (
                 <Transition
                   as={Fragment}
-                  show={!image || showDetail || showRequestModal}
+                  show={
+                    useLowerRightStatus ||
+                    !image ||
+                    showDetail ||
+                    showRequestModal
+                  }
                   enter="transition-opacity"
                   enterFrom="opacity-0"
                   enterTo="opacity-100"
@@ -788,23 +877,45 @@ const TitleCard = ({
                   leaveTo="opacity-0"
                 >
                   <div
-                    className="pointer-events-auto col-start-2 row-start-3 self-end justify-self-end"
+                    className={`${canRequestTitle ? 'pointer-events-auto' : 'pointer-events-none'} col-start-2 row-start-3 self-end justify-self-end`}
                     data-testid="title-card-request-region"
                   >
-                    <Tooltip content={resolvedRequestActionLabel}>
-                      <RequestIconButton
-                        aria-label={resolvedRequestActionLabel}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                          setShowRequestModal(true);
-                        }}
-                        icon={requestActionIcon}
-                        className={`z-40 !h-8 !w-8 !p-1.5 ${
-                          requestActionClassName ?? ''
-                        }`}
-                      />
-                    </Tooltip>
+                    {canRequestTitle ? (
+                      <Tooltip content={resolvedRequestActionLabel}>
+                        <RequestIconButton
+                          aria-label={resolvedRequestActionLabel}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setShowRequestModal(true);
+                          }}
+                          icon={
+                            useLowerRightStatus
+                              ? lowerRightStatusIcon
+                              : requestActionIcon
+                          }
+                          className={`z-40 !h-8 !w-8 !p-1.5 ${
+                            requestActionClassName ?? ''
+                          }`}
+                        />
+                      </Tooltip>
+                    ) : (
+                      lowerRightStatus && (
+                        <span
+                          role="img"
+                          aria-label={intl.formatMessage(
+                            lowerRightStatus.label
+                          )}
+                          className={twMerge(
+                            'inline-flex items-center justify-center border text-xs font-medium leading-5',
+                            requestIconButtonClassName,
+                            'pointer-events-none z-40 !h-8 !w-8 cursor-default !p-1.5'
+                          )}
+                        >
+                          {lowerRightStatusIcon}
+                        </span>
+                      )
+                    )}
                   </div>
                 </Transition>
               )}

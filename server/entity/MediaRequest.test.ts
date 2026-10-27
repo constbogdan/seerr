@@ -2,10 +2,15 @@ import assert from 'node:assert/strict';
 import { beforeEach, describe, it, mock } from 'node:test';
 
 import ExternalAPI from '@server/api/externalapi';
-import { MediaRequestStatus, MediaType } from '@server/constants/media';
+import {
+  MediaRequestStatus,
+  MediaStatus,
+  MediaType,
+} from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import {
+  BlocklistedMediaError,
   DuplicateMediaRequestError,
   MediaRequest,
   QuotaRestrictedError,
@@ -99,6 +104,41 @@ const requestNextSeason = (
   );
 
 describe('MediaRequest.request', () => {
+  it('rejects blocked Movies and Series in HD and 4K without creating requests', async () => {
+    const requester = await createRequester(
+      'blocked-fixture@example.invalid',
+      Permission.ADMIN
+    );
+    for (const mediaType of [MediaType.MOVIE, MediaType.TV]) {
+      const media = await getRepository(Media).save(
+        new Media({
+          tmdbId: 424242,
+          mediaType,
+          status: MediaStatus.BLOCKLISTED,
+          status4k: MediaStatus.BLOCKLISTED,
+        })
+      );
+      for (const is4k of [false, true]) {
+        await assert.rejects(
+          MediaRequest.request(
+            {
+              mediaId: media.tmdbId,
+              mediaType,
+              is4k,
+              ...(mediaType === MediaType.TV ? { seasons: [1] } : {}),
+            },
+            requester
+          ),
+          BlocklistedMediaError
+        );
+      }
+      assert.equal(
+        (await getRepository(Media).findOneByOrFail({ id: media.id })).status,
+        MediaStatus.BLOCKLISTED
+      );
+    }
+    assert.equal(await getRepository(MediaRequest).count(), 0);
+  });
   it('rejects the second of two concurrent requests at the movie quota', async () => {
     const requestRepository = getRepository(MediaRequest);
     const requester = await seedRequester(1);

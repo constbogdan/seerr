@@ -10,6 +10,20 @@ const item = (id: string) => ({
 });
 
 describe('TitleCard action and state grid', () => {
+  it('preserves the Watched row when a media-status indicator is relocated', () => {
+    const markup = renderToStaticMarkup(
+      createElement(ActionStateGrid, {
+        actions: [item('watchlist')],
+        states: [{ ...item('watched'), row: 2 }],
+      })
+    );
+    assert.match(
+      markup,
+      /data-state-slot="watched"[^>]*grid-column:1;grid-row:2/
+    );
+    assert.doesNotMatch(markup, /data-state-slot="availability"/);
+  });
+
   it('keeps a dense action-only column when no state exists', () => {
     const markup = renderToStaticMarkup(
       createElement(ActionStateGrid, {

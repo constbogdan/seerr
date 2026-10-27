@@ -41,6 +41,7 @@ export interface NavigationDestinationRule {
   requiredPermission?: Permission | Permission[];
   permissionType?: PermissionCheckOptions['type'];
   requiresFresh?: boolean;
+  hidden?: boolean;
   bottomNavigationOrder?: Partial<Record<BottomNavigationRole, number>>;
 }
 
@@ -111,6 +112,7 @@ export const navigationDestinationRules: NavigationDestinationRule[] = [
   },
   {
     id: 'blocklist',
+    hidden: true,
     href: '/blocklist',
     messagesKey: 'blocklist',
     activeRegExp: /^\/blocklist(?:\/|$)/,
@@ -162,6 +164,7 @@ export const getVisibleNavigationDestinationRules = ({
 }: NavigationVisibilityContext): NavigationDestinationRule[] =>
   navigationDestinationRules.filter(
     (destination) =>
+      !destination.hidden &&
       (!destination.requiresFresh || freshEnabled) &&
       (!destination.requiredPermission ||
         hasPermission(destination.requiredPermission, {

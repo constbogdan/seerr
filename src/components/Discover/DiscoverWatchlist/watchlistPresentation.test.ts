@@ -384,7 +384,7 @@ describe('Watchlist page and navigation integration', () => {
     assert.match(titleCard, /data-testid="title-card-classification-state"/);
     assert.match(titleCard, /globalMessages\.movie/);
     assert.match(titleCard, /globalMessages\.tvshow/);
-    assert.match(titleCard, /rightSideStates = stateIndicators\.map/);
+    assert.match(titleCard, /rightSideStates = stateIndicators[\s\S]*?\.map/);
     assert.match(titleCard, /status=\{indicator\.status\}/);
     assert.match(titleCard, /indicator\.id === 'watched'/);
     assert.match(titleCard, /intl\.formatMessage\(messages\.watched\)/);
