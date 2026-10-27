@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 
 import type { AnidbItem } from '@server/api/animelist';
 import type JellyfinAPI from '@server/api/jellyfin';
@@ -157,6 +157,42 @@ const buildService = ({
 };
 
 describe('JellyfinTargetedAvailability', () => {
+  it('does not process a late lookup response after cancellation or observation replacement', async () => {
+    for (const abort of [true, false]) {
+      let release: (() => void) | undefined;
+      let processed = 0;
+      let current = true;
+      const service = new JellyfinTargetedAvailability({
+        processItems: async () => {
+          processed++;
+          return { status: 'completed', durationMs: 0 };
+        },
+      });
+      mock.method(service, 'lookup', async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return {
+          state: 'ready' as const,
+          items: [item({ id: 'known-movie' })],
+          lookupMethod: 'exact-id' as const,
+          lookupDurationMs: 0,
+          jellyfinRequestCount: 1,
+        };
+      });
+      const controller = new AbortController();
+      const work = service.reconcile(movieTarget(), {
+        signal: controller.signal,
+        timeoutMs: 1000,
+        isCurrent: () => current,
+      });
+      if (abort) controller.abort();
+      else current = false;
+      release?.();
+      await assert.rejects(work, /no longer current/);
+      assert.equal(processed, 0);
+    }
+  });
   it('uses a trusted stored ID first and canonically processes a playable movie', async () => {
     const { service, calls } = buildService({
       exact: item({ id: 'known-movie' }),

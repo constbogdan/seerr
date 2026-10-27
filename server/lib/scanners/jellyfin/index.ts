@@ -25,6 +25,10 @@ import type {
 import BaseScanner from '@server/lib/scanners/baseScanner';
 import type { Library } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import {
+  assertTargetCurrent,
+  type TargetedReconciliationControl,
+} from '@server/lib/targetedReconciliation';
 import { getHostname } from '@server/utils/getHostname';
 
 interface JellyfinSyncStatus extends StatusBase {
@@ -43,9 +47,9 @@ export interface JellyfinScannerContext {
   libraries: Library[];
 }
 
-export const createJellyfinScannerContext = async (): Promise<
-  JellyfinScannerContext | undefined
-> => {
+export const createJellyfinScannerContext = async (
+  control?: TargetedReconciliationControl
+): Promise<JellyfinScannerContext | undefined> => {
   const settings = getSettings();
   if (
     settings.main.mediaServerType !== MediaServerType.JELLYFIN &&
@@ -64,7 +68,8 @@ export const createJellyfinScannerContext = async (): Promise<
   const client = new JellyfinAPI(
     getHostname(),
     settings.jellyfin.apiKey,
-    admin.jellyfinDeviceId
+    admin.jellyfinDeviceId,
+    control
   );
   client.setUserId(admin.jellyfinUserId ?? '');
 
@@ -655,15 +660,19 @@ export class JellyfinScanner
   }
 
   public async processKnownJellyfinItems(
-    items: JellyfinLibraryItem[]
+    items: JellyfinLibraryItem[],
+    control?: TargetedReconciliationControl
   ): Promise<JellyfinScanOutcome> {
     const startedAt = Date.now();
-    const context = await createJellyfinScannerContext();
+    assertTargetCurrent(control);
+    const context = await createJellyfinScannerContext(control);
     if (!context || items.length === 0) {
       return { status: 'skipped', durationMs: Date.now() - startedAt };
     }
 
     return jellyfinCanonicalProcessingCoordinator.runExclusive(async () => {
+      assertTargetCurrent(control);
+      this.processingGuard = () => assertTargetCurrent(control);
       await prepareJellyfinAnimeMappings();
       const sessionId = this.startRun();
       try {
@@ -673,6 +682,7 @@ export class JellyfinScanner
         const uniqueItems = await this.normalizeProcessableItems(items);
         let failures = 0;
         for (const item of uniqueItems) {
+          assertTargetCurrent(control);
           if (!(await this.processItem(item))) failures += 1;
         }
 
@@ -691,6 +701,7 @@ export class JellyfinScanner
           errorType: e instanceof Error ? e.name : 'UnknownError',
         };
       } finally {
+        this.processingGuard = undefined;
         this.endRun(sessionId);
       }
     });

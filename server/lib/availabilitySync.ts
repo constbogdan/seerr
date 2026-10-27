@@ -771,6 +771,8 @@ class AvailabilitySync {
         }
 
         if (sonarr) {
+          if (!Array.isArray(sonarr.seasons))
+            throw new Error('Incomplete Sonarr seasons');
           const externalServiceId = is4k
             ? media.externalServiceId4k
             : media.externalServiceId;
@@ -803,6 +805,16 @@ class AvailabilitySync {
     // we will have to prevent the season check from happening
     const seasonsMap: Map<number, boolean> = new Map();
 
+    if (preventSeasonSearch) {
+      for (const season of media.seasons) {
+        const status = season[is4k ? 'status4k' : 'status'];
+        if (
+          status === MediaStatus.AVAILABLE ||
+          status === MediaStatus.PARTIALLY_AVAILABLE
+        )
+          seasonsMap.set(season.seasonNumber, true);
+      }
+    }
     if (!preventSeasonSearch) {
       const filteredSeasons = media.seasons.filter(
         (season) =>
@@ -1077,7 +1089,9 @@ class AvailabilitySync {
     const ratingKey = media.jellyfinMediaId;
     const ratingKey4k = media.jellyfinMediaId4k;
     let existsInJellyfin = false;
-    let preventSeasonSearch = false;
+    let preventSeasonSearch =
+      !(is4k ? ratingKey4k : ratingKey) || !this.jellyfinClient;
+    if (preventSeasonSearch) existsInJellyfin = true;
 
     // Check each jellyfin instance to see if the media still exists
     // If found, we will assume the media exists and prevent removal
@@ -1086,20 +1100,28 @@ class AvailabilitySync {
       let jellyfinMedia: JellyfinLibraryItem | undefined;
 
       if (ratingKey && !is4k) {
-        jellyfinMedia = await this.jellyfinClient?.getItemData(ratingKey);
+        jellyfinMedia = await this.jellyfinClient?.getItemData(ratingKey, {
+          allowEmptyOnAvailabilitySyncError: false,
+        });
 
         if (media.mediaType === 'tv' && jellyfinMedia !== undefined) {
           this.jellyfinSeasonsCache[ratingKey] =
             await this.jellyfinClient?.getSeasons(ratingKey);
+          if (!Array.isArray(this.jellyfinSeasonsCache[ratingKey]))
+            throw new Error('Incomplete Jellyfin seasons');
         }
       }
 
       if (ratingKey4k && is4k) {
-        jellyfinMedia = await this.jellyfinClient?.getItemData(ratingKey4k);
+        jellyfinMedia = await this.jellyfinClient?.getItemData(ratingKey4k, {
+          allowEmptyOnAvailabilitySyncError: false,
+        });
 
         if (media.mediaType === 'tv' && jellyfinMedia !== undefined) {
           this.jellyfinSeasonsCache[ratingKey4k] =
             await this.jellyfinClient?.getSeasons(ratingKey4k);
+          if (!Array.isArray(this.jellyfinSeasonsCache[ratingKey4k]))
+            throw new Error('Incomplete Jellyfin seasons');
         }
       }
 
@@ -1107,7 +1129,11 @@ class AvailabilitySync {
         existsInJellyfin = true;
       }
     } catch (ex) {
-      if (!ex.message.includes('404') && !ex.message.includes('500')) {
+      if (
+        ex.statusCode !== 404 &&
+        ex.response?.status !== 404 &&
+        !/\b404\b/.test(ex.message)
+      ) {
         existsInJellyfin = true;
         preventSeasonSearch = true;
         logger.debug(
@@ -1128,6 +1154,16 @@ class AvailabilitySync {
     if (media.mediaType === 'tv') {
       const seasonsMap: Map<number, boolean> = new Map();
 
+      if (preventSeasonSearch) {
+        for (const season of media.seasons) {
+          const status = season[is4k ? 'status4k' : 'status'];
+          if (
+            status === MediaStatus.AVAILABLE ||
+            status === MediaStatus.PARTIALLY_AVAILABLE
+          )
+            seasonsMap.set(season.seasonNumber, true);
+        }
+      }
       if (!preventSeasonSearch) {
         const filteredSeasons = media.seasons.filter(
           (season) =>

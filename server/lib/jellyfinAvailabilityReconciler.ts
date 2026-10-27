@@ -1,6 +1,7 @@
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import downloadTracker, {
+  importEvidenceKey,
   type ConfirmedServarrImport,
   type EpisodeNumberResult,
   type FinalizingAcquisitionTarget,
@@ -9,6 +10,11 @@ import jellyfinTargetedAvailability, {
   type JellyfinTargetedMediaTarget,
   type TargetedReadiness,
 } from '@server/lib/jellyfinTargetedAvailability';
+import { getSettings } from '@server/lib/settings';
+import {
+  runAbortable,
+  type TargetedReconciliationControl,
+} from '@server/lib/targetedReconciliation';
 import logger from '@server/logger';
 
 export const JELLYFIN_RECONCILIATION_DEBOUNCE_MS = 5_000;
@@ -35,6 +41,8 @@ interface PendingSnapshot extends JellyfinAvailabilityTarget {
 }
 
 interface FinalizingPresentation {
+  acknowledgeImport?(target: FinalizingAcquisitionTarget): void;
+  isCurrentFinalizingTarget?(target: FinalizingAcquisitionTarget): boolean;
   startFinalizing(
     target: FinalizingAcquisitionTarget,
     phaseStartedAt: string
@@ -47,7 +55,8 @@ interface ReconcilerOptions {
     imports: ConfirmedServarrImport[]
   ) => Promise<JellyfinAvailabilityTarget[]>;
   reconcileTarget?: (
-    target: JellyfinTargetedMediaTarget
+    target: JellyfinTargetedMediaTarget,
+    control?: TargetedReconciliationControl
   ) => Promise<TargetedReadiness>;
   setTimer?: (callback: () => void, delay: number) => NodeJS.Timeout;
   clearTimer?: (timer: NodeJS.Timeout) => void;
@@ -57,7 +66,7 @@ interface ReconcilerOptions {
 }
 
 const presentationKey = (target: FinalizingAcquisitionTarget): string =>
-  `${target.serverId}:${target.downloadId}`;
+  `${target.serverId}:${target.downloadId}:${target.evidence?.map(importEvidenceKey).sort().join('|') ?? ''}`;
 
 const episodeKey = (episode: EpisodeNumberResult): string =>
   `${episode.seasonNumber}:${episode.episodeNumber}:${episode.id}`;
@@ -66,7 +75,7 @@ const targetKey = (target: JellyfinAvailabilityTarget): string => {
   const downloadIds = [
     ...new Set(target.presentationTargets.map((item) => item.downloadId)),
   ].sort();
-  return `${target.mediaId}:${target.is4k ? '4k' : 'standard'}:${downloadIds.join(',')}`;
+  return `${target.mediaId}:${target.is4k ? '4k' : 'standard'}:${downloadIds.join(',')}:${target.presentationTargets.map(presentationKey).sort().join('|')}`;
 };
 
 const completedGenerationKey = (target: JellyfinAvailabilityTarget): string =>
@@ -138,6 +147,7 @@ const resolveImports = async (
             serverId: alias.id,
             is4k: alias.is4k,
             episodes: imported.episodes,
+            evidence: imported.evidence,
           },
         ],
       };
@@ -155,6 +165,7 @@ export class JellyfinAvailabilityReconciler {
   private timer?: NodeJS.Timeout;
   private timerDueAt?: number;
   private activeRun?: Promise<void>;
+  private readonly attemptsInFlight = new Map<string, AbortController>();
   private readonly resolveImports: NonNullable<
     ReconcilerOptions['resolveImports']
   >;
@@ -171,7 +182,8 @@ export class JellyfinAvailabilityReconciler {
     this.resolveImports = options.resolveImports ?? resolveImports;
     this.reconcileTarget =
       options.reconcileTarget ??
-      ((target) => jellyfinTargetedAvailability.reconcile(target));
+      ((target, control) =>
+        jellyfinTargetedAvailability.reconcile(target, control));
     this.setTimer = options.setTimer ?? setTimeout;
     this.clearTimer = options.clearTimer ?? clearTimeout;
     this.now = options.now ?? Date.now;
@@ -233,13 +245,17 @@ export class JellyfinAvailabilityReconciler {
   }
 
   private scheduleNext(): void {
-    if (this.activeRun || !this.pending.size) return;
     this.expireTargets();
-    if (!this.pending.size) return;
+    if (!this.pending.size) {
+      if (this.timer) this.clearTimer(this.timer);
+      this.timer = undefined;
+      this.timerDueAt = undefined;
+      return;
+    }
 
     const dueAt = Math.min(
       ...[...this.pending.values()].flatMap((target) => [
-        target.nextAttemptAt,
+        ...(this.activeRun ? [] : [target.nextAttemptAt]),
         target.expiresAt,
       ])
     );
@@ -257,15 +273,23 @@ export class JellyfinAvailabilityReconciler {
       () => {
         this.timer = undefined;
         this.timerDueAt = undefined;
-        void this.run();
+        void this.run().catch((error) => {
+          logger.error('Targeted Jellyfin reconciliation run failed', {
+            label: 'Jellyfin Availability Reconciler',
+            errorType: error instanceof Error ? error.name : 'UnknownError',
+          });
+        });
       },
       Math.max(0, dueAt - this.now())
     );
   }
 
   private run(): Promise<void> {
-    if (this.activeRun) return this.activeRun;
     this.expireTargets();
+    if (this.activeRun) {
+      this.scheduleNext();
+      return this.activeRun;
+    }
     const now = this.now();
     const due = [...this.pending.entries()]
       .filter(([, target]) => target.nextAttemptAt <= now)
@@ -284,6 +308,7 @@ export class JellyfinAvailabilityReconciler {
       this.scheduleNext();
     });
     this.activeRun = run;
+    this.scheduleNext();
     return run;
   }
 
@@ -300,7 +325,50 @@ export class JellyfinAvailabilityReconciler {
       while (cursor < targets.length) {
         const target = targets[cursor++];
         const startedAt = this.now();
-        const result = await this.reconcileTarget(target);
+        const controller = new AbortController();
+        this.attemptsInFlight.set(target.key, controller);
+        const timeout = getSettings().network.apiRequestTimeout;
+        const control: TargetedReconciliationControl = {
+          signal: controller.signal,
+          timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : 10_000,
+          isCurrent: () => {
+            const current = this.pending.get(target.key);
+            return (
+              current?.revision === target.revision &&
+              current.expiresAt > this.now() &&
+              target.presentationTargets.every(
+                (presentation) =>
+                  this.presentation.isCurrentFinalizingTarget?.(
+                    presentation
+                  ) !== false
+              )
+            );
+          },
+        };
+        let result: TargetedReadiness;
+        try {
+          if (!control.isCurrent()) {
+            const current = this.pending.get(target.key);
+            if (current?.revision === target.revision)
+              this.clearTarget(target.key, current);
+            continue;
+          }
+          result = await runAbortable(
+            () => this.reconcileTarget(target, control),
+            controller.signal
+          );
+        } catch (error) {
+          result = {
+            state: 'unknown',
+            reason: 'processing_failed',
+            errorType: error instanceof Error ? error.name : 'UnknownError',
+            lookupMethod: 'exact-id',
+            lookupDurationMs: this.now() - startedAt,
+            jellyfinRequestCount: 0,
+          };
+        } finally {
+          this.attemptsInFlight.delete(target.key);
+        }
         const completedAt = this.now();
         const current = this.pending.get(target.key);
 
@@ -308,8 +376,14 @@ export class JellyfinAvailabilityReconciler {
         // in flight. Only the generation that was actually inspected may clear
         // or advance that target.
         if (!current || current.revision !== target.revision) continue;
+        if (!control.isCurrent()) {
+          this.clearTarget(target.key, current);
+          continue;
+        }
 
         if (result.state === 'ready') {
+          for (const presentation of current.presentationTargets)
+            this.presentation.acknowledgeImport?.(presentation);
           this.rememberCompletedGeneration(completedGenerationKey(current));
           this.clearTarget(target.key, current);
           resolved += 1;
@@ -391,6 +465,7 @@ export class JellyfinAvailabilityReconciler {
 
   private clearTarget(key: string, target: PendingTarget): void {
     this.pending.delete(key);
+    this.attemptsInFlight.get(key)?.abort();
     for (const presentationTarget of target.presentationTargets) {
       this.presentation.clearFinalizing(presentationTarget);
     }

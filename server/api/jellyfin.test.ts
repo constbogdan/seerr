@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
 import { describe, it } from 'node:test';
 
 import availabilitySync from '@server/lib/availabilitySync';
@@ -19,6 +20,54 @@ const item = (id: string, location: 'FileSystem' | 'Virtual') =>
   }) as JellyfinLibraryItemExtended;
 
 describe('JellyfinAPI targeted item reads', () => {
+  it('bounds every targeted HTTP read and aborts an in-flight read without provider traffic', async () => {
+    const server = createServer(() => {
+      /* Deliberately never respond. */
+    });
+    await new Promise<void>((resolve) =>
+      server.listen(0, '127.0.0.1', resolve)
+    );
+    const address = server.address();
+    assert.ok(address && typeof address !== 'string');
+    try {
+      const api = new JellyfinAPI(
+        `http://127.0.0.1:${address.port}`,
+        undefined,
+        undefined,
+        { timeoutMs: 50 }
+      );
+      for (const read of [
+        () => api.getItemData('fixture'),
+        () => api.getSeasons('fixture'),
+        () => api.getEpisodes('fixture', 'season'),
+        () =>
+          api.searchItems({
+            parentId: 'library',
+            searchTerm: 'Synthetic',
+            includeItemTypes: ['Movie'],
+          }),
+      ]) {
+        const started = Date.now();
+        await assert.rejects(read);
+        assert.ok(Date.now() - started < 2000);
+      }
+      const controller = new AbortController();
+      const cancellable = new JellyfinAPI(
+        `http://127.0.0.1:${address.port}`,
+        undefined,
+        undefined,
+        { timeoutMs: 5000, signal: controller.signal }
+      );
+      const reading = cancellable.getItemData('fixture');
+      controller.abort();
+      await assert.rejects(reading);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) =>
+        server.close((error) => (error ? reject(error) : resolve()))
+      );
+    }
+  });
   it('enumerates all pages with stable totals and filters virtual items only after completeness checks', async () => {
     const starts: number[] = [];
     let pageCount = 0;

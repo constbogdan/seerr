@@ -374,4 +374,106 @@ describe('JellyfinAvailabilityReconciler', () => {
     assert.equal(reconciler.getStatus().pendingTargets, 0);
     assert.equal(clock.timers.length, 0);
   });
+
+  it('expires a hung target independently while another target succeeds; late readiness cannot acknowledge', async () => {
+    const clock = new FakeClock();
+    let release: ((value: TargetedReadiness) => void) | undefined;
+    const cleared: number[] = [];
+    const acknowledged: number[] = [];
+    const reconciler = new JellyfinAvailabilityReconciler({
+      resolveImports: async (imports) =>
+        imports.map((item) => buildTarget(item.externalId)),
+      reconcileTarget: async (target) =>
+        target.mediaId === 1
+          ? new Promise<TargetedReadiness>((resolve) => {
+              release = resolve;
+            })
+          : ready(),
+      now: () => clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      presentation: {
+        startFinalizing: () => undefined,
+        clearFinalizing: (target) => {
+          cleared.push(target.externalId);
+        },
+        acknowledgeImport: (target) => {
+          acknowledged.push(target.externalId);
+        },
+      },
+    });
+    await reconciler.request([buildImport(1), buildImport(2)]);
+    await clock.runNext();
+    assert.deepEqual(acknowledged, [2]);
+    assert.equal(reconciler.getStatus().pendingTargets, 1);
+    await clock.runNext();
+    assert.equal(reconciler.getStatus().pendingTargets, 0);
+    assert.equal(reconciler.getStatus().running, false);
+    assert.deepEqual(cleared.sort(), [1, 2]);
+    release?.(ready());
+    await flush();
+    await flush();
+    assert.deepEqual(acknowledged, [2]);
+  });
+
+  it('catches rejected targets and uses the existing fifteen-second retry without blocking peers', async () => {
+    const clock = new FakeClock();
+    let attempts = 0;
+    const reconciler = new JellyfinAvailabilityReconciler({
+      resolveImports: async (imports) =>
+        imports.map((item) => buildTarget(item.externalId)),
+      reconcileTarget: async (target) => {
+        if (target.mediaId === 1 && ++attempts === 1)
+          throw new Error('database read failed');
+        return ready();
+      },
+      now: () => clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+    });
+    await reconciler.request([buildImport(1), buildImport(2)]);
+    await clock.runNext();
+    assert.equal(reconciler.getStatus().pendingTargets, 1);
+    assert.equal(
+      await clock.runNext(),
+      JELLYFIN_RECONCILIATION_RETRY_INTERVAL_MS
+    );
+    assert.equal(attempts, 2);
+    assert.equal(reconciler.getStatus().pendingTargets, 0);
+  });
+
+  it('does not acknowledge ready results for a replaced observation', async () => {
+    const clock = new FakeClock();
+    let current = true;
+    let release: (() => void) | undefined;
+    let acknowledged = 0;
+    const reconciler = new JellyfinAvailabilityReconciler({
+      resolveImports: async () => [buildTarget(1)],
+      reconcileTarget: async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return ready();
+      },
+      now: () => clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      presentation: {
+        startFinalizing: () => undefined,
+        clearFinalizing: () => undefined,
+        isCurrentFinalizingTarget: () => current,
+        acknowledgeImport: () => {
+          acknowledged++;
+        },
+      },
+    });
+    await reconciler.request([buildImport(1)]);
+    await clock.runNext();
+    current = false;
+    release?.();
+    await flush();
+    await flush();
+    assert.equal(acknowledged, 0);
+    assert.equal(reconciler.getStatus().pendingTargets, 0);
+  });
 });

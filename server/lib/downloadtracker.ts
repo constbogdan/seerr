@@ -18,6 +18,7 @@ import {
 } from '@server/lib/acquisitionPhase';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
+import { randomUUID } from 'crypto';
 import { isEqual, uniqWith } from 'lodash';
 
 export interface EpisodeNumberResult {
@@ -47,12 +48,42 @@ export interface DownloadingItem {
 }
 
 interface InternalDownloadingItem extends DownloadingItem {
+  historyImportedAt?: string;
+  ambiguousHistory?: boolean;
+  historyEventId?: number;
+  observationId?: string;
+  providerKey?: string;
   queueRecordId: number;
   firstObservedAt: number;
   disappearedAt?: number;
 }
 
+// Process-local observation identity is a fence, not proof of import. Only a
+// provider history event supplies import authority. Never expose this on cards.
+export interface ServarrImportEvidence {
+  ambiguous?: boolean;
+  observationId: string;
+  providerKey: string;
+  queueRecordId: number;
+  historyEventId: number;
+  importedAt: string;
+  episodeId?: number;
+  historyEpisodeId?: number;
+}
+
+export const importEvidenceKey = (evidence: ServarrImportEvidence): string =>
+  JSON.stringify([
+    evidence.providerKey,
+    evidence.observationId,
+    evidence.queueRecordId,
+    evidence.historyEventId,
+    evidence.importedAt,
+    evidence.episodeId,
+    evidence.historyEpisodeId,
+  ]);
+
 export interface ConfirmedServarrImport {
+  evidence?: ServarrImportEvidence[];
   mediaType: MediaType;
   externalId: number;
   downloadId: string;
@@ -61,6 +92,7 @@ export interface ConfirmedServarrImport {
 }
 
 export interface FinalizingAcquisitionTarget {
+  evidence?: ServarrImportEvidence[];
   mediaType: MediaType;
   externalId: number;
   downloadId: string;
@@ -104,6 +136,11 @@ export const IMPORT_CONFIRMATION_WINDOW_MS = 2 * 60_000;
 export const MAX_IMPORT_CONFIRMATION_BACKLOG = MAX_DOWNLOAD_QUEUE_SIZE;
 
 export class DownloadTracker {
+  private readonly latestObservations = new Map<
+    string,
+    { observationId: string; historyEventId?: number }
+  >();
+  private readonly acknowledgedImports = new Set<string>();
   private radarrServers: Record<number, InternalDownloadingItem[]> = {};
   private sonarrServers: Record<number, InternalDownloadingItem[]> = {};
   private finalizingRadarrServers: Record<number, InternalDownloadingItem[]> =
@@ -128,7 +165,11 @@ export class DownloadTracker {
     return this.getProgress(
       this.radarrServers[serverId],
       this.finalizingRadarrServers[serverId],
-      externalServiceId
+      externalServiceId,
+      serverId,
+      Boolean(
+        getSettings().radarr.find((server) => server.id === serverId)?.is4k
+      )
     );
   }
 
@@ -139,7 +180,11 @@ export class DownloadTracker {
     return this.getProgress(
       this.sonarrServers[serverId],
       this.finalizingSonarrServers[serverId],
-      externalServiceId
+      externalServiceId,
+      serverId,
+      Boolean(
+        getSettings().sonarr.find((server) => server.id === serverId)?.is4k
+      )
     );
   }
 
@@ -154,7 +199,11 @@ export class DownloadTracker {
     const retained = (store[target.serverId] ?? []).filter(
       (item) =>
         item.externalId !== target.externalId ||
-        item.downloadId !== target.downloadId
+        item.downloadId !== target.downloadId ||
+        (!!target.evidence?.length &&
+          !target.evidence.some(
+            (proof) => proof.observationId === item.observationId
+          ))
     );
     const episodes = target.episodes.length ? target.episodes : [undefined];
     store[target.serverId] = [
@@ -175,6 +224,12 @@ export class DownloadTracker {
         title: '',
         downloadId: target.downloadId,
         episode,
+        observationId: target.evidence?.find(
+          (proof) => proof.episodeId === episode?.id
+        )?.observationId,
+        historyEventId: target.evidence?.find(
+          (proof) => proof.episodeId === episode?.id
+        )?.historyEventId,
         queueRecordId: -(index + 1),
         firstObservedAt: this.now(),
       })),
@@ -189,8 +244,81 @@ export class DownloadTracker {
     store[target.serverId] = (store[target.serverId] ?? []).filter(
       (item) =>
         item.externalId !== target.externalId ||
-        item.downloadId !== target.downloadId
+        item.downloadId !== target.downloadId ||
+        (!!target.evidence?.length &&
+          !target.evidence.some(
+            (proof) => proof.observationId === item.observationId
+          ))
     );
+  }
+
+  public isCurrentFinalizingTarget(
+    target: FinalizingAcquisitionTarget
+  ): boolean {
+    return (
+      !target.evidence?.length ||
+      target.evidence.every(
+        (proof) =>
+          !proof.ambiguous &&
+          this.latestObservations.get(
+            this.observationScope(
+              proof.providerKey,
+              target.mediaType,
+              target.externalId,
+              proof.episodeId
+            )
+          )?.observationId === proof.observationId &&
+          this.latestObservations.get(
+            this.observationScope(
+              proof.providerKey,
+              target.mediaType,
+              target.externalId,
+              proof.episodeId
+            )
+          )?.historyEventId === proof.historyEventId
+      )
+    );
+  }
+
+  public acknowledgeImport(target: FinalizingAcquisitionTarget): void {
+    if (!target.evidence?.length || !this.isCurrentFinalizingTarget(target))
+      return;
+    for (const proof of target.evidence) {
+      if (
+        !Number.isSafeInteger(proof.historyEventId) ||
+        proof.historyEventId < 1 ||
+        !Number.isFinite(Date.parse(proof.importedAt))
+      )
+        continue;
+      if (
+        target.mediaType === MediaType.TV &&
+        (!Number.isSafeInteger(proof.episodeId) ||
+          (proof.episodeId ?? 0) < 1 ||
+          proof.historyEpisodeId !== proof.episodeId)
+      )
+        continue;
+      this.acknowledgedImports.add(
+        JSON.stringify([
+          target.serverId,
+          target.is4k,
+          proof.observationId,
+          proof.historyEventId,
+        ])
+      );
+    }
+    while (this.acknowledgedImports.size > MAX_IMPORT_CONFIRMATION_BACKLOG) {
+      const oldest = this.acknowledgedImports.values().next().value;
+      if (oldest) this.acknowledgedImports.delete(oldest);
+    }
+  }
+
+  private observationScope(
+    provider: string,
+    type: MediaType,
+    externalId: number,
+    episodeId?: number
+  ): string {
+    return JSON.stringify([provider, type, externalId, episodeId]);
   }
 
   public async resetDownloadTracker() {
@@ -243,6 +371,11 @@ export class DownloadTracker {
   }
 
   private readonly toPublicItem = ({
+    historyImportedAt,
+    ambiguousHistory,
+    historyEventId,
+    observationId,
+    providerKey,
     queueRecordId,
     firstObservedAt,
     disappearedAt,
@@ -251,19 +384,43 @@ export class DownloadTracker {
     void queueRecordId;
     void firstObservedAt;
     void disappearedAt;
+    void observationId;
+    void providerKey;
+    void historyEventId;
+    void historyImportedAt;
+    void ambiguousHistory;
     return item;
   };
 
   private getProgress(
     activeItems: InternalDownloadingItem[] | undefined,
     finalizingItems: InternalDownloadingItem[] | undefined,
-    externalServiceId: number
+    externalServiceId: number,
+    serverId: number,
+    is4k: boolean
   ): DownloadingItem[] {
     const active = (activeItems ?? []).filter(
       (item) => item.externalId === externalServiceId
     );
     return (active.length ? active : (finalizingItems ?? []))
       .filter((item) => item.externalId === externalServiceId)
+      .filter(
+        (item) =>
+          !item.observationId ||
+          item.acquisitionPhase !== AcquisitionPhase.FINALIZING ||
+          item.trackedDownloadState !== 'imported' ||
+          item.trackedDownloadStatus !== 'ok' ||
+          item.status !== 'completed' ||
+          item.health !== 'ok' ||
+          !this.acknowledgedImports.has(
+            JSON.stringify([
+              serverId,
+              is4k,
+              item.observationId,
+              item.historyEventId,
+            ])
+          )
+      )
       .map(this.toPublicItem);
   }
 
@@ -293,7 +450,8 @@ export class DownloadTracker {
     mediaType: MediaType,
     externalId: number,
     episode: EpisodeNumberResult | undefined,
-    previous: InternalDownloadingItem[]
+    previous: InternalDownloadingItem[],
+    providerKey: string
   ): InternalDownloadingItem {
     const derived = deriveAcquisitionState({
       status: item.status,
@@ -307,6 +465,7 @@ export class DownloadTracker {
       (candidate) =>
         candidate.disappearedAt === undefined &&
         candidate.downloadId === item.downloadId &&
+        candidate.queueRecordId === item.id &&
         candidate.mediaType === mediaType &&
         candidate.externalId === externalId &&
         candidate.episode?.id === episode?.id
@@ -316,6 +475,25 @@ export class DownloadTracker {
         ? prior.acquisitionPhaseStartedAt
         : new Date(this.now()).toISOString();
     const transferring = derived.acquisitionPhase === 'downloading';
+    const observationId =
+      prior?.trackedDownloadState === 'imported' &&
+      item.trackedDownloadState !== 'imported'
+        ? randomUUID()
+        : (prior?.observationId ?? randomUUID());
+    const scope = this.observationScope(
+      providerKey,
+      mediaType,
+      externalId,
+      episode?.id
+    );
+    this.latestObservations.delete(scope);
+    const historyEventId =
+      prior?.observationId === observationId ? prior.historyEventId : undefined;
+    this.latestObservations.set(scope, { observationId, historyEventId });
+    while (this.latestObservations.size > MAX_IMPORT_CONFIRMATION_BACKLOG) {
+      const oldest = this.latestObservations.keys().next().value;
+      if (oldest) this.latestObservations.delete(oldest);
+    }
 
     if (prior && prior.acquisitionPhase !== derived.acquisitionPhase) {
       logger.info('Acquisition phase changed', {
@@ -332,6 +510,17 @@ export class DownloadTracker {
 
     return {
       externalId,
+      observationId,
+      providerKey,
+      historyEventId,
+      historyImportedAt:
+        prior?.observationId === observationId
+          ? prior.historyImportedAt
+          : undefined,
+      ambiguousHistory:
+        prior?.observationId === observationId
+          ? prior.ambiguousHistory
+          : undefined,
       estimatedCompletionTime:
         transferring && item.estimatedCompletionTime
           ? new Date(item.estimatedCompletionTime)
@@ -352,7 +541,10 @@ export class DownloadTracker {
       episode,
       downloadId: item.downloadId,
       queueRecordId: item.id,
-      firstObservedAt: prior?.firstObservedAt ?? this.now(),
+      firstObservedAt:
+        prior?.observationId === observationId
+          ? prior.firstObservedAt
+          : this.now(),
     };
   }
 
@@ -411,12 +603,26 @@ export class DownloadTracker {
     );
     const grouped = new Map<string, ConfirmedServarrImport>();
     const retainedUnmatched: InternalDownloadingItem[] = [];
-    for (const item of confirmable) {
+    // Reuse this already-required history page for imported pack rows still in
+    // the queue. Do not introduce history reads when nothing disappeared.
+    const candidates = [
+      ...confirmable,
+      ...current.filter(
+        (item) => item.acquisitionPhase === AcquisitionPhase.FINALIZING
+      ),
+    ];
+    for (const item of candidates) {
       const matchingRecord = imported.find((record) => {
         if (record.downloadId !== item.downloadId) return false;
         const providerMediaId =
           item.mediaType === MediaType.MOVIE ? record.movieId : record.seriesId;
         if (providerMediaId !== item.externalId) return false;
+        if (
+          item.episode &&
+          record.episodeId !== undefined &&
+          record.episodeId !== item.episode.id
+        )
+          return false;
         const importedAt = Date.parse(record.date);
         return (
           Number.isFinite(importedAt) &&
@@ -435,7 +641,54 @@ export class DownloadTracker {
         downloadId: item.downloadId,
         serverAliases,
         episodes: [],
+        evidence: [],
       };
+      if (item.observationId && item.providerKey) {
+        const previousObservation = item.observationId;
+        if (
+          item.historyEventId !== undefined &&
+          item.historyEventId !== matchingRecord.id
+        ) {
+          // A different provider event fences all old completions. Reordered
+          // or equal-time conflicting history is ambiguous, never authority.
+          item.ambiguousHistory = !(
+            Date.parse(matchingRecord.date) >
+            Date.parse(item.historyImportedAt ?? '')
+          );
+          item.observationId = randomUUID();
+        }
+        item.historyEventId = matchingRecord.id;
+        item.historyImportedAt = matchingRecord.date;
+        const current = this.latestObservations.get(
+          this.observationScope(
+            item.providerKey,
+            item.mediaType,
+            item.externalId,
+            item.episode?.id
+          )
+        );
+        if (current?.observationId === previousObservation) {
+          current.observationId = item.observationId;
+          current.historyEventId = matchingRecord.id;
+        }
+        const proof: ServarrImportEvidence = {
+          observationId: item.observationId,
+          providerKey: item.providerKey,
+          queueRecordId: item.queueRecordId,
+          historyEventId: matchingRecord.id,
+          importedAt: matchingRecord.date,
+          episodeId: item.episode?.id,
+          historyEpisodeId: matchingRecord.episodeId,
+          ...(item.ambiguousHistory && { ambiguous: true }),
+        };
+        const evidence = (existing.evidence ??= []);
+        if (
+          !evidence.some(
+            (entry) => importEvidenceKey(entry) === importEvidenceKey(proof)
+          )
+        )
+          evidence.push(proof);
+      }
       if (
         item.episode &&
         !existing.episodes.some((episode) => episode.id === item.episode?.id)
@@ -529,7 +782,8 @@ export class DownloadTracker {
                 MediaType.MOVIE,
                 item.movieId,
                 undefined,
-                previousActive
+                previousActive,
+                physicalKey
               )
             );
             const serverAliases = [server, ...matchingServers].map((alias) => ({
@@ -675,7 +929,8 @@ export class DownloadTracker {
                 MediaType.TV,
                 item.seriesId,
                 item.episode,
-                previousActive
+                previousActive,
+                physicalKey
               )
             );
             const serverAliases = [server, ...matchingServers].map((alias) => ({
