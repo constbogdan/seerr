@@ -511,7 +511,7 @@ export class MediaRemovalService {
         presence.isCurrent = false;
         presence.removedAt ??= removedAt;
         presence.removalSource ??= target.removalSource;
-        presence.servarrHasFile = false;
+        // isCurrent closes availability; retain the last physical fact for Archive.
       }
       await presenceRepository.save(currentTargetPresences);
     }
@@ -534,7 +534,6 @@ export class MediaRemovalService {
       presence.isCurrent = false;
       presence.removedAt ??= removedAt;
       presence.removalSource ??= target.removalSource;
-      presence.jellyfinVisible = false;
     }
     if (jellyfinPresences.length > 0) {
       await presenceRepository.save(jellyfinPresences);
