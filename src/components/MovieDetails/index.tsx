@@ -41,7 +41,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import ErrorPage from '@app/pages/_error';
 import { sortCrewPriority } from '@app/utils/creditHelpers';
 import defineMessages from '@app/utils/defineMessages';
-import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
+import { getMediaRefreshInterval } from '@app/utils/refreshIntervalHelper';
 import {
   ArrowRightCircleIcon,
   CloudIcon,
@@ -158,13 +158,12 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
       axios.get<MovieDetailsType>(url).then((response) => response.data),
     {
       fallbackData: movie?.id === routeMovieId ? movie : undefined,
-      refreshInterval: refreshIntervalHelper(
-        {
-          downloadStatus: movie?.mediaInfo?.downloadStatus,
-          downloadStatus4k: movie?.mediaInfo?.downloadStatus4k,
-        },
-        15000
-      ),
+      refreshInterval: (latest) =>
+        getMediaRefreshInterval(
+          (latest ?? (movie?.id === routeMovieId ? movie : undefined))
+            ?.mediaInfo,
+          15000
+        ),
     }
   );
 

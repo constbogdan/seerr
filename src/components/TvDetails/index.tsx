@@ -44,7 +44,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import ErrorPage from '@app/pages/_error';
 import { sortCrewPriority } from '@app/utils/creditHelpers';
 import defineMessages from '@app/utils/defineMessages';
-import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
+import { getMediaRefreshInterval } from '@app/utils/refreshIntervalHelper';
 import {
   Disclosure,
   DisclosureButton,
@@ -161,13 +161,11 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
       axios.get<TvDetailsType>(url).then((response) => response.data),
     {
       fallbackData: tv?.id === routeTvId ? tv : undefined,
-      refreshInterval: refreshIntervalHelper(
-        {
-          downloadStatus: tv?.mediaInfo?.downloadStatus,
-          downloadStatus4k: tv?.mediaInfo?.downloadStatus4k,
-        },
-        15000
-      ),
+      refreshInterval: (latest) =>
+        getMediaRefreshInterval(
+          (latest ?? (tv?.id === routeTvId ? tv : undefined))?.mediaInfo,
+          15000
+        ),
     }
   );
 

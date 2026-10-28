@@ -1,11 +1,10 @@
 import Badge from '@app/components/Common/Badge';
 import { Permission, useUser } from '@app/hooks/useUser';
 import {
-  calculateDownloadProgress,
   getAcquisitionPhaseMessage,
-  isDeterminateAcquisitionPhase,
   shouldShowDownloadEta,
 } from '@app/utils/acquisitionPhase';
+import { getAcquisitionPresentation } from '@app/utils/acquisitionPresentation';
 import defineMessages from '@app/utils/defineMessages';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
 import { FormattedRelativeTime, useIntl } from 'react-intl';
@@ -29,13 +28,10 @@ const DownloadBlock = ({
 }: DownloadBlockProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
-  const progress = calculateDownloadProgress(downloadItem);
-  const determinateProgress = isDeterminateAcquisitionPhase(
-    downloadItem.acquisitionPhase
-  );
-  const phaseMessage = getAcquisitionPhaseMessage(
-    downloadItem.acquisitionPhase
-  );
+  const { phase, progress, determinate } = getAcquisitionPresentation([
+    downloadItem,
+  ]);
+  const phaseMessage = getAcquisitionPhaseMessage(phase);
 
   return (
     <div className="p-4">
@@ -50,10 +46,7 @@ const DownloadBlock = ({
               })
             : title}
       </div>
-      <DownloadProgress
-        determinate={determinateProgress}
-        progress={determinateProgress ? progress : undefined}
-      />
+      <DownloadProgress determinate={determinate} progress={progress} />
       <div className="flex items-center justify-between text-xs">
         <span>
           {is4k && (
@@ -68,7 +61,10 @@ const DownloadBlock = ({
           </Badge>
         </span>
         <span>
-          {shouldShowDownloadEta(downloadItem)
+          {shouldShowDownloadEta({
+            acquisitionPhase: phase,
+            estimatedCompletionTime: downloadItem.estimatedCompletionTime,
+          })
             ? intl.formatMessage(messages.estimatedtime, {
                 time: (
                   <FormattedRelativeTime

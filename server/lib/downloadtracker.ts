@@ -402,7 +402,37 @@ export class DownloadTracker {
     const active = (activeItems ?? []).filter(
       (item) => item.externalId === externalServiceId
     );
-    return (active.length ? active : (finalizingItems ?? []))
+    let projected = active.length ? active : (finalizingItems ?? []);
+    if (active.some((item) => item.mediaType === MediaType.TV)) {
+      // A Series-wide live queue must not hide another Season/Episode's
+      // Finalizing state. Prefer live rows only for the exact same generation
+      // and Episode scope; never collapse reused hashes across generations.
+      const key = (item: InternalDownloadingItem): string | undefined =>
+        item.observationId || (item.downloadId && item.episode)
+          ? JSON.stringify([
+              item.mediaType,
+              item.externalId,
+              item.downloadId,
+              item.episode?.seasonNumber,
+              item.episode?.episodeNumber,
+              item.episode?.id,
+              item.observationId,
+              item.historyEventId,
+            ])
+          : undefined;
+      const seen = new Set(
+        active.map(key).filter((value) => value !== undefined)
+      );
+      projected = [...active];
+      for (const item of finalizingItems ?? []) {
+        if (item.externalId !== externalServiceId) continue;
+        const generation = key(item);
+        if (generation !== undefined && seen.has(generation)) continue;
+        projected.push(item);
+        if (generation !== undefined) seen.add(generation);
+      }
+    }
+    return projected
       .filter((item) => item.externalId === externalServiceId)
       .filter(
         (item) =>
