@@ -81,28 +81,45 @@ const targetKey = (target: JellyfinAvailabilityTarget): string => {
 const completedGenerationKey = (target: JellyfinAvailabilityTarget): string =>
   `${targetKey(target)}:${target.episodes.map(episodeKey).sort().join(',')}`;
 
+const mergeEpisodeHints = (
+  current: EpisodeNumberResult[],
+  incoming: EpisodeNumberResult[]
+): EpisodeNumberResult[] =>
+  [
+    ...new Map(
+      [...current, ...incoming].map((episode) => [episodeKey(episode), episode])
+    ).values(),
+  ].sort(
+    (a, b) =>
+      a.seasonNumber - b.seasonNumber ||
+      a.episodeNumber - b.episodeNumber ||
+      a.id - b.id
+  );
+
 const mergeTargets = (
   current: JellyfinAvailabilityTarget | undefined,
   incoming: JellyfinAvailabilityTarget
-): JellyfinAvailabilityTarget => ({
-  ...incoming,
-  episodes: [
-    ...new Map(
-      [...(current?.episodes ?? []), ...incoming.episodes].map((episode) => [
-        episodeKey(episode),
-        episode,
-      ])
-    ).values(),
-  ],
-  presentationTargets: [
-    ...new Map(
-      [
-        ...(current?.presentationTargets ?? []),
-        ...incoming.presentationTargets,
-      ].map((target) => [presentationKey(target), target])
-    ).values(),
-  ],
-});
+): JellyfinAvailabilityTarget => {
+  const presentationTargets = new Map<string, FinalizingAcquisitionTarget>();
+  for (const target of [
+    ...(current?.presentationTargets ?? []),
+    ...incoming.presentationTargets,
+  ]) {
+    const key = presentationKey(target);
+    presentationTargets.set(key, {
+      ...target,
+      episodes: mergeEpisodeHints(
+        presentationTargets.get(key)?.episodes ?? [],
+        target.episodes
+      ),
+    });
+  }
+  return {
+    ...incoming,
+    episodes: mergeEpisodeHints(current?.episodes ?? [], incoming.episodes),
+    presentationTargets: [...presentationTargets.values()],
+  };
+};
 
 const resolveImports = async (
   imports: ConfirmedServarrImport[]

@@ -12,7 +12,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import {
   getRequestDownloadStatus,
-  refreshIntervalHelper,
+  getRequestRefreshInterval,
 } from '@app/utils/refreshIntervalHelper';
 import {
   ArrowPathIcon,
@@ -315,13 +315,8 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
     NonFunctionProperties<MediaRequest>
   >(`/api/v1/request/${request.id}`, {
     fallbackData: request,
-    refreshInterval: refreshIntervalHelper(
-      {
-        downloadStatus: request.media.downloadStatus,
-        downloadStatus4k: request.media.downloadStatus4k,
-      },
-      15000
-    ),
+    refreshInterval: (latest) =>
+      getRequestRefreshInterval(latest ?? request, 15000),
   });
 
   const [isRetrying, setRetrying] = useState(false);

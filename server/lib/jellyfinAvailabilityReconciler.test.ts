@@ -101,6 +101,139 @@ class FakeClock {
 }
 
 describe('JellyfinAvailabilityReconciler', () => {
+  for (const order of [
+    [2, 1],
+    [1, 2],
+  ]) {
+    it(`merges presentation Episode hints with readiness for one generation in order ${order.join(',')}`, async () => {
+      const clock = new FakeClock();
+      const episodes = [1, 2].map((number) => ({
+        id: 100 + number,
+        seasonNumber: 1,
+        episodeNumber: number,
+        absoluteEpisodeNumber: number,
+      }));
+      const evidence = episodes.map((episode) => ({
+        observationId: `observation-${episode.id}`,
+        providerKey: 'fixture',
+        queueRecordId: episode.id,
+        historyEventId: episode.id,
+        importedAt: new Date(clock.now).toISOString(),
+        episodeId: episode.id,
+        historyEpisodeId: episode.id,
+      }));
+      let next = episodes[order[0] - 1];
+      const shown: FinalizingAcquisitionTarget[] = [];
+      const inspected: JellyfinAvailabilityTarget[] = [];
+      const reconciler = new JellyfinAvailabilityReconciler({
+        resolveImports: async () => [
+          {
+            ...buildTarget(1, 'pack'),
+            mediaType: MediaType.TV,
+            episodes: [next, next],
+            presentationTargets: [
+              {
+                ...buildTarget(1, 'pack').presentationTargets[0],
+                mediaType: MediaType.TV,
+                episodes: [next, next],
+                evidence,
+              },
+            ],
+          },
+        ],
+        reconcileTarget: async (value) => {
+          inspected.push(value as JellyfinAvailabilityTarget);
+          return notReady();
+        },
+        now: () => clock.now,
+        setTimer: clock.setTimer,
+        clearTimer: clock.clearTimer,
+        presentation: {
+          startFinalizing: (value) => {
+            shown.push(value);
+          },
+          clearFinalizing: () => undefined,
+          isCurrentFinalizingTarget: () => true,
+        },
+      });
+      await reconciler.request([buildImport(1, 'pack')]);
+      next = episodes[order[1] - 1];
+      await reconciler.request([buildImport(1, 'pack')]);
+      assert.equal(reconciler.getStatus().pendingTargets, 1);
+      assert.deepEqual(shown.at(-1)?.episodes, episodes);
+      assert.deepEqual(shown.at(-1)?.evidence, evidence);
+      await clock.runNext();
+      assert.equal(inspected.length, 1);
+      assert.deepEqual(inspected[0].episodes, episodes);
+      assert.deepEqual(inspected[0].presentationTargets[0].episodes, episodes);
+    });
+  }
+
+  it('does not merge presentation hints across distinct exact evidence generations', async () => {
+    const clock = new FakeClock();
+    let generation = 1;
+    const shown: FinalizingAcquisitionTarget[] = [];
+    const reconciler = new JellyfinAvailabilityReconciler({
+      resolveImports: async () => [
+        {
+          ...buildTarget(1, 'same-hash'),
+          episodes: [
+            {
+              id: generation,
+              seasonNumber: generation,
+              episodeNumber: 1,
+              absoluteEpisodeNumber: 1,
+            },
+          ],
+          presentationTargets: [
+            {
+              ...buildTarget(1, 'same-hash').presentationTargets[0],
+              episodes: [
+                {
+                  id: generation,
+                  seasonNumber: generation,
+                  episodeNumber: 1,
+                  absoluteEpisodeNumber: 1,
+                },
+              ],
+              evidence: [
+                {
+                  observationId: `generation-${generation}`,
+                  providerKey: 'fixture',
+                  queueRecordId: generation,
+                  historyEventId: generation,
+                  importedAt: new Date(clock.now).toISOString(),
+                  episodeId: generation,
+                  historyEpisodeId: generation,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      reconcileTarget: async () => notReady(),
+      now: () => clock.now,
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+      presentation: {
+        startFinalizing: (value) => {
+          shown.push(value);
+        },
+        clearFinalizing: () => undefined,
+      },
+    });
+    await reconciler.request([buildImport(1, 'same-hash')]);
+    generation = 2;
+    await reconciler.request([buildImport(1, 'same-hash')]);
+    assert.equal(reconciler.getStatus().pendingTargets, 2);
+    assert.deepEqual(
+      shown.map((value) =>
+        value.episodes.map((episode) => episode.seasonNumber)
+      ),
+      [[1], [2]]
+    );
+  });
+
   it('uses a five-second debounce and preserves Finalizing across fixed retries', async () => {
     const clock = new FakeClock();
     const started: { phaseStartedAt: string }[] = [];

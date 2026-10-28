@@ -5,10 +5,8 @@ import DownloadBlock from '@app/components/DownloadBlock';
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
-import {
-  calculateDownloadProgress,
-  getAcquisitionPhaseMessage,
-} from '@app/utils/acquisitionPhase';
+import { getAcquisitionPhaseMessage } from '@app/utils/acquisitionPhase';
+import { getAcquisitionPresentation } from '@app/utils/acquisitionPresentation';
 import defineMessages from '@app/utils/defineMessages';
 import { MediaStatus } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
@@ -42,7 +40,7 @@ const StatusBadge = ({
   status,
   downloadItem = [],
   is4k = false,
-  inProgress = false,
+  inProgress: requestedInProgress = false,
   plexUrl,
   serviceUrl,
   tmdbId,
@@ -54,11 +52,30 @@ const StatusBadge = ({
   const { hasPermission } = useUser();
   const settings = useSettings();
 
+  const presentation = getAcquisitionPresentation(downloadItem);
+  const representative = presentation.item;
+  const inProgress = requestedInProgress && !!representative;
+  const episodeLabelText =
+    mediaType === 'tv' && representative?.episode
+      ? intl.formatMessage(
+          presentation.seasonPack
+            ? messages.seasonnumber
+            : messages.seasonepisodenumber,
+          {
+            seasonNumber: representative.episode.seasonNumber,
+            episodeNumber: representative.episode.episodeNumber,
+          }
+        )
+      : '';
+  const episodeLabel = episodeLabelText ? (
+    <span className="ml-1">{episodeLabelText}</span>
+  ) : null;
+
   let mediaLink: string | undefined;
   let mediaLinkDescription: string | undefined;
 
   const acquisitionPhaseMessage = getAcquisitionPhaseMessage(
-    downloadItem[0]?.acquisitionPhase
+    presentation.phase
   );
   const inProgressLabel = acquisitionPhaseMessage
     ? intl.formatMessage(acquisitionPhaseMessage)
@@ -116,14 +133,9 @@ const StatusBadge = ({
   }
 
   const tooltipContent =
-    mediaType === 'tv' &&
-    downloadItem.length > 1 &&
-    downloadItem.every(
-      (item) =>
-        item.downloadId && item.downloadId === downloadItem[0].downloadId
-    ) ? (
+    mediaType === 'tv' && representative && presentation.seasonPack ? (
       <DownloadBlock
-        downloadItem={downloadItem[0]}
+        downloadItem={representative}
         title={Array.isArray(title) ? title[0] : title}
         is4k={is4k}
       />
@@ -152,13 +164,20 @@ const StatusBadge = ({
           : status === MediaStatus.PROCESSING
             ? 'bg-indigo-500/80'
             : 'bg-green-500/80'
-      } transition-all duration-200 ease-in-out`}
+      } ${!presentation.determinate ? 'animate-pulse' : ''} transition-all duration-200 ease-in-out`}
+      role="progressbar"
+      aria-label={[inProgressLabel, episodeLabelText].filter(Boolean).join(' ')}
+      {...(presentation.determinate && presentation.progress !== undefined
+        ? {
+            'aria-valuemin': 0,
+            'aria-valuemax': 100,
+            'aria-valuenow': presentation.progress,
+          }
+        : {})}
       style={{
-        width: `${
-          downloadItem[0]
-            ? (calculateDownloadProgress(downloadItem[0]) ?? 0)
-            : 0
-        }%`,
+        width: presentation.determinate
+          ? `${presentation.progress ?? 0}%`
+          : '100%',
       }}
     />
   );
@@ -200,27 +219,7 @@ const StatusBadge = ({
               </span>
               {inProgress && (
                 <>
-                  {mediaType === 'tv' &&
-                    downloadItem[0].episode &&
-                    (downloadItem.length > 1 &&
-                    downloadItem.every(
-                      (item) =>
-                        item.downloadId &&
-                        item.downloadId === downloadItem[0].downloadId
-                    ) ? (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonnumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                        })}
-                      </span>
-                    ) : (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonepisodenumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                          episodeNumber: downloadItem[0].episode.episodeNumber,
-                        })}
-                      </span>
-                    ))}
+                  {episodeLabel}
                   <Spinner className="ml-1 h-3 w-3" />
                 </>
               )}
@@ -265,27 +264,7 @@ const StatusBadge = ({
               </span>
               {inProgress && (
                 <>
-                  {mediaType === 'tv' &&
-                    downloadItem[0].episode &&
-                    (downloadItem.length > 1 &&
-                    downloadItem.every(
-                      (item) =>
-                        item.downloadId &&
-                        item.downloadId === downloadItem[0].downloadId
-                    ) ? (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonnumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                        })}
-                      </span>
-                    ) : (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonepisodenumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                          episodeNumber: downloadItem[0].episode.episodeNumber,
-                        })}
-                      </span>
-                    ))}
+                  {episodeLabel}
                   <Spinner className="ml-1 h-3 w-3" />
                 </>
               )}
@@ -330,27 +309,7 @@ const StatusBadge = ({
               </span>
               {inProgress && (
                 <>
-                  {mediaType === 'tv' &&
-                    downloadItem[0].episode &&
-                    (downloadItem.length > 1 &&
-                    downloadItem.every(
-                      (item) =>
-                        item.downloadId &&
-                        item.downloadId === downloadItem[0].downloadId
-                    ) ? (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonnumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                        })}
-                      </span>
-                    ) : (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonepisodenumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                          episodeNumber: downloadItem[0].episode.episodeNumber,
-                        })}
-                      </span>
-                    ))}
+                  {episodeLabel}
                   <Spinner className="ml-1 h-3 w-3" />
                 </>
               )}
@@ -419,27 +378,7 @@ const StatusBadge = ({
               </span>
               {inProgress && (
                 <>
-                  {mediaType === 'tv' &&
-                    downloadItem[0].episode &&
-                    (downloadItem.length > 1 &&
-                    downloadItem.every(
-                      (item) =>
-                        item.downloadId &&
-                        item.downloadId === downloadItem[0].downloadId
-                    ) ? (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonnumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                        })}
-                      </span>
-                    ) : (
-                      <span className="ml-1">
-                        {intl.formatMessage(messages.seasonepisodenumber, {
-                          seasonNumber: downloadItem[0].episode.seasonNumber,
-                          episodeNumber: downloadItem[0].episode.episodeNumber,
-                        })}
-                      </span>
-                    ))}
+                  {episodeLabel}
                   <Spinner className="ml-1 h-3 w-3" />
                 </>
               )}
