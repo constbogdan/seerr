@@ -8,6 +8,7 @@ import { MediaRequest } from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import logger from '@server/logger';
+import { updateRequestStatus } from '@server/subscriber/MediaRequestSubscriber';
 import { withNestedTransaction } from '@server/utils/nestedTransaction';
 import type {
   EntityManager,
@@ -34,8 +35,11 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
         request.is4k === is4k &&
         request.status === MediaRequestStatus.PENDING
       ) {
-        request.status = MediaRequestStatus.APPROVED;
-        await requestRepository.save(request);
+        await updateRequestStatus(
+          manager,
+          request,
+          MediaRequestStatus.APPROVED
+        );
       }
     }
   }
@@ -100,14 +104,23 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
             const previousSeasonStatus =
               matchingOldSeason?.[request.is4k ? 'status4k' : 'status'];
 
+            if (requestSeason.status === MediaRequestStatus.COMPLETED) {
+              // Preserve the legacy closure predicate, without re-saving terminal children.
+              allSeasonResults.push(
+                currentSeasonStatus === MediaStatus.AVAILABLE ||
+                  currentSeasonStatus === MediaStatus.DELETED
+              );
+              continue;
+            }
+
             const hasStatusChanged =
               currentSeasonStatus !== previousSeasonStatus;
 
             const shouldUpdate =
-              (hasStatusChanged ||
-                requestSeason.status === MediaRequestStatus.COMPLETED) &&
-              (currentSeasonStatus === MediaStatus.AVAILABLE ||
-                currentSeasonStatus === MediaStatus.DELETED);
+              hasStatusChanged &&
+              // TV acquisition completion requires current Sonarr evidence.
+              // Keep legacy removal closure separate from positive settlement.
+              currentSeasonStatus === MediaStatus.DELETED;
 
             if (shouldUpdate) {
               requestSeason.status = MediaRequestStatus.COMPLETED;
@@ -125,12 +138,17 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
         }
 
         if (shouldComplete) {
-          request.status = MediaRequestStatus.COMPLETED;
           completedRequests.push(request);
         }
       }
 
-      await requestRepository.save(completedRequests);
+      for (const request of completedRequests) {
+        await updateRequestStatus(
+          manager,
+          request,
+          MediaRequestStatus.COMPLETED
+        );
+      }
     }
   }
 

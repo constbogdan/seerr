@@ -695,22 +695,6 @@ export class MediaRequest {
         return;
       }
 
-      if (
-        this.status === MediaRequestStatus.APPROVED &&
-        media[this.is4k ? 'status4k' : 'status'] === MediaStatus.AVAILABLE
-      ) {
-        logger.info(
-          'Media is already available. Sending availability notification instead of approval.',
-          { label: 'Media Request', requestId: this.id, mediaId: this.media.id }
-        );
-        MediaRequest.sendNotification(
-          this,
-          media,
-          Notification.MEDIA_AVAILABLE
-        );
-        return;
-      }
-
       MediaRequest.sendNotification(
         this,
         media,
