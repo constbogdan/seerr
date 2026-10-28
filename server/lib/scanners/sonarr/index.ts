@@ -11,6 +11,7 @@ import type {
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
+import { observeSonarrSettlement } from '@server/lib/requestSettlement';
 import type {
   ProcessableSeason,
   RunnableScanner,
@@ -148,6 +149,8 @@ class SonarrScanner
   }
 
   private async processSonarrSeries(sonarrSeries: SonarrSeries) {
+    const source = Object.freeze({ ...this.currentServer });
+    const sessionId = this.sessionId;
     const server4k = this.enable4kShow && this.currentServer.is4k;
     if (server4k) {
       this.scanned4kTvdbIds.add(sonarrSeries.tvdbId);
@@ -222,11 +225,18 @@ class SonarrScanner
       }
 
       await this.processShow(tmdbId, sonarrSeries.tvdbId, processableSeasons, {
-        serviceId: this.currentServer.id,
+        serviceId: source.id,
         externalServiceId: sonarrSeries.id,
         externalServiceSlug: sonarrSeries.titleSlug,
         title: sonarrSeries.title,
         is4k: server4k,
+        sonarrObservation: observeSonarrSettlement(
+          sonarrSeries,
+          tmdbId,
+          tvShow.seasons,
+          source,
+          () => this.running && this.sessionId === sessionId
+        ),
       });
     } catch (e) {
       this.log('Failed to process Sonarr media', 'error', {

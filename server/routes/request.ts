@@ -32,6 +32,7 @@ import {
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
+import { updateRequestStatus } from '@server/subscriber/MediaRequestSubscriber';
 import requestLock, {
   mediaKey,
   mediaLock,
@@ -804,11 +805,18 @@ requestRoutes.post<{
         }
 
         // this also triggers updating the parent media's status & sending to *arr
-        request.status = MediaRequestStatus.APPROVED;
-        request.modifiedBy = req.user;
-        await requestRepository.save(request);
-
-        return res.status(200).json(request);
+        const updated = await updateRequestStatus(
+          requestRepository.manager,
+          request,
+          MediaRequestStatus.APPROVED,
+          req.user?.id
+        );
+        if (!updated)
+          return next({
+            status: 409,
+            message: 'Request changed while retrying.',
+          });
+        return res.status(200).json(updated);
       });
     } catch (e) {
       logger.error('Error processing request retry', {
@@ -860,11 +868,18 @@ requestRoutes.post<{
           });
         }
 
-        request.status = newStatus;
-        request.modifiedBy = req.user;
-        await requestRepository.save(request);
-
-        return res.status(200).json(request);
+        const updated = await updateRequestStatus(
+          requestRepository.manager,
+          request,
+          newStatus,
+          req.user?.id
+        );
+        if (!updated)
+          return next({
+            status: 409,
+            message: 'Request changed while updating.',
+          });
+        return res.status(200).json(updated);
       });
     } catch (e) {
       logger.error('Error processing request update', {
