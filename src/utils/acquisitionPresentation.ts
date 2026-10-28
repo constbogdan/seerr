@@ -24,8 +24,38 @@ const hasTransferEstimate = (item: DownloadingItem): boolean => {
   );
 };
 
+// Frontend reset hints only, never authoritative provider/import identity.
+export const acquisitionObservationKey = (item: DownloadingItem): string =>
+  JSON.stringify([
+    item.mediaType,
+    item.externalId,
+    item.downloadId,
+    item.episode?.id,
+    item.episode?.seasonNumber,
+    item.episode?.episodeNumber,
+    item.acquisitionPhaseStartedAt,
+    item.size,
+  ]);
+
+export const isTransferCandidate = (item: DownloadingItem): boolean =>
+  (!item.acquisitionPhase ||
+    item.acquisitionPhase === AcquisitionPhase.DOWNLOADING) &&
+  item.status === 'downloading' &&
+  item.trackedDownloadState === 'downloading' &&
+  item.trackedDownloadStatus === 'ok' &&
+  item.health !== 'error' &&
+  item.health !== 'warning' &&
+  item.trackedStatus !== 'error' &&
+  item.trackedStatus !== 'warning' &&
+  Number.isFinite(item.size) &&
+  Number.isFinite(item.sizeLeft) &&
+  item.size > 0 &&
+  item.sizeLeft > 0 &&
+  item.sizeLeft <= item.size;
+
 export const getDownloadPresentationPhase = (
-  item: DownloadingItem
+  item: DownloadingItem,
+  advancing?: ReadonlySet<string>
 ): AcquisitionPhase => {
   if (
     item.acquisitionPhase &&
@@ -50,15 +80,10 @@ export const getDownloadPresentationPhase = (
   )
     return AcquisitionPhase.WARNING;
   if (
-    item.status === 'downloading' &&
-    item.trackedDownloadState === 'downloading' &&
-    item.trackedDownloadStatus === 'ok' &&
-    Number.isFinite(item.size) &&
-    Number.isFinite(item.sizeLeft) &&
-    item.size > 0 &&
-    item.sizeLeft > 0 &&
-    item.sizeLeft <= item.size &&
-    hasTransferEstimate(item)
+    isTransferCandidate(item) &&
+    (advancing
+      ? advancing.has(acquisitionObservationKey(item))
+      : hasTransferEstimate(item))
   )
     return AcquisitionPhase.DOWNLOADING;
   return AcquisitionPhase.WAITING;
@@ -66,8 +91,11 @@ export const getDownloadPresentationPhase = (
 
 // Transfer first, then local import/processing and Finalizing. Actionable
 // blocked/warning states precede waiting, paused/delayed and incomplete evidence.
-const priority = (item: DownloadingItem): number => {
-  const phase = getDownloadPresentationPhase(item);
+const priority = (
+  item: DownloadingItem,
+  advancing?: ReadonlySet<string>
+): number => {
+  const phase = getDownloadPresentationPhase(item, advancing);
   switch (phase) {
     case AcquisitionPhase.DOWNLOADING:
       return 0;
@@ -100,13 +128,14 @@ const identity = (item: DownloadingItem): string =>
   ]);
 
 export const selectRepresentativeDownload = (
-  items: readonly DownloadingItem[]
+  items: readonly DownloadingItem[],
+  advancing?: ReadonlySet<string>
 ): DownloadingItem | undefined => {
   let selected: DownloadingItem | undefined;
   let selectedPriority = Infinity;
   let selectedKey = '';
   for (const item of items) {
-    const rank = priority(item);
+    const rank = priority(item, advancing);
     // Identity decides equivalent priorities, never provider array order. The
     // final payload key makes contradictory duplicate identities deterministic
     // too; byte values are NOT evidence of transfer activity.
@@ -131,10 +160,13 @@ export const selectRepresentativeDownload = (
 };
 
 export const getAcquisitionPresentation = (
-  items: readonly DownloadingItem[]
+  items: readonly DownloadingItem[],
+  advancing?: ReadonlySet<string>
 ) => {
-  const item = selectRepresentativeDownload(items);
-  const phase = item ? getDownloadPresentationPhase(item) : undefined;
+  const item = selectRepresentativeDownload(items, advancing);
+  const phase = item
+    ? getDownloadPresentationPhase(item, advancing)
+    : undefined;
   const determinate = isDeterminateAcquisitionPhase(phase);
   return {
     item,

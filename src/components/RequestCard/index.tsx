@@ -65,9 +65,13 @@ const RequestCardPlaceholder = () => {
 
 interface RequestCardErrorProps {
   requestData?: NonFunctionProperties<MediaRequest>;
+  acquisitionValidating?: boolean;
 }
 
-const RequestCardError = ({ requestData }: RequestCardErrorProps) => {
+const RequestCardError = ({
+  requestData,
+  acquisitionValidating,
+}: RequestCardErrorProps) => {
   const { hasPermission } = useUser();
   const intl = useIntl();
 
@@ -162,6 +166,14 @@ const RequestCardError = ({ requestData }: RequestCardErrorProps) => {
                         ]
                       }
                       downloadItem={requestDownloadStatus}
+                      acquisitionObservation={
+                        requestData.media[
+                          requestData.is4k
+                            ? 'downloadStatus4k'
+                            : 'downloadStatus'
+                        ]
+                      }
+                      acquisitionValidating={acquisitionValidating}
                       title={intl.formatMessage(messages.unknowntitle)}
                       inProgress={requestDownloadStatus.length > 0}
                       is4k={requestData.is4k}
@@ -241,10 +253,12 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
     data: requestData,
     error: requestError,
     mutate: revalidate,
+    isValidating,
   } = useSWR<NonFunctionProperties<MediaRequest>>(
     `/api/v1/request/${request.id}`,
     {
       fallbackData: request,
+      ...(request.type === 'tv' ? { compare: Object.is } : {}),
       refreshInterval: (latest) =>
         getRequestRefreshInterval(latest ?? request, 15000),
     }
@@ -317,7 +331,12 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
   }
 
   if (!title || !requestData) {
-    return <RequestCardError requestData={requestData} />;
+    return (
+      <RequestCardError
+        requestData={requestData}
+        acquisitionValidating={isValidating}
+      />
+    );
   }
 
   const requestDownloadStatus = getRequestDownloadStatus(
@@ -458,6 +477,12 @@ const RequestCard = ({ request, onTitleData }: RequestCardProps) => {
                   requestData.media[requestData.is4k ? 'status4k' : 'status']
                 }
                 downloadItem={requestDownloadStatus}
+                acquisitionObservation={
+                  requestData.media[
+                    requestData.is4k ? 'downloadStatus4k' : 'downloadStatus'
+                  ]
+                }
+                acquisitionValidating={isValidating}
                 title={isMovie(title) ? title.title : title.name}
                 inProgress={requestDownloadStatus.length > 0}
                 is4k={requestData.is4k}
