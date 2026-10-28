@@ -1,4 +1,4 @@
-import { MediaStatus } from '@server/constants/media';
+import { MediaStatus, MediaType } from '@server/constants/media';
 import { AcquisitionPhase } from '@server/lib/acquisitionPhase';
 import { acquisitionDownload } from '@server/test/acquisitionFixtures';
 import assert from 'node:assert/strict';
@@ -11,10 +11,22 @@ import { createElement, type ComponentType, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { IntlProvider } from 'react-intl';
 import ts from 'typescript';
+// Client aliases are not available in the node:test server tsconfig.
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import {
+  observeAcquisitionDownloads,
+  type AcquisitionObservation,
+} from '../../utils/acquisitionObservation';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import { getAcquisitionPresentation } from '../../utils/acquisitionPresentation';
+// eslint-disable-next-line no-relative-import-paths/no-relative-import-paths
+import type { DownloadTitleItem } from '../../utils/downloadTitle';
 
 const nativeRequire = createRequire(__filename);
 const cache = new Map<string, object>();
 const moduleExport = (value: unknown) => ({ __esModule: true, default: value });
+let observation: AcquisitionObservation | undefined;
+let administrator = false;
 function load(filename: string): object {
   if (cache.has(filename)) return cache.get(filename)!;
   const source = readFileSync(filename, 'utf8');
@@ -37,8 +49,21 @@ function load(filename: string): object {
         if (id === '@app/hooks/useUser')
           return {
             Permission: nativeRequire('@server/lib/permissions').Permission,
-            useUser: () => ({ hasPermission: () => false }),
+            useUser: () => ({ hasPermission: () => administrator }),
           };
+        // This SSR fixture tests rendered presentation, not effects. The real
+        // React hook/SWR lifecycle is covered by acquisitionObservation.browser.ts.
+        if (id === '@app/hooks/useAcquisitionPresentation')
+          return moduleExport((rows: Row[], scope: string, sample: object) => {
+            observation = observeAcquisitionDownloads(
+              rows,
+              scope,
+              sample,
+              false,
+              observation
+            );
+            return getAcquisitionPresentation(rows, observation.advancing);
+          });
         if (id === '@app/hooks/useSettings')
           return moduleExport(() => ({ currentSettings: {} }));
         if (id === '@app/components/Common/Tooltip')
@@ -92,6 +117,16 @@ const StatusBadge = (
   }
 ).default;
 function render(rows: Row[], status = MediaStatus.PROCESSING) {
+  // Explicit preceding byte sample for the synthetic progressing rows.
+  observation = observeAcquisitionDownloads(
+    rows.map((row) => ({
+      ...row,
+      sizeLeft: Math.min(row.size, row.sizeLeft + 1),
+    })),
+    JSON.stringify([undefined, 'tv', undefined, false, undefined]),
+    {},
+    false
+  );
   const markup = renderToStaticMarkup(
     createElement(
       IntlProvider,
@@ -176,5 +211,152 @@ describe('rendered acquisition StatusBadge and detailed entries', () => {
     assert.match(badge, />S1</);
     assert.doesNotMatch(badge, /S1E/);
     assert.equal((detail.match(/role="progressbar"/g) ?? []).length, 1);
+  });
+});
+
+const downloadModule = load(
+  path.join(__dirname, '../DownloadBlock/index.tsx')
+) as {
+  default: ComponentType<{ downloadItem: DownloadTitleItem; title?: string }>;
+  useDownloadTitle: () => (item: DownloadTitleItem, title?: string) => string;
+};
+const renderDownload = (
+  row: DownloadTitleItem,
+  admin: boolean,
+  title = 'Synthetic Series'
+) => {
+  administrator = admin;
+  try {
+    return renderToStaticMarkup(
+      createElement(
+        IntlProvider,
+        { locale: 'en' },
+        createElement(downloadModule.default, { downloadItem: row, title })
+      )
+    );
+  } finally {
+    administrator = false;
+  }
+};
+const finalizing = (
+  changes: Partial<DownloadTitleItem> = {}
+): DownloadTitleItem => ({
+  ...acquisitionDownload(1, {
+    title: '',
+    acquisitionPhase: AcquisitionPhase.FINALIZING,
+    size: 0,
+    sizeLeft: 0,
+  }),
+  episode: {
+    id: 101,
+    seasonNumber: 1,
+    episodeNumber: 1,
+    absoluteEpisodeNumber: 1,
+    title: 'Synthetic Episode',
+  },
+  ...changes,
+});
+
+describe('rendered Finalizing identity and existing download titles', () => {
+  for (const admin of [true, false]) {
+    it(`renders Finalizing coordinates/title with matching native tooltip (admin=${admin})`, () => {
+      const markup = renderDownload(finalizing(), admin);
+      assert.match(markup, /title="S01E01 — Synthetic Episode"/);
+      assert.match(markup, />S01E01 — Synthetic Episode<\/div>/);
+      assert.match(markup, /Finalizing/);
+      assert.doesNotMatch(markup, /aria-valuenow|NaN|undefined/);
+    });
+    it(`falls back to coordinates, then known Series without invented hints (admin=${admin})`, () => {
+      const row = finalizing();
+      assert.match(
+        renderDownload(
+          { ...row, episode: { ...row.episode!, title: undefined } },
+          admin
+        ),
+        /title="S01E01"/
+      );
+      assert.match(
+        renderDownload({ ...row, episode: undefined }, admin),
+        /title="Synthetic Series"/
+      );
+      assert.doesNotMatch(
+        renderDownload({ ...row, episode: undefined }, admin),
+        /S00E00|S01E01|undefined/
+      );
+    });
+    it(`retains regular Specials Episode coordinates (admin=${admin})`, () => {
+      const row = finalizing();
+      assert.match(
+        renderDownload(
+          { ...row, episode: { ...row.episode!, seasonNumber: 0 } },
+          admin
+        ),
+        /S00E01 — Synthetic Episode/
+      );
+    });
+  }
+  it('preserves valid admin release titles even when an Episode title exists', () => {
+    assert.match(
+      renderDownload(finalizing({ title: 'Synthetic.Release.S01E01' }), true),
+      /title="Synthetic.Release.S01E01"/
+    );
+    assert.doesNotMatch(
+      renderDownload(finalizing({ title: 'Synthetic.Release.S01E01' }), true),
+      /— Synthetic Episode/
+    );
+  });
+  it('preserves non-admin normal Season/Episode formatting without exposing a release name', () => {
+    const markup = renderDownload(
+      acquisitionDownload(1, { title: 'Private.Release.Name' }),
+      false
+    );
+    assert.match(markup, /Synthetic Series: Season 1 Episode 1/);
+    assert.doesNotMatch(markup, /Private.Release.Name/);
+  });
+  it('keeps Movie titles and indeterminate Finalizing presentation', () => {
+    const row = finalizing({
+      mediaType: MediaType.MOVIE,
+      episode: undefined,
+      title: 'Synthetic Movie Release',
+    });
+    assert.match(
+      renderDownload(row, true, 'Synthetic Movie'),
+      /title="Synthetic Movie Release"/
+    );
+    assert.match(
+      renderDownload(row, false, 'Synthetic Movie'),
+      /title="Synthetic Movie"/
+    );
+    assert.doesNotMatch(
+      renderDownload(row, false, 'Synthetic Movie'),
+      /S01E|aria-valuenow/
+    );
+  });
+  it('does not invent a range for a shared multi-Episode pack', () => {
+    const row = finalizing({ downloadId: 'pack' });
+    assert.match(renderDownload(row, true), /S01E01 — Synthetic Episode/);
+    assert.doesNotMatch(renderDownload(row, true), /E01-E|Episodes 1-/);
+  });
+  it('uses the identical label formatter in the Manage tooltip and DownloadBlock', () => {
+    const source = readFileSync(
+      path.join(__dirname, '../ManageSlideOver/index.tsx'),
+      'utf8'
+    );
+    assert.equal(
+      (source.match(/content=\{downloadTitle\(status, mediaTitle\)\}/g) ?? [])
+        .length,
+      2
+    );
+    assert.equal((source.match(/title=\{mediaTitle\}/g) ?? []).length, 2);
+    const Probe = () =>
+      createElement(
+        'span',
+        null,
+        downloadModule.useDownloadTitle()(finalizing(), 'Synthetic Series')
+      );
+    const markup = renderToStaticMarkup(
+      createElement(IntlProvider, { locale: 'en' }, createElement(Probe))
+    );
+    assert.match(markup, /S01E01 — Synthetic Episode/);
   });
 });

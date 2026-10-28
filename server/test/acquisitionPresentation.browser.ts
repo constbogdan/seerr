@@ -69,7 +69,7 @@ it(
     };
     function Probe({ surface }) {
       const request = surface === 'RequestItem' ? { ...parent, id: 72, seasons: [{seasonNumber: 2, status: 5}] } : parent;
-      const { data } = hooks[surface]({
+      const { data, isValidating } = hooks[surface]({
         request, movie: { id: 200, mediaInfo: parent.media }, tv: { id: 200, mediaInfo: parent.media },
         routeMovieId: 200, routeTvId: 200,
         detailsCacheKey: ['/api/v1/' + (surface === 'MovieDetails' ? 'movie' : 'tv') + '/200', 'synthetic-user'],
@@ -81,7 +81,7 @@ it(
       const interval = surface.startsWith('Request') ? getRequestRefreshInterval(data, 15000) : getMediaRefreshInterval(media, 15000);
       return <section id={surface} data-stage={data?.fixtureStage} data-interval={interval} data-entries={rows.length}>
         <h2>{surface}</h2>
-        <StatusBadge status={media?.status} downloadItem={rows} inProgress={!!rows.length} mediaType={surface === 'MovieDetails' ? 'movie' : 'tv'} title="Synthetic Series" />
+        <StatusBadge status={media?.status} downloadItem={rows} acquisitionObservation={media?.downloadStatus} acquisitionValidating={isValidating} inProgress={!!rows.length} mediaType={surface === 'MovieDetails' ? 'movie' : 'tv'} title="Synthetic Series" />
         <details><summary>Synthetic queue inspection</summary><ul>{rows.map((row, index) => <li key={index}><DownloadBlock downloadItem={row} title="Synthetic Series" /></li>)}</ul></details>
       </section>;
     }
@@ -179,9 +179,13 @@ it(
             episodeNumber: number,
             absoluteEpisodeNumber: number,
           },
-          status: active ? 'downloading' : 'queued',
-          sizeLeft: number === 1 ? 570 : 230,
-          timeLeft: active ? '00:05:00' : '00:00:00',
+          // Real Sonarr/SAB queue shape: positive ETA and downloading state
+          // also appear on queued zero-byte peers. Only sample deltas prove
+          // activity, including an advancing Season 2 peer in stage 2.
+          status: 'downloading',
+          sizeLeft:
+            number === 1 ? 570 : stage === 0 ? 1000 : stage === 2 ? 100 : 230,
+          timeLeft: active ? '00:05:00' : '00:10:00',
         });
       const rows =
         stage === 3
@@ -286,7 +290,7 @@ it(
           const synchronized = (value: number) =>
             `[...document.querySelectorAll('#root > section')].length === 4 && [...document.querySelectorAll('#root > section')].every(section => section.dataset.stage === '${value}')`;
           await wait(
-            `${synchronized(0)} && ${text('RequestCard')}?.includes('DownloadingS1E1') && document.querySelector('#RequestCard').dataset.entries === '2'`
+            `${synchronized(0)} && ${text('RequestCard')}?.includes('Searching / Waiting') && document.querySelector('#RequestCard').dataset.entries === '2'`
           );
           assert.equal(
             await page.evaluate(

@@ -2,11 +2,11 @@ import Spinner from '@app/assets/spinner.svg';
 import Badge from '@app/components/Common/Badge';
 import Tooltip from '@app/components/Common/Tooltip';
 import DownloadBlock from '@app/components/DownloadBlock';
+import useAcquisitionPresentation from '@app/hooks/useAcquisitionPresentation';
 import useSettings from '@app/hooks/useSettings';
 import { Permission, useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
 import { getAcquisitionPhaseMessage } from '@app/utils/acquisitionPhase';
-import { getAcquisitionPresentation } from '@app/utils/acquisitionPresentation';
 import defineMessages from '@app/utils/defineMessages';
 import { MediaStatus } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
@@ -34,6 +34,9 @@ interface StatusBadgeProps {
   mediaType?: 'movie' | 'tv';
   title?: string | string[];
   statusLabelOverride?: string;
+  // Original, unfiltered quality queue: metadata-only cache projections retain it.
+  acquisitionObservation?: readonly DownloadingItem[];
+  acquisitionValidating?: boolean;
 }
 
 const StatusBadge = ({
@@ -47,12 +50,20 @@ const StatusBadge = ({
   mediaType,
   title,
   statusLabelOverride,
+  acquisitionObservation,
+  acquisitionValidating = false,
 }: StatusBadgeProps) => {
   const intl = useIntl();
-  const { hasPermission } = useUser();
+  const { user, hasPermission } = useUser();
   const settings = useSettings();
 
-  const presentation = getAcquisitionPresentation(downloadItem);
+  const presentation = useAcquisitionPresentation(
+    downloadItem,
+    JSON.stringify([user?.id, mediaType, tmdbId, is4k, serviceUrl]),
+    acquisitionObservation ?? downloadItem,
+    acquisitionValidating,
+    mediaType === 'tv'
+  );
   const representative = presentation.item;
   const inProgress = requestedInProgress && !!representative;
   const episodeLabelText =

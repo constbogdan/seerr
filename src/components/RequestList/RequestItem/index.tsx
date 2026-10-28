@@ -61,11 +61,13 @@ const isMovie = (movie: MovieDetails | TvDetails): movie is MovieDetails => {
 interface RequestItemErrorProps {
   requestData?: NonFunctionProperties<MediaRequest>;
   revalidateList: () => void;
+  acquisitionValidating?: boolean;
 }
 
 const RequestItemError = ({
   requestData,
   revalidateList,
+  acquisitionValidating,
 }: RequestItemErrorProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -152,6 +154,12 @@ const RequestItemError = ({
                       ]
                     }
                     downloadItem={requestDownloadStatus}
+                    acquisitionObservation={
+                      requestData.media[
+                        requestData.is4k ? 'downloadStatus4k' : 'downloadStatus'
+                      ]
+                    }
+                    acquisitionValidating={acquisitionValidating}
                     title={intl.formatMessage(messages.unknowntitle)}
                     inProgress={requestDownloadStatus.length > 0}
                     is4k={requestData.is4k}
@@ -311,13 +319,19 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
   const { data: title, error } = useSWR<MovieDetails | TvDetails>(
     inView ? url : null
   );
-  const { data: requestData, mutate: revalidate } = useSWR<
-    NonFunctionProperties<MediaRequest>
-  >(`/api/v1/request/${request.id}`, {
-    fallbackData: request,
-    refreshInterval: (latest) =>
-      getRequestRefreshInterval(latest ?? request, 15000),
-  });
+  const {
+    data: requestData,
+    mutate: revalidate,
+    isValidating,
+  } = useSWR<NonFunctionProperties<MediaRequest>>(
+    `/api/v1/request/${request.id}`,
+    {
+      fallbackData: request,
+      ...(request.type === 'tv' ? { compare: Object.is } : {}),
+      refreshInterval: (latest) =>
+        getRequestRefreshInterval(latest ?? request, 15000),
+    }
+  );
 
   const [isRetrying, setRetrying] = useState(false);
   const [updatingType, setUpdatingType] = useState<
@@ -403,6 +417,7 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
   if (!title || !requestData) {
     return (
       <RequestItemError
+        acquisitionValidating={isValidating}
         requestData={requestData}
         revalidateList={revalidateList}
       />
@@ -543,6 +558,12 @@ const RequestItem = ({ request, revalidateList }: RequestItemProps) => {
                     requestData.media[requestData.is4k ? 'status4k' : 'status']
                   }
                   downloadItem={requestDownloadStatus}
+                  acquisitionObservation={
+                    requestData.media[
+                      requestData.is4k ? 'downloadStatus4k' : 'downloadStatus'
+                    ]
+                  }
+                  acquisitionValidating={isValidating}
                   title={isMovie(title) ? title.title : title.name}
                   inProgress={requestDownloadStatus.length > 0}
                   is4k={requestData.is4k}

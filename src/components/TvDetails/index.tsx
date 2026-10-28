@@ -155,12 +155,15 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
     data,
     error,
     mutate: revalidate,
+    isValidating,
   } = useSWR<TvDetailsType>(
     detailsCacheKey,
     ([url]: readonly [string, string]) =>
       axios.get<TvDetailsType>(url).then((response) => response.data),
     {
       fallbackData: tv?.id === routeTvId ? tv : undefined,
+      // An unchanged fresh response is still a new byte-activity observation.
+      compare: Object.is,
       refreshInterval: (latest) =>
         getMediaRefreshInterval(
           (latest ?? (tv?.id === routeTvId ? tv : undefined))?.mediaInfo,
@@ -622,6 +625,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
             <StatusBadge
               status={data.mediaInfo?.status}
               downloadItem={data.mediaInfo?.downloadStatus}
+              acquisitionObservation={data.mediaInfo?.downloadStatus}
+              acquisitionValidating={isValidating}
               title={data.name}
               inProgress={(data.mediaInfo?.downloadStatus ?? []).length > 0}
               tmdbId={data.mediaInfo?.tmdbId}
@@ -643,6 +648,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                 <StatusBadge
                   status={data.mediaInfo?.status4k}
                   downloadItem={data.mediaInfo?.downloadStatus4k}
+                  acquisitionObservation={data.mediaInfo?.downloadStatus4k}
+                  acquisitionValidating={isValidating}
                   title={data.name}
                   is4k
                   inProgress={
