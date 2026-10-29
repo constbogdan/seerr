@@ -10,9 +10,15 @@ import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import backgroundDatabaseWriteCoordinator from '@server/lib/backgroundDatabaseWriteCoordinator';
 import {
+  jellyfinPreferenceScope,
+  persistJellyfinPreference,
+  preferenceItemIds,
+  type JellyfinPreferenceTarget,
+} from '@server/lib/jellyfinPreferences';
+import {
+  JELLYFIN_VIEWING_USER_CONCURRENCY,
   chunkValues,
   getBatchedUserItems,
-  JELLYFIN_VIEWING_USER_CONCURRENCY,
   normalizeExactJellyfinId,
   runBounded,
   type JellyfinViewingClient,
@@ -186,6 +192,28 @@ export class WatchlistPlayStateSync {
             .updateEntity(false)
             .orIgnore()
             .execute();
+          // Only explicit Watchlist intent enrolls a new preference-only row in
+          // the pre-existing play-state population. Existing rows default true.
+          await manager
+            .createQueryBuilder()
+            .update(UserMediaState)
+            .set({ jellyfinPlayStateTracked: true })
+            .where(
+              batch
+                .map(
+                  (_, index) =>
+                    `("userId" = :user${index} AND "mediaType" = :type${index} AND "tmdbId" = :tmdb${index})`
+                )
+                .join(' OR '),
+              Object.fromEntries(
+                batch.flatMap((row, index) => [
+                  [`user${index}`, row.requestedBy.id],
+                  [`type${index}`, row.mediaType],
+                  [`tmdb${index}`, row.tmdbId],
+                ])
+              )
+            )
+            .execute();
         }
       });
     }
@@ -195,6 +223,7 @@ export class WatchlistPlayStateSync {
       .leftJoinAndSelect('state.user', 'user')
       .leftJoinAndSelect('state.media', 'media')
       .addSelect('state.jellyfinPlayStateUserId')
+      .where('state.jellyfinPlayStateTracked = :tracked', { tracked: true })
       .orderBy('user.id', 'ASC')
       .addOrderBy('state.id', 'ASC')
       .getMany();
@@ -242,6 +271,13 @@ export class WatchlistPlayStateSync {
 
   private async reconcile(requireComplete: boolean): Promise<number> {
     const startedAt = Date.now();
+    const preferenceScope = jellyfinPreferenceScope();
+    const preferenceUpdates: {
+      target: JellyfinPreferenceTarget;
+      items: Map<string, JellyfinLibraryItemExtended>;
+      userId: number;
+      sourceUserId: string;
+    }[] = [];
     const rows = await this.ensureStateRecords();
     const summary = {
       usersConsidered: new Set(rows.map((row) => row.user.id)).size,
@@ -376,6 +412,19 @@ export class WatchlistPlayStateSync {
 
         const syncedAt = new Date();
         for (const { row, ids } of rowsWithIds) {
+          if (ids.length)
+            preferenceUpdates.push({
+              target: {
+                mediaType: row.mediaType,
+                tmdbId: row.tmdbId,
+                ids: preferenceItemIds(ids),
+                mediaId: row.media?.id,
+                stateId: row.id,
+              },
+              items: itemsById,
+              userId: row.user.id,
+              sourceUserId: userId,
+            });
           if (ids.length === 0) {
             updates.push({
               id: row.id,
@@ -429,6 +478,14 @@ export class WatchlistPlayStateSync {
               jellyfinPlayStateUserId: update.userId,
             }
           );
+        }
+        for (const update of preferenceUpdates) {
+          await persistJellyfinPreference({
+            ...update,
+            manager,
+            sourceScope: preferenceScope,
+            observedAt: new Date(startedAt),
+          });
         }
       });
     }

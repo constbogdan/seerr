@@ -70,7 +70,22 @@ describe('migration/entity schema authority', () => {
       });
       await current.initialize();
       const currentApplied = await current.runMigrations();
-      assert.equal(currentApplied.at(-1)?.name, 'AddFreshV21790000000048');
+      assert.equal(
+        currentApplied.at(-1)?.name,
+        'AddJellyfinPreference1790000000050'
+      );
+      assert.deepEqual(
+        await current.query(
+          'SELECT "jellyfinPlayStateTracked", "jellyfinLikes", "jellyfinPreferenceObservedAt" FROM "user_media_state"'
+        ),
+        [
+          {
+            jellyfinPlayStateTracked: 1,
+            jellyfinLikes: null,
+            jellyfinPreferenceObservedAt: null,
+          },
+        ]
+      );
 
       assert.deepEqual(
         await current.query(

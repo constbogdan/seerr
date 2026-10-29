@@ -21,7 +21,7 @@ describe('removal execution migration', () => {
     try {
       await database.initialize();
       const applied = await database.runMigrations();
-      assert.equal(applied.at(-1)?.name, 'AddFreshV21790000000048');
+      assert.equal(applied.at(-1)?.name, 'AddJellyfinPreference1790000000050');
       const runner = database.createQueryRunner();
       const execution = await runner.getTable('removal_execution');
       const claim = await runner.getTable('removal_execution_claim');
@@ -47,6 +47,7 @@ describe('removal execution migration', () => {
       assert.deepEqual(await runner.query('PRAGMA foreign_key_check'), []);
       await runner.release();
 
+      await database.undoLastMigration(); // Jellyfin preferences V1
       await database.undoLastMigration(); // Fresh V2
       await database.undoLastMigration();
       assert.equal(
@@ -107,6 +108,7 @@ describe('removal execution migration', () => {
     try {
       await database.initialize();
       await database.runMigrations();
+      await database.undoLastMigration(); // Jellyfin preferences V1
       await database.undoLastMigration(); // Fresh V2
       await database.undoLastMigration();
       await database.undoLastMigration();
@@ -132,6 +134,7 @@ describe('removal execution migration', () => {
           'AddSeriesRelocation1790000000044',
           'AddTmdbCollectionMembership1790000000046',
           'AddFreshV21790000000048',
+          'AddJellyfinPreference1790000000050',
         ]
       );
       assert.deepEqual(
