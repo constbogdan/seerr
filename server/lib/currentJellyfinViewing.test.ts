@@ -32,6 +32,7 @@ import {
 } from '@server/entity/LibraryHydration';
 import { User } from '@server/entity/User';
 import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Viewer } from '@server/entity/Viewer';
 import { ViewingEvidence } from '@server/entity/ViewingEvidence';
 import { Watchlist } from '@server/entity/Watchlist';
@@ -52,6 +53,7 @@ import {
   getSeriesViewingProjection,
 } from '@server/lib/libraryViewingProjection';
 import { getSettings } from '@server/lib/settings';
+import { WatchlistPlayStateSync } from '@server/lib/watchlistPlayState';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { beforeEach, describe, it } from 'node:test';
@@ -325,6 +327,143 @@ describe('current Jellyfin viewing synchronization', () => {
     admin.jellyfinUserId = USER_A;
     admin.includeInUserMetrics = true;
     await getRepository(User).save(admin);
+  });
+
+  it('persists Movie/Series preferences through the real current-viewing path without reinterpreting watched state', async () => {
+    const { movie, series } = await createCurrentLibrary();
+    const seriesId = '66666666666666666666666666666666';
+    await getRepository(CanonicalMediaIdentity).save([
+      new CanonicalMediaIdentity({
+        canonicalMediaId: movie.id,
+        mediaType: LibraryMediaType.MOVIE,
+        provider: 'tmdb',
+        sourceScope: '',
+        value: '10',
+      }),
+      new CanonicalMediaIdentity({
+        canonicalMediaId: series.id,
+        mediaType: LibraryMediaType.SERIES,
+        provider: 'tmdb',
+        sourceScope: '',
+        value: '20',
+      }),
+    ]);
+    await getRepository(LibraryPresence).update(
+      { canonicalMediaId: series.id, sourceSystem: 'jellyfin' },
+      { sourceItemId: `series:${seriesId}` }
+    );
+    let date = new Date('2026-10-01T12:00:00Z');
+    let omitSeries = false;
+    let invalidateGeneration = false;
+    const requests: string[][] = [];
+    const service = new CurrentJellyfinViewingService({
+      now: () => date,
+      createClient: async () => ({
+        getUserItems: async ({ ids }) => {
+          requests.push(ids);
+          if (invalidateGeneration)
+            await dataSource.transaction('SERIALIZABLE', (manager) =>
+              new CurrentLibraryGenerationService(
+                new LibraryHydrationEpochService(dataSource)
+              ).advance(manager)
+            );
+          return ids
+            .filter((id) => !omitSeries || id !== seriesId)
+            .map(
+              (id) =>
+                ({
+                  ...jellyfinItem({
+                    id,
+                    type: id === MOVIE_ID ? 'Movie' : 'Episode',
+                    played: true,
+                  }),
+                  Type:
+                    id === seriesId
+                      ? 'Series'
+                      : id === MOVIE_ID
+                        ? 'Movie'
+                        : 'Episode',
+                  ProviderIds: { Tmdb: id === MOVIE_ID ? '10' : '20' },
+                  UserData: {
+                    ...jellyfinItem({ id, type: 'Movie', played: true })
+                      .UserData!,
+                    Likes: false,
+                  },
+                }) as JellyfinLibraryItemExtended
+            );
+        },
+      }),
+    });
+    const result = await service.run();
+    assert.equal(result.preferencesUpdated, 2);
+    assert.equal(result.preferencesIncomplete, 0);
+    assert.equal(requests.length, 1);
+    assert.ok(requests[0].includes(seriesId));
+    const preferences = await getRepository(UserMediaState).find({
+      order: { tmdbId: 'ASC' },
+    });
+    assert.deepEqual(
+      preferences.map((row) => [
+        row.mediaType,
+        row.jellyfinLikes,
+        row.jellyfinPlayed,
+        row.jellyfinPlayStateTracked,
+      ]),
+      [
+        [MediaType.MOVIE, false, null, false],
+        [MediaType.TV, false, null, false],
+      ]
+    );
+    assert.equal(
+      await getRepository(CurrentViewingState).countBy({ played: true }),
+      3
+    );
+    assert.equal(
+      await getRepository(ViewingEvidence).countBy({
+        completionClassification: ViewingCompletionClassification.CONFIRMED,
+      }),
+      3
+    );
+    assert.equal(await getRepository(Watchlist).count(), 0);
+    // Preference-only rows must never enroll new watched-state observers.
+    let extraCalls = 0;
+    await new WatchlistPlayStateSync(async () => ({
+      getUserItems: async () => {
+        extraCalls++;
+        return [];
+      },
+    })).run();
+    assert.equal(extraCalls, 0);
+    assert.ok(
+      (await getRepository(UserMediaState).find()).every(
+        (row) => row.jellyfinPlayed === null
+      )
+    );
+    date = new Date('2026-10-01T12:01:00Z');
+    omitSeries = true;
+    const incomplete = await service.run();
+    assert.equal(incomplete.preferencesIncomplete, 1);
+    assert.equal(
+      (
+        await getRepository(UserMediaState).findOneByOrFail({
+          mediaType: MediaType.TV,
+        })
+      ).jellyfinLikes,
+      false
+    );
+    const before = (await getRepository(UserMediaState).find()).map(
+      (row) => row.jellyfinPreferenceObservedAt
+    );
+    date = new Date('2026-10-01T12:02:00Z');
+    omitSeries = false;
+    invalidateGeneration = true;
+    assert.equal((await service.run()).complete, false);
+    assert.deepEqual(
+      (await getRepository(UserMediaState).find()).map(
+        (row) => row.jellyfinPreferenceObservedAt
+      ),
+      before
+    );
   });
 
   it('repairs persisted sentinel timing narrowly and reuses completion evidence', async () => {
@@ -979,6 +1118,7 @@ describe('current Jellyfin viewing synchronization', () => {
     const stale = await service.run();
     assert.equal(stale.complete, false);
     assert.equal(await getRepository(CurrentViewingState).count(), 0);
+    assert.equal(await getRepository(UserMediaState).count(), 0);
     const staleRun = await getRepository(HydrationRun).findOneByOrFail({
       stage: 'current-viewing',
       status: HydrationRunStatus.RUNNING,

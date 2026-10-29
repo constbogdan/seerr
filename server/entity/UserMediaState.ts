@@ -54,6 +54,26 @@ export class UserMediaState {
   @Column({ type: 'boolean', nullable: true })
   public jellyfinPlayed?: boolean | null;
 
+  // Preference-only Library observations must not expand watched-state coverage.
+  @Column({ type: 'boolean', default: true })
+  public jellyfinPlayStateTracked = true;
+
+  // Nullable rating, not watched state. A null observation time means unknown.
+  @Column({ type: 'boolean', nullable: true })
+  public jellyfinLikes?: boolean | null;
+
+  @DbAwareColumn({ type: 'datetime', nullable: true })
+  public jellyfinPreferenceObservedAt?: Date | null;
+
+  @Column({ type: 'varchar', length: 128, nullable: true, select: false })
+  public jellyfinPreferenceSourceScope?: string | null;
+
+  @Column({ type: 'varchar', length: 32, nullable: true, select: false })
+  public jellyfinPreferenceUserId?: string | null;
+
+  @Column({ type: 'text', nullable: true, select: false })
+  public jellyfinPreferenceItemIds?: string | null;
+
   @DbAwareColumn({ type: 'datetime', nullable: true })
   public jellyfinLastPlayedAt?: Date | null;
 

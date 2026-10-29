@@ -24,6 +24,11 @@ import {
   type CurrentViewingTarget,
 } from '@server/lib/currentViewingTargets';
 import {
+  loadLibraryPreferenceTargets,
+  persistJellyfinPreference,
+  type JellyfinPreferenceTarget,
+} from '@server/lib/jellyfinPreferences';
+import {
   JELLYFIN_VIEWING_USER_CONCURRENCY,
   getBatchedUserItems,
   normalizeExactJellyfinId,
@@ -57,6 +62,8 @@ interface FailedUserFetch extends ViewerTarget {
 }
 
 export interface CurrentJellyfinViewingSummary {
+  preferencesUpdated: number;
+  preferencesIncomplete: number;
   sourceScope: string;
   sourceGeneration: string;
   startedAt: Date;
@@ -249,6 +256,8 @@ export class CurrentJellyfinViewingService {
     users: ViewerTarget[]
   ): CurrentJellyfinViewingSummary {
     return {
+      preferencesUpdated: 0,
+      preferencesIncomplete: 0,
       sourceScope,
       sourceGeneration,
       startedAt,
@@ -294,15 +303,19 @@ export class CurrentJellyfinViewingService {
         await this.runCoordinator.recoverExpiredRuns();
         return this.runCoordinator.begin(scope, async (manager) => {
           const targets = await loadCurrentViewingTargets(scope, manager);
+          const preferenceTargets = await loadLibraryPreferenceTargets(
+            manager,
+            scope
+          );
           const viewers = await this.ensureViewers(scope, manager);
           return {
-            value: { targets, viewers },
+            value: { targets, viewers, preferenceTargets },
             sourceUserIds: viewers.map(({ sourceUserId }) => sourceUserId),
           };
         });
       }
     );
-    const { targets, viewers } = snapshot.value;
+    const { targets, viewers, preferenceTargets } = snapshot.value;
     const summary = this.newSummary(
       scope,
       String(snapshot.libraryGeneration),
@@ -339,7 +352,10 @@ export class CurrentJellyfinViewingService {
             try {
               const items = await getBatchedUserItems({
                 client,
-                ids: targets.map((target) => target.sourceItemId),
+                ids: [
+                  ...targets.map((target) => target.sourceItemId),
+                  ...preferenceTargets.flatMap((target) => target.ids),
+                ],
                 userId: viewer.sourceUserId,
                 fields: ['ProviderIds', 'RunTimeTicks'],
                 onBatch: () => batches++,
@@ -384,7 +400,8 @@ export class CurrentJellyfinViewingService {
                     durationMs: 0,
                   })),
               ]
-            : failures
+            : failures,
+          preferenceTargets
         );
       });
     } catch (error) {
@@ -414,7 +431,8 @@ export class CurrentJellyfinViewingService {
     summary: CurrentJellyfinViewingSummary,
     targets: CurrentViewingTarget[],
     successes: SuccessfulUserFetch[],
-    failures: FailedUserFetch[]
+    failures: FailedUserFetch[],
+    preferenceTargets: JellyfinPreferenceTarget[]
   ): Promise<void> {
     const targetById = new Map(
       targets.map((target) => [target.sourceItemId, target])
@@ -455,6 +473,21 @@ export class CurrentJellyfinViewingService {
                 observedAt,
                 manager
               );
+            }
+            // Independently persist preferences. Raw viewing state, evidence,
+            // completeness and watched aggregation retain their V1 semantics.
+            for (const target of preferenceTargets) {
+              const updated = await persistJellyfinPreference({
+                manager,
+                target,
+                items: success.items,
+                userId: success.viewer.userId!,
+                sourceUserId: success.sourceUserId,
+                sourceScope: summary.sourceScope,
+                observedAt: summary.startedAt,
+              });
+              if (updated) committed.preferencesUpdated++;
+              else committed.preferencesIncomplete++;
             }
             let complete = missingItems === 0;
             if (complete) {
@@ -500,6 +533,7 @@ export class CurrentJellyfinViewingService {
       }
     }
     for (const failure of failures) {
+      summary.preferencesIncomplete += preferenceTargets.length;
       summary.usersFailed++;
       logger.warn('Unable to reconcile current Jellyfin viewing for a user', {
         label: 'Current Jellyfin Viewing',
