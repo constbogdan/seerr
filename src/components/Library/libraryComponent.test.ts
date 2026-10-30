@@ -529,7 +529,7 @@ describe('Library browsing and Watched presentation structure', () => {
     );
     assert.match(
       engagement,
-      /libraryLastActiveTooltip\(user\.displayName, formattedLastActiveAt\)/
+      /libraryLastActiveTooltip\(\s*user\.displayName,\s*formattedLastActiveAt,\s*user\.episode,/
     );
     assert.doesNotMatch(engagement, /Last active:/);
     assert.match(
@@ -701,7 +701,7 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.match(filters, /watched/);
     assert.match(filters, /requested/);
     assert.equal((filters.match(/<MediaStatusFilter\b/g) ?? []).length, 1);
-    assert.equal((filters.match(/<SegmentedFilter\b/g) ?? []).length, 7);
+    assert.equal((filters.match(/<SegmentedFilter\b/g) ?? []).length, 8);
     assert.equal(
       (filters.match(/grid grid-cols-1 gap-4 sm:grid-cols-2/g) ?? []).length,
       2
@@ -719,6 +719,7 @@ describe('Library browsing and Watched presentation structure', () => {
     const watchlist = filters.indexOf('name="watchlist"');
     const watched = filters.indexOf('name="watched"');
     const requested = filters.indexOf('name="requested"');
+    const liked = filters.indexOf('name="liked"');
     assert.ok(mediaStatus < activity);
     assert.ok(activity < pendingRemoval);
     assert.ok(pendingRemoval < animation);
@@ -727,12 +728,19 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.ok(groupDivider < watchlist);
     assert.ok(watchlist < watched);
     assert.ok(watched < requested);
-    assert.ok(requested < usersSection);
+    assert.ok(requested < liked);
+    assert.ok(liked < usersSection);
+    assert.equal((source.match(/liked: preferences.liked/g) ?? []).length, 2);
+    assert.match(
+      filters,
+      /name="liked"[\s\S]*?value=\{preferences\.liked\}[\s\S]*?options=\{triStateOptions\}[\s\S]*?update\(\{ liked \}\)/
+    );
     assert.equal((filters.match(/aria-hidden="true"/g) ?? []).length, 1);
     for (const filter of [
       'watchlist',
       'watched',
       'requested',
+      'liked',
       'activity',
       'animation',
       'collection-membership',
@@ -1384,15 +1392,17 @@ describe('Library browsing and Watched presentation structure', () => {
     assert.doesNotMatch(row, /lastActiveUser:/);
   });
 
-  it('stacks dates and storage facts into two aligned compact metadata columns', () => {
+  it('stacks dates, preferences and storage into aligned compact metadata columns', () => {
     assert.match(
       row,
-      /grid min-w-0 grid-cols-\[4rem_minmax\(0,1fr\)\] items-center gap-x-5 text-sm/
+      /grid min-w-0 grid-cols-\[4rem_3rem_minmax\(0,1fr\)\] items-center gap-x-6 text-sm sm:gap-x-8 2xl:gap-x-4/
     );
     assert.equal(
       (row.match(/className=\{metadataColumnClassName\}/g) ?? []).length,
-      2
+      3
     );
+    assert.match(row, /messages\.likes,[\s\S]*?item\.likedUserCount/);
+    assert.match(row, /messages\.dislikes,[\s\S]*?item\.dislikedUserCount/);
     assert.match(
       row,
       /value=\{item\.addedAt\}[\s\S]*?value=\{item\.lastActiveAt\}/
@@ -1689,7 +1699,7 @@ describe('Library browsing and Watched presentation structure', () => {
       'grid min-w-0 grid-cols-[4.75rem_minmax(0,1fr)] content-center items-center gap-x-3 gap-y-3'
     );
     const metadataRegion = row.indexOf(
-      'grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-5 text-sm'
+      'grid min-w-0 grid-cols-[4rem_3rem_minmax(0,1fr)] items-center gap-x-6 text-sm sm:gap-x-8 2xl:gap-x-4'
     );
     const actionsRegion = row.indexOf(
       'flex min-w-0 flex-wrap items-center gap-2 self-center xl:w-16 xl:justify-end'
@@ -1713,7 +1723,7 @@ describe('Library browsing and Watched presentation structure', () => {
     );
     assert.match(
       row,
-      /grid min-w-0 grid-cols-\[4rem_minmax\(0,1fr\)\] items-center gap-x-5 text-sm/
+      /grid min-w-0 grid-cols-\[4rem_3rem_minmax\(0,1fr\)\] items-center gap-x-6 text-sm sm:gap-x-8 2xl:gap-x-4/
     );
     assert.match(
       row,

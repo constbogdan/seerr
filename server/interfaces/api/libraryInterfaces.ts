@@ -20,6 +20,7 @@ export type LibraryAnimationFilter = 'any' | 'yes' | 'no';
 export type LibraryWatchlistFilter = 'any' | 'yes' | 'no';
 export type LibraryWatchedFilter = 'any' | 'yes' | 'no';
 export type LibraryRequestedFilter = 'any' | 'yes' | 'no';
+export type LibraryLikedFilter = 'any' | 'yes' | 'no';
 export type LibraryActivityFilter = 'any' | 'present' | 'none';
 export type LibrarySort =
   | 'title'
@@ -52,6 +53,18 @@ export interface LibraryUser {
   id: number;
   displayName: string;
   avatar: string | null;
+}
+
+export interface LibraryLastActiveEpisode {
+  seasonNumber: number;
+  episodeNumber: number;
+  // Only an authoritative local title may populate this optional field.
+  title?: string;
+  classification?: 'partial' | 'watched';
+}
+
+export interface LibraryLastActiveUser extends LibraryUser {
+  episode?: LibraryLastActiveEpisode;
 }
 
 export interface LibraryRequestSeasonFact {
@@ -143,11 +156,13 @@ export interface LibraryItem {
   logicalSizeBytes: string | null;
   resolution: number | null;
   watchlistUsers: LibraryUser[];
+  likedUserCount?: number;
+  dislikedUserCount?: number;
   watchedUsers: LibraryWatchedUser[];
   watchedUserCount: number;
   hasWatchedDetail: boolean;
   lastActiveAt: string | null;
-  lastActiveUsers: LibraryUser[];
+  lastActiveUsers: LibraryLastActiveUser[];
   requesters: LibraryRequester[];
   storageRoots: LibraryStorageRootSummary[];
   fresh: boolean;

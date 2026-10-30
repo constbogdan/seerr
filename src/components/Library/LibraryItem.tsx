@@ -1,5 +1,6 @@
 import RadarrLogo from '@app/assets/services/radarr.svg';
 import SonarrLogo from '@app/assets/services/sonarr.svg';
+import { getCollectionCardActionPresentation } from '@app/components/Collections/cardAction';
 import Badge from '@app/components/Common/Badge';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
@@ -49,9 +50,13 @@ import {
   ClockIcon,
   FireIcon,
   FolderArrowDownIcon,
+  HandThumbDownIcon,
+  HandThumbUpIcon,
   PlayIcon,
   ServerIcon,
   ServerStackIcon,
+  Squares2X2Icon,
+  SquaresPlusIcon,
   StarIcon,
   TrashIcon,
 } from '@heroicons/react/24/solid';
@@ -85,6 +90,8 @@ const messages = defineMessages('components.Library.Item', {
   watchlist: 'Watchlist',
   watched: 'Watched',
   requesters: 'Requesters',
+  likes: 'Likes: {count}',
+  dislikes: 'Dislikes: {count}',
   fresh: 'Fresh',
   tmdbRating: 'TMDB rating · {votes} votes',
   season: 'Season {number}',
@@ -281,6 +288,15 @@ const LibraryCollectionBanner = ({
       ? getCollectionAvailability(collectionDetails)
       : undefined;
   const availabilityLabel = formatCollectionAvailability(availability);
+  const requestAction = getCollectionCardActionPresentation(
+    !availability
+      ? 'unknown'
+      : availability.available === availability.total
+        ? 'complete'
+        : 'incomplete'
+  );
+  const RequestActionIcon =
+    requestAction.icon === 'SquaresPlusIcon' ? SquaresPlusIcon : Squares2X2Icon;
   return (
     <div
       ref={ref}
@@ -341,6 +357,10 @@ const LibraryCollectionBanner = ({
               <RequestIconButton
                 aria-label={intl.formatMessage(messages.requestCollection)}
                 onClick={onRequest}
+                icon={
+                  <RequestActionIcon className="h-4 w-4" aria-hidden="true" />
+                }
+                className={`!h-8 !w-8 !p-1.5 ${requestAction.className}`}
               />
             </Tooltip>
           </div>
@@ -664,7 +684,7 @@ const LibraryItem = ({
 
         <div className="grid min-w-0 grid-cols-[4.75rem_minmax(0,1fr)] content-center items-center gap-x-3 gap-y-3">
           {item.lastActiveUsers.length > 0 && (
-            <div className="col-start-1 row-start-1 flex h-7 w-fit min-w-0 max-w-full flex-nowrap items-center gap-2">
+            <div className="col-start-1 row-start-2 flex h-7 w-fit min-w-0 max-w-full flex-nowrap items-center gap-2">
               <Tooltip content={intl.formatMessage(messages.lastActive)}>
                 <span
                   aria-label={intl.formatMessage(messages.lastActive)}
@@ -682,7 +702,7 @@ const LibraryItem = ({
             </div>
           )}
           {item.requesters.length > 0 && (
-            <div className="col-start-1 row-start-2 flex h-7 w-fit min-w-0 max-w-full flex-nowrap items-center gap-2">
+            <div className="col-start-1 row-start-1 flex h-7 w-fit min-w-0 max-w-full flex-nowrap items-center gap-2">
               <Tooltip content={intl.formatMessage(messages.requesters)}>
                 <span
                   aria-label={intl.formatMessage(messages.requesters)}
@@ -762,7 +782,7 @@ const LibraryItem = ({
               : ''
           }`}
         >
-          <div className="grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] items-center gap-x-5 text-sm">
+          <div className="grid min-w-0 grid-cols-[4rem_3rem_minmax(0,1fr)] items-center gap-x-6 text-sm sm:gap-x-8 2xl:gap-x-4">
             <div className={metadataColumnClassName}>
               <AbsoluteDate
                 value={item.addedAt}
@@ -775,6 +795,42 @@ const LibraryItem = ({
                 Icon={ClockIcon}
                 includeTime
               />
+            </div>
+            <div className={metadataColumnClassName}>
+              <span
+                className={`${metadataRowClassName} text-gray-200`}
+                aria-label={intl.formatMessage(messages.likes, {
+                  count: item.likedUserCount ?? 0,
+                })}
+              >
+                <span className={metadataIconSlotClassName}>
+                  <HandThumbUpIcon
+                    className={`h-4 w-4 ${
+                      (item.likedUserCount ?? 0) > 0
+                        ? 'text-blue-400'
+                        : 'text-slate-300'
+                    }`}
+                  />
+                </span>
+                <span>{item.likedUserCount ?? 0}</span>
+              </span>
+              <span
+                className={`${metadataRowClassName} text-gray-200`}
+                aria-label={intl.formatMessage(messages.dislikes, {
+                  count: item.dislikedUserCount ?? 0,
+                })}
+              >
+                <span className={metadataIconSlotClassName}>
+                  <HandThumbDownIcon
+                    className={`h-4 w-4 ${
+                      (item.dislikedUserCount ?? 0) > 0
+                        ? 'text-red-400'
+                        : 'text-slate-300'
+                    }`}
+                  />
+                </span>
+                <span>{item.dislikedUserCount ?? 0}</span>
+              </span>
             </div>
             <div className={metadataColumnClassName}>
               {item.libraryState === 'archive' ? (

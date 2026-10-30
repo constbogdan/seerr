@@ -186,6 +186,14 @@ components:
         watchlistUsers:
           type: array
           items: { $ref: '#/components/schemas/LibraryUser' }
+        likedUserCount:
+          type: integer
+          minimum: 0
+          description: Distinct eligible users with a source-bound observed Jellyfin Like.
+        dislikedUserCount:
+          type: integer
+          minimum: 0
+          description: Distinct eligible users with a source-bound observed Jellyfin Dislike.
         watchedUsers:
           type: array
           items: { $ref: '#/components/schemas/LibraryWatchedUser' }
@@ -198,7 +206,19 @@ components:
         lastActiveUsers:
           type: array
           description: Users with qualifying activity exactly matching the authoritative Last active timestamp.
-          items: { $ref: '#/components/schemas/LibraryUser' }
+          items:
+            allOf:
+              - $ref: '#/components/schemas/LibraryUser'
+              - type: object
+                properties:
+                  episode:
+                    type: object
+                    required: [seasonNumber, episodeNumber]
+                    properties:
+                      seasonNumber: { type: integer, minimum: 0 }
+                      episodeNumber: { type: integer, minimum: 1 }
+                      title: { type: string }
+                      classification: { type: string, enum: [partial, watched] }
         requesters:
           type: array
           description: Distinct requesters with their factual canonical-title request history; requests do not imply causation of the current acquisition.
@@ -7599,6 +7619,10 @@ paths:
           description: Whether any durable request record exists for the typed media identity.
           schema: { type: string, enum: [any, 'yes', 'no'], default: any }
         - in: query
+          name: liked
+          description: Any is unrestricted; yes matches an eligible selected user's explicit Like, no an explicit Dislike. Neutral and Unknown match neither. Matches any selected user, independently of other association filters.
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
           name: userId
           deprecated: true
           schema: { type: integer, minimum: 1 }
@@ -7755,6 +7779,10 @@ paths:
           schema: { type: string, enum: [any, 'yes', 'no'], default: any }
         - in: query
           name: requested
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: liked
+          description: Eligible candidate user's explicit preference; yes is Like, no is Dislike, never Neutral or Unknown.
           schema: { type: string, enum: [any, 'yes', 'no'], default: any }
         - in: query
           name: userId

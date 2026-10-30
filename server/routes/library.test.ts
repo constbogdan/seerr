@@ -7,7 +7,7 @@ import {
 import { MediaRequestStatus, MediaType } from '@server/constants/media';
 import { MediaServerType } from '@server/constants/server';
 import { UserType } from '@server/constants/user';
-import { getRepository } from '@server/datasource';
+import dataSource, { getRepository } from '@server/datasource';
 import {
   CanonicalEpisode,
   CanonicalEpisodeIdentity,
@@ -30,6 +30,7 @@ import { MediaRequest } from '@server/entity/MediaRequest';
 import { RemovalSchedule } from '@server/entity/RemovalSchedule';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Viewer } from '@server/entity/Viewer';
 import { ViewingEvidence } from '@server/entity/ViewingEvidence';
 import { Watchlist } from '@server/entity/Watchlist';
@@ -658,7 +659,281 @@ beforeEach(async () => {
   );
 });
 
+async function seedPreferenceFilter() {
+  const ids = new Map([
+    [1, '1'.repeat(32)],
+    [secondUser.id, '2'.repeat(32)],
+  ]);
+  for (const [id, jellyfinUserId] of ids)
+    await getRepository(User).update(id, {
+      jellyfinUserId,
+      includeInUserMetrics: true,
+    });
+  for (const [userId, tmdbId, mediaType, jellyfinLikes] of [
+    [1, 101, MediaType.MOVIE, true],
+    [secondUser.id, 101, MediaType.MOVIE, false],
+    [secondUser.id, 102, MediaType.MOVIE, true],
+    [1, 80039, MediaType.TV, false],
+  ] as const)
+    await getRepository(UserMediaState).save(
+      new UserMediaState({
+        user: new User({ id: userId }),
+        mediaType,
+        tmdbId,
+        jellyfinLikes,
+        jellyfinPreferenceObservedAt: new Date('2026-10-29T12:00:00Z'),
+        jellyfinPreferenceSourceScope: 'jf',
+        jellyfinPreferenceUserId: ids.get(userId),
+        jellyfinPreferenceItemIds: jellyfinMovieId(tmdbId),
+        jellyfinPlayStateTracked: false,
+      })
+    );
+}
+const preferenceRead = async (query = '') =>
+  (
+    await request(app)
+      .get('/library?' + query)
+      .set('x-test-role', 'admin')
+      .expect(200)
+  ).body;
+const resultIds = (body: { results: LibraryItem[] }) =>
+  body.results.map((row) => row.canonicalMediaId).sort((a, b) => a - b);
+
+describe('Library explicit Liked API filter', () => {
+  it('keeps Any unrestricted and allows opposing Yes/No on the same item without changing card counts', async () => {
+    await seedPreferenceFilter();
+    const before = await preferenceRead();
+    const any = await preferenceRead('liked=any');
+    assert.deepEqual(resultIds(any), resultIds(before));
+    const yes = await preferenceRead('liked=yes');
+    const no = await preferenceRead('liked=no');
+    assert.deepEqual(
+      resultIds(yes),
+      [completedMovieId, partialMovieId].sort((a, b) => a - b)
+    );
+    assert.deepEqual(
+      resultIds(no),
+      [completedMovieId, seriesId].sort((a, b) => a - b)
+    );
+    for (const body of [yes, no])
+      for (const row of body.results) {
+        const original = before.results.find(
+          (r: LibraryItem) => r.canonicalMediaId === row.canonicalMediaId
+        );
+        assert.deepEqual(row, original);
+      }
+    assert.equal(yes.pageInfo.results, 2);
+    assert.equal(no.pageInfo.results, 2);
+  });
+  it('excludes Neutral, Unknown and missing observations, rather than treating No as Not Liked', async () => {
+    await seedPreferenceFilter();
+    await getRepository(UserMediaState).update(
+      { user: { id: secondUser.id }, tmdbId: 101 },
+      { jellyfinLikes: null }
+    );
+    await getRepository(UserMediaState).update(
+      { mediaType: MediaType.TV },
+      { jellyfinPreferenceObservedAt: null }
+    );
+    assert.equal((await preferenceRead('liked=no')).pageInfo.results, 0);
+    assert.equal((await preferenceRead('liked=any')).pageInfo.results, 3);
+    await getRepository(UserMediaState).clear();
+    assert.equal((await preferenceRead('liked=yes')).pageInfo.results, 0);
+    assert.equal((await preferenceRead('liked=no')).pageInfo.results, 0);
+  });
+  it('supports single, multiple, legacy and default user selections', async () => {
+    await seedPreferenceFilter();
+    assert.deepEqual(resultIds(await preferenceRead('liked=yes&userIds=1')), [
+      completedMovieId,
+    ]);
+    assert.deepEqual(
+      resultIds(await preferenceRead(`liked=yes&userIds=${secondUser.id}`)),
+      [partialMovieId]
+    );
+    assert.deepEqual(
+      resultIds(await preferenceRead(`liked=yes&userIds=1,${secondUser.id}`)),
+      [completedMovieId, partialMovieId].sort((a, b) => a - b)
+    );
+    assert.deepEqual(resultIds(await preferenceRead('liked=no&userId=1')), [
+      seriesId,
+    ]);
+    assert.equal(
+      (await preferenceRead('liked=yes&userIds=999999')).pageInfo.results,
+      0
+    );
+    await getRepository(User).update(secondUser.id, {
+      includeInUserMetrics: false,
+    });
+    assert.equal(
+      (await preferenceRead(`liked=yes&userIds=${secondUser.id}`)).pageInfo
+        .results,
+      0
+    );
+  });
+  it('composes association groups with AND and any selected user per group, not same-user intersection', async () => {
+    await seedPreferenceFilter();
+    const media = await getRepository(Media).save(
+      new Media({ tmdbId: 101, mediaType: MediaType.MOVIE })
+    );
+    await getRepository(MediaRequest).save(
+      new MediaRequest({
+        media,
+        requestedBy: secondUser,
+        type: MediaType.MOVIE,
+        status: MediaRequestStatus.COMPLETED,
+      })
+    );
+    const combined = `liked=yes&watchlist=yes&watched=yes&requested=yes&userIds=1,${secondUser.id}`;
+    assert.deepEqual(resultIds(await preferenceRead(combined)), [
+      completedMovieId,
+    ]);
+    assert.equal(
+      (await preferenceRead('liked=yes&watchlist=yes&userIds=1')).pageInfo
+        .results,
+      0
+    );
+    assert.deepEqual(
+      resultIds(
+        await preferenceRead(
+          `liked=no&watchlist=yes&requested=yes&userIds=${secondUser.id}`
+        )
+      ),
+      [completedMovieId]
+    );
+    const availability = (
+      await request(app)
+        .get('/library/user-availability?' + combined)
+        .set('x-test-role', 'admin')
+        .expect(200)
+    ).body;
+    assert(
+      availability.users
+        .filter((user: { id: number }) => [1, secondUser.id].includes(user.id))
+        .every((user: { available: boolean }) => !user.available)
+    );
+    const single = (
+      await request(app)
+        .get('/library/user-availability?liked=yes&userIds=999999')
+        .set('x-test-role', 'admin')
+        .expect(200)
+    ).body;
+    assert(
+      single.users
+        .filter((user: { id: number }) => [1, secondUser.id].includes(user.id))
+        .every((user: { available: boolean }) => user.available)
+    );
+  });
+  it('filters before search, sorting, page boundaries and truthful totals', async () => {
+    await seedPreferenceFilter();
+    for (const sortDirection of ['asc', 'desc']) {
+      const options = `liked=yes&mediaType=movie&sort=title&sortDirection=${sortDirection}`;
+      const all = await preferenceRead(options);
+      const first = await preferenceRead(options + '&take=1');
+      const second = await preferenceRead(options + '&take=1&skip=1');
+      const empty = await preferenceRead(options + '&take=1&skip=2');
+      for (const page of [first, second, empty])
+        assert.equal(page.pageInfo.results, 2);
+      assert.deepEqual([...first.results, ...second.results], all.results);
+      assert.equal(empty.results.length, 0);
+    }
+    assert.deepEqual(
+      resultIds(
+        await preferenceRead('liked=yes&search=spy%20among&sort=title')
+      ),
+      [partialMovieId]
+    );
+    assert.deepEqual(
+      resultIds(await preferenceRead('liked=no&mediaType=series')),
+      [seriesId]
+    );
+  });
+  it('retains authorization, validates the enum, and fails closed for an unconfigured source', async () => {
+    await seedPreferenceFilter();
+    await request(app).get('/library?liked=yes').expect(403);
+    await request(app)
+      .get('/library?liked=no')
+      .set('x-test-role', 'user')
+      .expect(403);
+    await request(app)
+      .get('/library/user-availability?liked=yes')
+      .set('x-test-role', 'user')
+      .expect(403);
+    const invalid = await request(app)
+      .get('/library?liked=not-liked')
+      .set('x-test-role', 'admin')
+      // This isolated app intentionally uses the existing generic error handler;
+      // the production OpenAPI middleware is tested separately.
+      .expect(500);
+    const issues = JSON.parse(invalid.body.message);
+    assert.equal(issues[0].code, 'invalid_value');
+    assert.deepEqual(issues[0].path, ['liked']);
+    getSettings().jellyfin.serverId = '';
+    assert.equal((await preferenceRead('liked=yes')).pageInfo.results, 0);
+    assert.equal((await preferenceRead('liked=no')).pageInfo.results, 0);
+    assert.equal((await preferenceRead('liked=any')).pageInfo.results, 3);
+  });
+  it('adds no queries for one or many matching items and leaves preference/watched records untouched', async (context) => {
+    await seedPreferenceFilter();
+    const before = await dataSource.query('SELECT * FROM user_media_state');
+    const spy = context.mock.method(
+      dataSource.logger,
+      'logQuery',
+      () => undefined
+    );
+    await preferenceRead('mediaType=movie');
+    const ordinaryQueries = spy.mock.callCount();
+    spy.mock.resetCalls();
+    await preferenceRead('mediaType=movie&liked=yes');
+    assert.equal(spy.mock.callCount(), ordinaryQueries);
+    spy.mock.restore();
+    assert.deepEqual(
+      await dataSource.query('SELECT * FROM user_media_state'),
+      before
+    );
+  });
+});
+
 describe('Library factual administrator API', () => {
+  it('projects source-bound distinct preference counts without changing watched facts or authorization', async () => {
+    const linkedUser = '1'.repeat(32);
+    await getRepository(User).update(1, {
+      jellyfinUserId: linkedUser,
+      includeInUserMetrics: true,
+    });
+    const baseline = (
+      await request(app).get('/library').set('x-test-role', 'admin').expect(200)
+    ).body;
+    await getRepository(UserMediaState).save(
+      new UserMediaState({
+        user: new User({ id: 1 }),
+        mediaType: MediaType.MOVIE,
+        tmdbId: 101,
+        jellyfinLikes: true,
+        jellyfinPreferenceObservedAt: new Date(),
+        jellyfinPreferenceSourceScope: 'jf',
+        jellyfinPreferenceUserId: linkedUser,
+        jellyfinPreferenceItemIds: jellyfinMovieId(101),
+        jellyfinPlayStateTracked: false,
+      })
+    );
+    const result = (
+      await request(app).get('/library').set('x-test-role', 'admin').expect(200)
+    ).body;
+    assert.equal(result.pageInfo.results, baseline.pageInfo.results);
+    const movie = result.results.find(
+      (item: LibraryItem) => item.canonicalMediaId === completedMovieId
+    );
+    assert.equal(movie.likedUserCount, 1);
+    assert.equal(movie.dislikedUserCount, 0);
+    const old = baseline.results.find(
+      (item: LibraryItem) => item.canonicalMediaId === completedMovieId
+    );
+    assert.equal(movie.watchedUserCount, old.watchedUserCount);
+    assert.deepEqual(movie.watchedUsers, old.watchedUsers);
+    assert.equal(movie.lastActiveAt, old.lastActiveAt);
+    await request(app).get('/library').expect(403);
+    await request(app).get('/library').set('x-test-role', 'user').expect(403);
+  });
   it('keeps availability execution independent from the main Library request', async () => {
     let availabilityCalls = 0;
     const isolatedApp = express();
@@ -2125,6 +2400,10 @@ describe('Library factual administrator API', () => {
     assert.equal(series.canonicalMediaId, seriesId);
     assert.equal(series.hasWatchedDetail, true);
     assert.equal(series.lastActiveAt, '2026-03-12T12:00:00.000Z');
+    assert.deepEqual(series.lastActiveUsers[0].episode, {
+      seasonNumber: 0,
+      episodeNumber: 1,
+    });
     assert.deepEqual(
       series.lastActiveUsers.map(
         (user: { displayName: string }) => user.displayName

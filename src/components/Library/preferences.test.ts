@@ -17,6 +17,45 @@ import {
 } from './preferences';
 
 describe('Library browsing preferences', () => {
+  it('keeps Liked selection, Users, persistence and reset on the existing preference path', () => {
+    const selected = normalizeLibraryPreferences({
+      ...defaultLibraryPreferences,
+      liked: 'no',
+      userIds: [1, 2],
+    });
+    assert.equal(hasLibraryUserAssociationFilter(selected), true);
+    assert.deepEqual(selected.userIds, [1, 2]);
+    assert.equal(countActiveLibraryFilters(selected), 2);
+    const query = libraryPreferencesToQuery(selected);
+    assert.equal(query.liked, 'no');
+    assert.deepEqual(
+      resolveLibraryPreferences({ query, stored: defaultLibraryPreferences }),
+      selected
+    );
+    assert.deepEqual(
+      resolveLibraryPreferences({ query: {}, stored: selected }),
+      selected
+    );
+    const combined = normalizeLibraryPreferences({
+      ...selected,
+      watchlist: 'yes',
+      liked: 'any',
+    });
+    assert.deepEqual(combined.userIds, [1, 2]);
+    assert.deepEqual(
+      normalizeLibraryPreferences({ ...selected, liked: 'any' }).userIds,
+      []
+    );
+    const reset = clearLibraryDrawerFilters(selected);
+    assert.equal(reset.liked, 'any');
+    assert.deepEqual(reset.userIds, []);
+    assert.equal(
+      normalizeLibraryPreferences({ ...selected, liked: 'invalid' as 'yes' })
+        .liked,
+      'any'
+    );
+    assert.equal(normalizeLibraryPreferences({}).liked, 'any');
+  });
   it('maps independent Active and Archived selections to the existing scope values', () => {
     assert.equal(isLibraryScopeSelected('current', 'active'), true);
     assert.equal(isLibraryScopeSelected('current', 'archived'), false);
@@ -67,7 +106,12 @@ describe('Library browsing preferences', () => {
   });
 
   it('clears users and their URL state when all association filters are Any', () => {
-    for (const association of ['watchlist', 'watched', 'requested'] as const) {
+    for (const association of [
+      'watchlist',
+      'watched',
+      'requested',
+      'liked',
+    ] as const) {
       const enabled = normalizeLibraryPreferences({
         ...defaultLibraryPreferences,
         [association]: 'no',
@@ -121,6 +165,7 @@ describe('Library browsing preferences', () => {
       watchlist: 'yes',
       watched: 'no',
       requested: 'yes',
+      liked: 'no',
       userIds: [7, 3],
       addedFrom: '2024-01-01',
       addedTo: '2024-12-31',

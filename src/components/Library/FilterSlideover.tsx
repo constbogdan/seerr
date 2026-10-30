@@ -34,6 +34,7 @@ const messages = defineMessages('components.Library.FilterSlideover', {
   watchlist: 'Watchlist',
   watched: 'Watched',
   requested: 'Requested',
+  liked: 'Liked',
   added: 'Added Date',
   activity: 'Has Activity',
   lastActive: 'Last Active Date',
@@ -376,6 +377,13 @@ const FilterSlideover = ({
             value={preferences.requested}
             options={triStateOptions}
             onChange={(requested) => update({ requested })}
+          />
+          <SegmentedFilter
+            name="liked"
+            label={intl.formatMessage(messages.liked)}
+            value={preferences.liked}
+            options={triStateOptions}
+            onChange={(liked) => update({ liked })}
           />
         </div>
 

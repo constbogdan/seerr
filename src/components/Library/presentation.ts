@@ -1,4 +1,5 @@
 import type {
+  LibraryLastActiveEpisode,
   LibrarySeasonSummary,
   LibraryWatchedUser,
 } from '@server/interfaces/api/libraryInterfaces';
@@ -71,8 +72,23 @@ export const libraryWatchedLabel = (
 
 export const libraryLastActiveTooltip = (
   displayName: string,
-  activeAt?: string
-): string => (activeAt ? `${displayName} · ${activeAt}` : displayName);
+  activeAt?: string,
+  episode?: LibraryLastActiveEpisode,
+  classificationLabel?: string
+): string => {
+  if (!activeAt) return displayName;
+  if (!episode) return `${displayName} · ${activeAt}`;
+  const coordinates = `S${String(episode.seasonNumber).padStart(2, '0')}E${String(episode.episodeNumber).padStart(2, '0')}`;
+  const title = episode.title?.trim();
+  return [
+    displayName,
+    `${coordinates}${title ? ` — ${title}` : ''}`,
+    classificationLabel,
+    activeAt,
+  ]
+    .filter(Boolean)
+    .join(' · ');
+};
 
 export const sortLibraryWatchedUsersForPresentation = <
   T extends Pick<LibraryWatchedUser, 'key' | 'userId' | 'watchedPercentage'>,

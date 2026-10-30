@@ -43,6 +43,7 @@ import type {
   LibraryFilterUser,
   LibraryFilterUsersResponse,
   LibraryItem,
+  LibraryLikedFilter,
   LibraryMediaTypeFilter,
   LibraryPresentationBatchStatus,
   LibraryRequestFact,
@@ -68,6 +69,7 @@ import {
 } from '@server/lib/currentViewingTargets';
 import { freshSourceKey } from '@server/lib/fresh/normalize';
 import { historicalImportStatus } from '@server/lib/historicalDataInspection';
+import { jellyfinPreferenceScope } from '@server/lib/jellyfinPreferences';
 import {
   normalizeExactJellyfinId,
   normalizeJellyfinActivityDate,
@@ -81,6 +83,12 @@ import {
   normalizeLibraryDatabaseDate,
   physicalLibraryPresenceSql,
 } from '@server/lib/libraryActivity';
+import { projectLibraryLastActiveEpisodes } from '@server/lib/libraryLastActiveEpisode';
+import {
+  loadLibraryPreferenceCounts,
+  type LibraryPreferenceCounts,
+} from '@server/lib/libraryPreferenceCounts';
+import { libraryPreferenceExistsSql } from '@server/lib/libraryPreferenceFilter';
 import libraryPresentation, {
   fetchLibraryPresentation,
   type LibraryPresentation,
@@ -104,6 +112,7 @@ export interface LibraryQuery {
   watchlist: LibraryWatchlistFilter;
   watched: LibraryWatchedFilter;
   requested?: LibraryRequestedFilter;
+  liked?: LibraryLikedFilter;
   userId?: number;
   userIds?: number[];
   addedFrom?: string;
@@ -238,6 +247,7 @@ export interface PageFacts {
   episodes: AvailableEpisodeRow[];
   watchlists: Watchlist[];
   requesters: Map<number, LibraryRequester[]>;
+  preferenceCounts?: Map<number, LibraryPreferenceCounts>;
 }
 
 interface SeasonRemovalFact {
@@ -507,7 +517,7 @@ const requestedExistsSql = (
 
 const applyPeopleFilters = (
   query: SelectQueryBuilder<CanonicalMedia>,
-  input: Pick<LibraryQuery, 'watchlist' | 'watched' | 'requested'>,
+  input: Pick<LibraryQuery, 'watchlist' | 'watched' | 'requested' | 'liked'>,
   scope: LibraryScope,
   userIds: number[] = [],
   userIdExpression?: string,
@@ -518,6 +528,19 @@ const applyPeopleFilters = (
 ) => {
   const parameters =
     userIds.length && !userIdExpression ? { userIds } : undefined;
+  if (input.liked === 'yes' || input.liked === 'no') {
+    const sourceScope = jellyfinPreferenceScope();
+    query.andWhere(
+      sourceScope
+        ? libraryPreferenceExistsSql(sql.tmdbId, userIds, userIdExpression)
+        : '1 = 0',
+      {
+        ...parameters,
+        preferenceSourceScope: sourceScope,
+        preferenceLiked: input.liked === 'yes',
+      }
+    );
+  }
   if (input.watchlist === 'yes')
     query.andWhere(
       watchlistExistsSql(userIds, userIdExpression, sql.tmdbId),
@@ -2365,6 +2388,7 @@ export class LibraryService {
       archiveEpisodes,
       watchlists,
       requesters,
+      preferenceCounts,
     ] = await Promise.all([
       loadActiveCurrentViewingStatesForMedia(canonicalIds),
       loadLibraryViewingEvidence(canonicalIds),
@@ -2380,6 +2404,13 @@ export class LibraryService {
           })
         : Promise.resolve([]),
       loadLibraryRequesters(canonicalIds),
+      loadLibraryPreferenceCounts(
+        rows.map((row) => ({
+          canonicalMediaId: Number(row.canonicalMediaId),
+          tmdbId: row.tmdbId === null ? null : Number(row.tmdbId),
+          mediaType: row.mediaType,
+        }))
+      ),
     ]);
     return {
       states,
@@ -2387,6 +2418,7 @@ export class LibraryService {
       episodes: [...currentEpisodes, ...archiveEpisodes],
       watchlists,
       requesters,
+      preferenceCounts,
     };
   }
 
@@ -2428,6 +2460,7 @@ export class LibraryService {
       watchlist: 'any',
       watched: 'any',
       requested: 'any',
+      liked: 'any',
     })
       .innerJoin(
         User,
@@ -2726,11 +2759,24 @@ export class LibraryService {
           row.logicalSizeBytes === null ? null : String(row.logicalSizeBytes),
         resolution: enrichments.resolutions.get(canonicalMediaId) ?? null,
         watchlistUsers,
+        likedUserCount:
+          facts.preferenceCounts?.get(canonicalMediaId)?.likedUserCount ?? 0,
+        dislikedUserCount:
+          facts.preferenceCounts?.get(canonicalMediaId)?.dislikedUserCount ?? 0,
         watchedUsers,
         watchedUserCount: Number(row.watchedUserCount) || 0,
         hasWatchedDetail,
         lastActiveAt: dateString(row.lastActiveAt),
-        lastActiveUsers,
+        lastActiveUsers: projectLibraryLastActiveEpisodes({
+          canonicalMediaId,
+          mediaType: row.mediaType,
+          users: lastActiveUsers,
+          lastActiveAt: row.lastActiveAt,
+          states: mediaStates,
+          evidence: mediaEvidence,
+          episodes: mediaEpisodes,
+          scope: row.libraryStatus,
+        }),
         requesters,
         storageRoots: enrichments.storageRoots.get(canonicalMediaId) ?? [],
         fresh:

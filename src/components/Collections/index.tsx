@@ -1,5 +1,6 @@
 import Header from '@app/components/Common/Header';
 import PageTitle from '@app/components/Common/PageTitle';
+import WatchlistItemCount from '@app/components/Discover/DiscoverWatchlist/WatchlistItemCount';
 import TitleCard from '@app/components/TitleCard';
 import TitleCardCornerBadge from '@app/components/TitleCard/CornerBadge';
 import useVerticalScroll from '@app/hooks/useVerticalScroll';
@@ -133,7 +134,15 @@ const Collections = () => {
       <PageTitle title={intl.formatMessage(messages.title)} />
       <div className="mb-5 mt-1">
         <div className="flex flex-col justify-between lg:flex-row lg:items-end">
-          <Header>{intl.formatMessage(messages.title)}</Header>
+          <Header>
+            <span className="inline-flex flex-wrap items-baseline gap-x-3">
+              <span>{intl.formatMessage(messages.title)}</span>
+              <WatchlistItemCount
+                count={data?.[0]?.pageInfo.results}
+                loading={initialLoading || pendingWithoutCards || unavailable}
+              />
+            </span>
+          </Header>
           <div className="relative z-50 mt-2 flex flex-wrap gap-2">
             <div className="flex min-w-0 max-w-full">
               <span className="inline-flex shrink-0 cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-gray-100">
@@ -292,6 +301,7 @@ const Collections = () => {
                   canExpand
                   actionsDisabled
                   requestActionEnabled
+                  requestActionAlwaysVisible
                   requestActionLabel={requestActionLabel}
                   requestActionClassName={requestAction.className}
                   requestActionIcon={
