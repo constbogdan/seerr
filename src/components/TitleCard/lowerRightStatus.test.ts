@@ -97,7 +97,7 @@ const compiled = ts.transpileModule(
   `
   export default function render(context) {
     const { mediaType, currentStatus, cornerAction, persistentMetadata,
-      actionsDisabled, showRequestButton, requestActionEnabled, image, showDetail,
+      actionsDisabled, showRequestButton, requestActionEnabled, requestActionAlwaysVisible, image, showDetail,
       showRequestModal, requestActionIcon, requestActionClassName, inProgress,
       setShowRequestModal } = context;
     const intl = { formatMessage: value => value };
@@ -160,6 +160,7 @@ const render = (overrides: Record<string, unknown> = {}) =>
     image: '/poster.jpg',
     showDetail: false,
     showRequestModal: false,
+    requestActionAlwaysVisible: false,
     inProgress: false,
     setShowRequestModal: () => {},
     ...overrides,
@@ -178,6 +179,65 @@ function action(
 }
 
 describe('TitleCard lower-right status/action presentation', () => {
+  it('opts dedicated Collections into visibility only, preserving the original button and callback', () => {
+    for (const currentStatus of [
+      MediaStatus.UNKNOWN,
+      MediaStatus.PARTIALLY_AVAILABLE,
+      MediaStatus.AVAILABLE,
+    ]) {
+      let opened = 0;
+      let prevented = 0;
+      const context = {
+        mediaType: 'collection',
+        actionsDisabled: true,
+        requestActionEnabled: true,
+        currentStatus,
+        requestActionIcon: createElement('svg', { 'data-original-icon': true }),
+        requestActionClassName: 'existing-state-class',
+        setShowRequestModal: () => opened++,
+      };
+      assert.equal(markup(render(context)), '');
+      const visible = render({ ...context, requestActionAlwaysVisible: true });
+      const html = markup(visible);
+      assert.equal((html.match(/<button/g) ?? []).length, 1);
+      assert.match(html, /data-original-icon/);
+      assert.match(html, /existing-state-class/);
+      assert.match(html, /!h-8 !w-8/);
+      assert.match(html, /bg-gray-900\/90/);
+      assert.match(html, /row-start-3 self-end justify-self-end/);
+      action(visible.region)!.props.onClick({
+        preventDefault: () => prevented++,
+        stopPropagation: () => prevented++,
+      });
+      assert.equal(opened, 1);
+      assert.equal(prevented, 2);
+      assert.equal(
+        render({
+          ...context,
+          requestActionAlwaysVisible: true,
+          showRequestButton: false,
+        }).canRequestTitle,
+        false
+      );
+      assert.equal(
+        render({
+          ...context,
+          requestActionAlwaysVisible: true,
+          showRequestButton: false,
+        }).region,
+        false
+      );
+      assert.equal(
+        render({
+          ...context,
+          requestActionAlwaysVisible: true,
+          requestActionEnabled: false,
+        }).region,
+        false
+      );
+    }
+    assert.match(source, /requestActionAlwaysVisible = false/);
+  });
   for (const [status, Icon, color] of [
     [MediaStatus.UNKNOWN, ArrowDownTrayIcon, 'purple'],
     [MediaStatus.PENDING, ArrowDownTrayIcon, 'orange'],

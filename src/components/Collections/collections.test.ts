@@ -4,8 +4,14 @@ import type {
 } from '@server/interfaces/api/libraryInterfaces';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
 import { describe, it } from 'node:test';
+import { runInNewContext } from 'node:vm';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { IntlProvider } from 'react-intl';
+import ts from 'typescript';
 import { getCollectionCardActionPresentation } from './cardAction';
 import {
   COLLECTIONS_PAGE_SIZE,
@@ -38,7 +44,86 @@ const page = readFileSync(
   'utf8'
 );
 
+// Execute the real client component under the server test resolver.
+const WatchlistItemCount = createRequire(__filename)(
+  '../Discover/DiscoverWatchlist/WatchlistItemCount'
+).default as (props: { count?: number; loading: boolean }) => React.ReactNode;
+
+const syntax = ts.createSourceFile(
+  'Collections.tsx',
+  component,
+  ts.ScriptTarget.Latest,
+  true,
+  ts.ScriptKind.TSX
+);
+let countJsx = '';
+function findCount(node: ts.Node) {
+  if (
+    ts.isJsxSelfClosingElement(node) &&
+    node.tagName.getText(syntax) === 'WatchlistItemCount'
+  )
+    countJsx = node.getText(syntax);
+  ts.forEachChild(node, findCount);
+}
+findCount(syntax);
+assert.ok(countJsx, 'Execute the actual Collections heading count JSX');
+const countModule = { exports: undefined as unknown };
+runInNewContext(
+  ts.transpileModule(
+    `module.exports = ({ data, initialLoading = false, pendingWithoutCards = false, unavailable = false }) => (${countJsx});`,
+    { compilerOptions: { jsx: ts.JsxEmit.React } }
+  ).outputText,
+  { module: countModule, React: { createElement }, WatchlistItemCount }
+);
+const renderCount = (context: object) =>
+  renderToStaticMarkup(
+    createElement(
+      IntlProvider,
+      { locale: 'en' },
+      (countModule.exports as (context: object) => React.ReactNode)(context)
+    )
+  );
+
 describe('Collections page', () => {
+  it('renders the authoritative complete result total, not visible cards or Movie counts', () => {
+    const first = {
+      pageInfo: { results: 45 },
+      results: Array(20).fill({ totalMovies: 100 }),
+    };
+    assert.match(renderCount({ data: [first] }), />45 items</);
+    assert.equal(
+      renderCount({ data: [first] }),
+      renderCount({ data: [first, { ...first, results: Array(20).fill({}) }] })
+    );
+    assert.match(
+      renderCount({ data: [{ pageInfo: { results: 1 }, results: [] }] }),
+      />1 item</
+    );
+    assert.match(
+      renderCount({ data: [{ pageInfo: { results: 0 }, results: [] }] }),
+      />0 items</
+    );
+    assert.match(
+      renderCount({ data: [{ pageInfo: { results: 7 }, results: [] }] }),
+      />7 items</
+    );
+    assert.match(
+      renderCount({ data: [first] }),
+      /text-base font-normal text-gray-400 sm:text-lg/
+    );
+  });
+  it('hides unknown/loading/error totals but keeps known totals during page append and partial snapshots', () => {
+    const data = [{ pageInfo: { results: 45 } }];
+    assert.equal(renderCount({}), '');
+    for (const state of [
+      'initialLoading',
+      'pendingWithoutCards',
+      'unavailable',
+    ])
+      assert.equal(renderCount({ data, [state]: true }), '');
+    assert.match(renderCount({ data, loadingNextPage: true }), />45 items</);
+    assert.match(renderCount({ data, currentStatus: 'partial' }), />45 items</);
+  });
   const collection = (
     id: number,
     name = `Collection ${id}`
@@ -188,6 +273,7 @@ describe('Collections page', () => {
     assert.match(component, /availabilityUnknown/);
     assert.match(component, /actionsDisabled/);
     assert.match(component, /requestActionEnabled/);
+    assert.match(component, /requestActionAlwaysVisible/);
     assert.match(component, /requestActionLabel=\{requestActionLabel\}/);
     assert.match(
       component,
@@ -263,7 +349,7 @@ describe('Collections page', () => {
     );
     assert.match(
       component,
-      /<Header>\{intl\.formatMessage\(messages\.title\)\}<\/Header>[\s\S]*?className="relative z-50 mt-2 flex flex-wrap gap-2"/
+      /<Header>[\s\S]*?className="inline-flex flex-wrap items-baseline gap-x-3"[\s\S]*?messages\.title[\s\S]*?<WatchlistItemCount[\s\S]*?data\?\.\[0\]\?\.pageInfo.results[\s\S]*?<\/Header>[\s\S]*?className="relative z-50 mt-2 flex flex-wrap gap-2"/
     );
     assert.equal(
       component.match(/className="rounded-r-only min-w-0"/g)?.length,

@@ -2,6 +2,7 @@ import type {
   LibraryActivityFilter,
   LibraryAnimationFilter,
   LibraryCollectionMembershipFilter,
+  LibraryLikedFilter,
   LibraryMediaTypeFilter,
   LibraryRemovalSource,
   LibraryRequestedFilter,
@@ -28,6 +29,7 @@ export interface LibraryPreferences {
   watchlist: LibraryWatchlistFilter;
   watched: LibraryWatchedFilter;
   requested: LibraryRequestedFilter;
+  liked: LibraryLikedFilter;
   userIds: number[];
   addedFrom?: string;
   addedTo?: string;
@@ -54,6 +56,7 @@ export const defaultLibraryPreferences: LibraryPreferences = {
   watchlist: 'any',
   watched: 'any',
   requested: 'any',
+  liked: 'any',
   userIds: [],
   activity: 'any',
   scheduled: 'any',
@@ -93,11 +96,15 @@ export const toggleLibraryUserSelection = (
     : [...userIds, userId];
 
 export const hasLibraryUserAssociationFilter = (
-  preferences: Pick<LibraryPreferences, 'watchlist' | 'watched' | 'requested'>
+  preferences: Pick<LibraryPreferences, 'watchlist' | 'watched' | 'requested'> &
+    Partial<Pick<LibraryPreferences, 'liked'>>
 ): boolean =>
-  [preferences.watchlist, preferences.watched, preferences.requested].some(
-    (value) => value !== 'any'
-  );
+  [
+    preferences.watchlist,
+    preferences.watched,
+    preferences.requested,
+    preferences.liked ?? 'any',
+  ].some((value) => value !== 'any');
 
 const allowedScope = new Set<LibraryScope>(['current', 'archive', 'all']);
 const allowedMediaType = new Set<LibraryMediaTypeFilter>([
@@ -211,6 +218,9 @@ export const normalizeLibraryPreferences = (
     requested: allowedTriState.has(input.requested ?? '')
       ? (input.requested as LibraryRequestedFilter)
       : 'any',
+    liked: allowedTriState.has(input.liked ?? '')
+      ? (input.liked as LibraryLikedFilter)
+      : 'any',
     userIds: numbers(input.userIds),
     addedFrom: date(input.addedFrom),
     addedTo: date(input.addedTo),
@@ -276,6 +286,7 @@ const preferenceQueryKeys: (keyof LibraryPreferences)[] = [
   'watchlist',
   'watched',
   'requested',
+  'liked',
   'userIds',
   'addedFrom',
   'addedTo',
@@ -359,6 +370,9 @@ export const resolveLibraryPreferences = ({
     ...(query.requested !== undefined && {
       requested: first(query.requested) as LibraryRequestedFilter,
     }),
+    ...(query.liked !== undefined && {
+      liked: first(query.liked) as LibraryLikedFilter,
+    }),
     ...(query.userIds !== undefined && {
       userIds: numbers(first(query.userIds)),
     }),
@@ -418,6 +432,7 @@ export const libraryPreferencesToQuery = (
   watchlist: preferences.watchlist,
   watched: preferences.watched,
   requested: preferences.requested,
+  liked: preferences.liked,
   userIds:
     hasLibraryUserAssociationFilter(preferences) && preferences.userIds.length
       ? preferences.userIds.join(',')
@@ -452,6 +467,7 @@ export const clearLibraryDrawerFilters = (
     watchlist: 'any',
     watched: 'any',
     requested: 'any',
+    liked: 'any',
     userIds: [],
     addedFrom: undefined,
     addedTo: undefined,
@@ -477,6 +493,7 @@ export const countActiveLibraryFilters = (
   if (preferences.watchlist !== 'any') count++;
   if (preferences.watched !== 'any') count++;
   if (preferences.requested !== 'any') count++;
+  if (preferences.liked !== 'any') count++;
   if (
     preferences.userIds.length &&
     hasLibraryUserAssociationFilter(preferences)

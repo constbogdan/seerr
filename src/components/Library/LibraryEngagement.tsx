@@ -12,6 +12,7 @@ import { parseFactualDate } from '@app/utils/factualDate';
 import { UserCircleIcon } from '@heroicons/react/24/solid';
 import { MediaRequestStatus } from '@server/constants/media';
 import type {
+  LibraryLastActiveUser,
   LibraryRequester,
   LibraryUser,
   LibraryWatchedUser,
@@ -31,6 +32,8 @@ const messages = defineMessages('components.Library.Engagement', {
   completed: 'Completed',
   season: 'Season {number}',
   specials: 'Specials',
+  partialActivity: 'Partial',
+  watchedActivity: 'Watched',
 });
 
 export const UserAvatar = ({
@@ -111,7 +114,7 @@ export const LastActiveAvatarStack = ({
   lastActiveAt,
   ariaLabel,
 }: {
-  users: LibraryUser[];
+  users: LibraryLastActiveUser[];
   lastActiveAt: string | null;
   ariaLabel: string;
 }) => {
@@ -122,8 +125,19 @@ export const LastActiveAvatarStack = ({
         timeStyle: 'short',
       })
     : undefined;
-  const tooltip = (user: LibraryUser) =>
-    libraryLastActiveTooltip(user.displayName, formattedLastActiveAt);
+  const tooltip = (user: LibraryLastActiveUser) =>
+    libraryLastActiveTooltip(
+      user.displayName,
+      formattedLastActiveAt,
+      user.episode,
+      user.episode?.classification
+        ? intl.formatMessage(
+            user.episode.classification === 'partial'
+              ? messages.partialActivity
+              : messages.watchedActivity
+          )
+        : undefined
+    );
   const visible = users.slice(0, 5);
   const overflow = users.length - visible.length;
 

@@ -69,6 +69,7 @@ interface TitleCardProps {
   navigationHref?: string | null;
   actionsDisabled?: boolean;
   requestActionEnabled?: boolean;
+  requestActionAlwaysVisible?: boolean;
   requestActionIcon?: React.ReactNode;
   requestActionLabel?: string;
   requestActionClassName?: string;
@@ -109,6 +110,7 @@ const TitleCard = ({
   navigationHref,
   actionsDisabled = false,
   requestActionEnabled,
+  requestActionAlwaysVisible = false,
   requestActionIcon,
   requestActionLabel,
   requestActionClassName,
@@ -865,6 +867,7 @@ const TitleCard = ({
                   as={Fragment}
                   show={
                     useLowerRightStatus ||
+                    requestActionAlwaysVisible ||
                     !image ||
                     showDetail ||
                     showRequestModal
