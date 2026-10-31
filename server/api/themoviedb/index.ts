@@ -496,6 +496,28 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     }
   };
 
+  // Collection recovery needs a new observation, not a re-timestamped display
+  // or scan cache hit. Keep the shared timeout/rate/concurrency controls, but
+  // neither read nor populate those caches, and request no appended metadata.
+  public async getMovieCollectionMembership(movieId: number): Promise<{
+    id: number;
+    belongs_to_collection?: unknown;
+  }> {
+    try {
+      const response = await tmdbRequestCoordinator.schedule(() =>
+        this.axios.get<{ id: number; belongs_to_collection?: unknown }>(
+          `/movie/${movieId}`,
+          { params: { language: 'en' } }
+        )
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error('Failed to fetch fresh Movie collection membership', {
+        cause: error,
+      });
+    }
+  }
+
   // The append list is part of the cache key, so full and narrow entries differ.
   private getTvShowDetails = async <T>({
     tvId,

@@ -41,6 +41,11 @@ import {
   parseTmdbCollectionMembership,
   persistMovieQueryMetadata,
 } from '@server/lib/libraryCollectionMembership';
+import {
+  describeHydrationFailure,
+  type HydrationDatabaseOperation,
+  type HydrationOperationContext,
+} from '@server/lib/libraryHydrationDiagnostics';
 import libraryHydrationEpoch from '@server/lib/libraryHydrationEpoch';
 import {
   LibraryHydrationRunCoordinator,
@@ -384,7 +389,8 @@ export class LibraryHistoryHydrationService {
   private async finishRun(
     run: HydrationRun,
     summary: HydrationSourceSummary,
-    failure?: unknown
+    failure?: unknown,
+    operation: HydrationDatabaseOperation = 'unknown'
   ): Promise<void> {
     const completedAt = this.dependencies.now();
     const failureCode = failure
@@ -393,6 +399,28 @@ export class LibraryHistoryHydrationService {
         : 'UnknownError'
       : null;
     if (failureCode) summary.failureCode = failureCode;
+    let failureMessage = failure
+      ? 'Current source enumeration or reconciliation failed.'
+      : null;
+    if (failure) {
+      try {
+        const diagnostic = describeHydrationFailure(failure, operation);
+        failureMessage = diagnostic.failureMessage;
+        logger.error('Current library hydration source failed', {
+          label: 'Library History',
+          source: ['radarr', 'sonarr', 'jellyfin', 'seerr'].includes(run.source)
+            ? run.source
+            : 'unknown',
+          runId: Number.isSafeInteger(run.id) ? run.id : null,
+          operation: diagnostic.operation,
+          sqliteCode: diagnostic.sqliteCode,
+          constraintCategory: diagnostic.constraintCategory,
+        });
+      } catch {
+        // Diagnostic extraction/logging must not replace the hydration failure
+        // or prevent the existing run/checkpoint finalization.
+      }
+    }
     try {
       await this.runCoordinator.complete(run.id, {
         succeeded: summary.complete,
@@ -419,9 +447,7 @@ export class LibraryHistoryHydrationService {
           summary.mediaLinksResolved,
         unresolvedCount: summary.unresolved + summary.conflicts,
         failureCode,
-        failureMessage: failure
-          ? 'Current source enumeration or reconciliation failed.'
-          : null,
+        failureMessage,
       });
     } catch (error) {
       if (!(error instanceof LibraryHydrationRunOwnershipLostError)) {
@@ -464,9 +490,12 @@ export class LibraryHistoryHydrationService {
     work: (manager: EntityManager) => Promise<T>,
     sourceSystem?: string,
     scope?: string,
-    snapshotEpoch?: number
+    snapshotEpoch?: number,
+    diagnostic?: HydrationOperationContext
   ): Promise<T> {
+    if (diagnostic) diagnostic.operation = 'transaction-begin';
     return dataSource.transaction('SERIALIZABLE', async (manager) => {
+      if (diagnostic) diagnostic.operation = 'ownership-check';
       await this.assertRunOwnership(
         manager,
         run,
@@ -474,7 +503,10 @@ export class LibraryHistoryHydrationService {
         scope,
         snapshotEpoch
       );
-      return work(manager);
+      if (!diagnostic) return work(manager);
+      const result = await work(manager);
+      diagnostic.operation = 'transaction-completion';
+      return result;
     });
   }
 
@@ -1786,6 +1818,7 @@ export class LibraryHistoryHydrationService {
     const started = this.dependencies.now().getTime();
     const run = await this.beginRun('seerr', scope);
     const heartbeat = this.runCoordinator.heartbeat(run.id);
+    const diagnostic: HydrationOperationContext = { operation: 'media-load' };
     let failure: unknown;
     try {
       const media = await getRepository(Media).find({
@@ -1806,64 +1839,75 @@ export class LibraryHistoryHydrationService {
           { provider: 'tvdb', value: current.tvdbId },
           { provider: 'imdb', value: current.imdbId },
         ]);
-        await this.withOwnedRun(run, async (manager) => {
-          const identityRepository = manager.getRepository(
-            CanonicalMediaIdentity
-          );
-          const matches = await Promise.all(
-            identities.map(({ provider, value }) =>
-              identityRepository.findOneBy({
-                provider,
-                sourceScope: '',
-                mediaType,
-                value: String(value),
-              })
-            )
-          );
-          const canonicalIds = [
-            ...new Set(
-              matches.flatMap((match) => match?.canonicalMediaId ?? [])
-            ),
-          ];
-          if (canonicalIds.length === 0) {
-            summary.unresolved++;
-            return;
-          }
-          if (canonicalIds.length > 1) {
-            summary.mediaLinksConflicting++;
-            summary.conflicts++;
-            return;
-          }
-          const canonicalRepository = manager.getRepository(CanonicalMedia);
-          const canonical = await canonicalRepository.findOneByOrFail({
-            id: canonicalIds[0],
-          });
-          if (
-            canonical.currentMediaId !== null &&
-            canonical.currentMediaId !== undefined &&
-            canonical.currentMediaId !== current.id
-          ) {
-            summary.mediaLinksConflicting++;
-            return;
-          }
-          canonical.currentMediaId = current.id;
-          await canonicalRepository.save(canonical);
-          for (let index = 0; index < identities.length; index++) {
-            if (matches[index]) continue;
-            await identityRepository.save(
-              new CanonicalMediaIdentity({
-                canonicalMediaId: canonical.id,
-                mediaType,
-                provider: identities[index].provider,
-                sourceScope: '',
-                value: String(identities[index].value),
-              })
+        await this.withOwnedRun(
+          run,
+          async (manager) => {
+            diagnostic.operation = 'identity-lookup';
+            const identityRepository = manager.getRepository(
+              CanonicalMediaIdentity
             );
-            summary.aliasesCreated++;
-          }
-          summary.mediaLinksResolved++;
-          summary.requestsLinked += current.requests?.length ?? 0;
-        });
+            const matches = await Promise.all(
+              identities.map(({ provider, value }) =>
+                identityRepository.findOneBy({
+                  provider,
+                  sourceScope: '',
+                  mediaType,
+                  value: String(value),
+                })
+              )
+            );
+            const canonicalIds = [
+              ...new Set(
+                matches.flatMap((match) => match?.canonicalMediaId ?? [])
+              ),
+            ];
+            if (canonicalIds.length === 0) {
+              summary.unresolved++;
+              return;
+            }
+            if (canonicalIds.length > 1) {
+              summary.mediaLinksConflicting++;
+              summary.conflicts++;
+              return;
+            }
+            const canonicalRepository = manager.getRepository(CanonicalMedia);
+            diagnostic.operation = 'canonical-lookup';
+            const canonical = await canonicalRepository.findOneByOrFail({
+              id: canonicalIds[0],
+            });
+            if (
+              canonical.currentMediaId !== null &&
+              canonical.currentMediaId !== undefined &&
+              canonical.currentMediaId !== current.id
+            ) {
+              summary.mediaLinksConflicting++;
+              return;
+            }
+            canonical.currentMediaId = current.id;
+            diagnostic.operation = 'canonical-save';
+            await canonicalRepository.save(canonical);
+            for (let index = 0; index < identities.length; index++) {
+              if (matches[index]) continue;
+              diagnostic.operation = 'identity-insert';
+              await identityRepository.save(
+                new CanonicalMediaIdentity({
+                  canonicalMediaId: canonical.id,
+                  mediaType,
+                  provider: identities[index].provider,
+                  sourceScope: '',
+                  value: String(identities[index].value),
+                })
+              );
+              summary.aliasesCreated++;
+            }
+            summary.mediaLinksResolved++;
+            summary.requestsLinked += current.requests?.length ?? 0;
+          },
+          undefined,
+          undefined,
+          undefined,
+          diagnostic
+        );
       }
       summary.requestsUnresolved =
         summary.requestsInspected - summary.requestsLinked;
@@ -1878,7 +1922,8 @@ export class LibraryHistoryHydrationService {
       await this.finishRun(
         run,
         summary,
-        summary.complete ? undefined : failure
+        summary.complete ? undefined : failure,
+        diagnostic.operation
       );
     }
   }

@@ -6,7 +6,10 @@ import type {
 import { LibraryMediaType } from '@server/constants/libraryHistory';
 import { MediaStatus, MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
-import { CanonicalMedia } from '@server/entity/CanonicalMedia';
+import {
+  CanonicalMedia,
+  CanonicalMediaIdentity,
+} from '@server/entity/CanonicalMedia';
 import { LibraryPresence } from '@server/entity/LibraryHistory';
 import Media from '@server/entity/Media';
 import type {
@@ -17,13 +20,23 @@ import type {
   LibraryCollectionsResponse,
   LibrarySortDirection,
 } from '@server/interfaces/api/libraryInterfaces';
+import backgroundDatabaseWriteCoordinator from '@server/lib/backgroundDatabaseWriteCoordinator';
+import { BoundedRequestCoordinator } from '@server/lib/boundedRequestCoordinator';
 import { currentLibraryPresenceSql } from '@server/lib/libraryActivity';
+import {
+  parseTmdbCollectionMembership,
+  persistMovieCollectionMembership,
+} from '@server/lib/libraryCollectionMembership';
 import { classifyMovieLibraryStatusByTmdbIds } from '@server/lib/watchlistLibraryStatus';
 import logger from '@server/logger';
-import { In } from 'typeorm';
+import { LRUCache } from 'lru-cache';
+import { In, MoreThan } from 'typeorm';
 
 const COLLECTION_SNAPSHOT_TTL_MS = 15 * 60 * 1000;
 const UNAVAILABLE_RETRY_MS = 30 * 1000;
+const MISSING_COLLECTION_RETRY_MS = 6 * 60 * 60 * 1000;
+const MEMBERSHIP_RECOVERY_RETRY_MS = 60 * 1000;
+export const COLLECTION_RECOVERY_BATCH_SIZE = 50;
 const COLLECTION_METADATA_CONCURRENCY = 4;
 const AVAILABILITY_CHUNK_SIZE = 500;
 
@@ -57,15 +70,25 @@ interface CollectionMetadataResult {
   failed: boolean;
 }
 
+interface MembershipRecoveryState {
+  afterCanonicalId: number;
+  retryAt: number;
+}
+
 export interface LibraryCollectionsDependencies {
   discoverCollectionIds: () => Promise<number[]>;
   fetchCollection: (id: number, locale: string) => Promise<TmdbCollection>;
   fetchMovie: (id: number, locale: string) => Promise<TmdbMovieDetails>;
+  fetchMovieMembership: (id: number) => Promise<{
+    id: number;
+    belongs_to_collection?: unknown;
+  }>;
   fetchPhysicalMovieIds: (tmdbIds: number[]) => Promise<Set<number>>;
   fetchAvailability: (tmdbIds: number[]) => Promise<Map<number, boolean>>;
   now: () => Date;
   snapshotTtlMs: number;
   unavailableRetryMs: number;
+  missingCollectionRetryMs: number;
   metadataConcurrency: number;
 }
 
@@ -149,11 +172,13 @@ const defaultDependencies = (): LibraryCollectionsDependencies => {
       tmdb.getCollection({ collectionId: id, language: locale }),
     fetchMovie: (id, locale) =>
       tmdb.getMovie({ movieId: id, language: locale }),
+    fetchMovieMembership: (id) => tmdb.getMovieCollectionMembership(id),
     fetchPhysicalMovieIds,
     fetchAvailability: fetchStrictAvailability,
     now: () => new Date(),
     snapshotTtlMs: COLLECTION_SNAPSHOT_TTL_MS,
     unavailableRetryMs: UNAVAILABLE_RETRY_MS,
+    missingCollectionRetryMs: MISSING_COLLECTION_RETRY_MS,
     metadataConcurrency: COLLECTION_METADATA_CONCURRENCY,
   };
 };
@@ -179,6 +204,24 @@ const mapBounded = async <T, R>(
 };
 
 const collectionFingerprint = (ids: number[]): string => ids.join(',');
+
+const collectionNotFound = (error: unknown): boolean => {
+  // The TMDB client wraps Axios errors with cause. Do not infer status from text.
+  let current = error;
+  for (
+    let depth = 0;
+    depth < 4 && current && typeof current === 'object';
+    depth++
+  ) {
+    const candidate = current as {
+      response?: { status?: number };
+      cause?: unknown;
+    };
+    if (candidate.response?.status === 404) return true;
+    current = candidate.cause;
+  }
+  return false;
+};
 
 const collectionItem = (
   collection: TmdbCollection,
@@ -281,6 +324,22 @@ const sortCollections = (
 export class LibraryCollectionsService {
   private readonly dependencies: LibraryCollectionsDependencies;
   private readonly runtimes = new Map<string, CollectionRuntime>();
+  // A missing collection is independent of locale. Bound memory and permit
+  // recovery after six hours; no timers, polling, or durable negative records.
+  private readonly missingCollections = new LRUCache<number, number>({
+    max: 1000,
+  });
+  private readonly recoveryStates = new LRUCache<
+    number,
+    MembershipRecoveryState
+  >({
+    max: 1000,
+  });
+  private readonly recoveryInFlight = new Map<number, Promise<number>>();
+  private readonly recoveryRequests = new BoundedRequestCoordinator({
+    maxConcurrency: COLLECTION_METADATA_CONCURRENCY,
+    maxPending: COLLECTION_RECOVERY_BATCH_SIZE,
+  });
 
   constructor(dependencies: Partial<LibraryCollectionsDependencies> = {}) {
     this.dependencies = { ...defaultDependencies(), ...dependencies };
@@ -297,6 +356,152 @@ export class LibraryCollectionsService {
     return created;
   }
 
+  private async reconcileMembership(
+    id: number,
+    state: MembershipRecoveryState,
+    budget: number
+  ): Promise<number> {
+    const repository = getRepository(CanonicalMedia);
+    const targetsAfter = (afterCanonicalId: number) =>
+      repository.find({
+        select: { id: true },
+        where: {
+          mediaType: LibraryMediaType.MOVIE,
+          tmdbCollectionId: id,
+          id: MoreThan(afterCanonicalId),
+        },
+        order: { id: 'ASC' },
+        take: budget,
+      });
+    let targets = await targetsAfter(state.afterCanonicalId);
+    // Wrap to revisit unchanged, failed or previously ambiguous targets. Cursor
+    // progress is by canonical ID, not an offset shifted by successful removals.
+    if (targets.length === 0 && state.afterCanonicalId !== 0) {
+      state.afterCanonicalId = 0;
+      targets = await targetsAfter(0);
+    }
+    if (targets.length === 0) return 0;
+    const rows = await repository
+      .createQueryBuilder('canonical')
+      .innerJoin(
+        CanonicalMediaIdentity,
+        'identity',
+        'identity.canonicalMediaId = canonical.id AND ' +
+          'identity.mediaType = canonical.mediaType AND ' +
+          "identity.provider = 'tmdb' AND identity.sourceScope = ''"
+      )
+      .select('canonical.id', 'canonicalMediaId')
+      .addSelect('identity.value', 'tmdbId')
+      .where('canonical.mediaType = :mediaType', {
+        mediaType: LibraryMediaType.MOVIE,
+      })
+      .andWhere('canonical.tmdbCollectionId = :id', { id })
+      .andWhere('canonical.id IN (:...targetIds)', {
+        targetIds: targets.map((target) => target.id),
+      })
+      .getRawMany<{ canonicalMediaId: number; tmdbId: string }>();
+    const identities = new Map<number, Set<number>>();
+    for (const row of rows) {
+      const ids = identities.get(row.canonicalMediaId) ?? new Set<number>();
+      ids.add(Number(row.tmdbId));
+      identities.set(row.canonicalMediaId, ids);
+    }
+    await mapBounded(
+      [...identities],
+      this.dependencies.metadataConcurrency,
+      async ([canonicalMediaId, tmdbIds]) => {
+        const [tmdbId] = tmdbIds;
+        if (tmdbIds.size !== 1 || !Number.isSafeInteger(tmdbId) || tmdbId <= 0)
+          return;
+        const observedAt = this.dependencies.now();
+        try {
+          const movie = await this.recoveryRequests.schedule(() =>
+            this.dependencies.fetchMovieMembership(tmdbId)
+          );
+          if (
+            !movie ||
+            movie.id !== tmdbId ||
+            !Object.prototype.hasOwnProperty.call(
+              movie,
+              'belongs_to_collection'
+            )
+          )
+            return;
+          const collectionMembership = parseTmdbCollectionMembership(
+            movie.belongs_to_collection,
+            observedAt
+          );
+          if (!collectionMembership) return;
+          // Foundation holds this coordinator across canonical read/save work.
+          // Queue only persistence; provider reads and scheduling stay outside.
+          await backgroundDatabaseWriteCoordinator.runExclusive(() =>
+            persistMovieCollectionMembership(repository, {
+              canonicalMediaId,
+              expectedCollectionId: id,
+              collectionMembership,
+            })
+          );
+        } catch {
+          // Failed Movie observations cannot clear membership. The bounded
+          // collection retry or existing Library metadata hydration can recover.
+          logger.warn('Unable to reconcile Library collection membership', {
+            label: 'Library Collections',
+            collectionId: id,
+          });
+        }
+      }
+    );
+    state.afterCanonicalId = targets[targets.length - 1].id;
+    return targets.length;
+  }
+
+  private async recoverMembership(ids: number[]): Promise<void> {
+    let budget = COLLECTION_RECOVERY_BATCH_SIZE;
+    // Oldest-attempt-first prevents one retained collection from starving other
+    // missing collections. All state is bounded, process-local and query-driven.
+    const missing = ids
+      .filter((id) => this.missingCollections.has(id))
+      .sort(
+        (a, b) =>
+          (this.recoveryStates.peek(a)?.retryAt ?? 0) -
+            (this.recoveryStates.peek(b)?.retryAt ?? 0) || a - b
+      );
+    for (const id of missing) {
+      const active = this.recoveryInFlight.get(id);
+      if (active) {
+        budget -= await active;
+      } else {
+        const state = this.recoveryStates.get(id) ?? {
+          afterCanonicalId: 0,
+          retryAt: 0,
+        };
+        if (this.dependencies.now().getTime() < state.retryAt) continue;
+        state.retryAt =
+          this.dependencies.now().getTime() + MEMBERSHIP_RECOVERY_RETRY_MS;
+        this.recoveryStates.set(id, state);
+        const attempt = this.reconcileMembership(id, state, budget)
+          .catch(() => {
+            logger.warn('Unable to reconcile Library collection membership', {
+              label: 'Library Collections',
+              collectionId: id,
+            });
+            // Conservatively charge the attempt's budget if it fails outside
+            // the per-target guard; never spend it twice in this refresh.
+            return budget;
+          })
+          .finally(() => {
+            state.retryAt =
+              this.dependencies.now().getTime() + MEMBERSHIP_RECOVERY_RETRY_MS;
+            if (this.recoveryInFlight.get(id) === attempt)
+              this.recoveryInFlight.delete(id);
+          });
+        this.recoveryInFlight.set(id, attempt);
+        budget -= await attempt;
+      }
+      if (budget <= 0) break;
+    }
+  }
+
   private async refresh(
     locale: string,
     ids: number[],
@@ -310,13 +515,32 @@ export class LibraryCollectionsService {
         ids,
         this.dependencies.metadataConcurrency,
         async (id): Promise<CollectionMetadataResult> => {
+          const retryAt = this.missingCollections.get(id);
+          if (
+            retryAt !== undefined &&
+            this.dependencies.now().getTime() < retryAt
+          )
+            return { id, failed: true };
+          this.missingCollections.delete(id);
           try {
+            const collection = await this.dependencies.fetchCollection(
+              id,
+              locale
+            );
+            this.recoveryStates.delete(id);
             return {
               id,
-              collection: await this.dependencies.fetchCollection(id, locale),
+              collection,
               failed: false,
             };
           } catch (error) {
+            if (collectionNotFound(error)) {
+              this.missingCollections.set(
+                id,
+                this.dependencies.now().getTime() +
+                  this.dependencies.missingCollectionRetryMs
+              );
+            }
             logger.warn('Unable to refresh Library collection metadata', {
               label: 'Library Collections',
               collectionId: id,
@@ -327,6 +551,7 @@ export class LibraryCollectionsService {
           }
         }
       );
+      await this.recoverMembership(ids);
       const successful = metadata.filter(
         (
           entry
@@ -468,6 +693,21 @@ export class LibraryCollectionsService {
         runtime.snapshot?.fingerprint !== fingerprint || snapshotExpired;
       if (needsRefresh && unavailableRetryDue)
         this.startRefresh(input.locale, ids, fingerprint, runtime);
+      // A warm snapshot/long collection-404 TTL must not suppress retries of
+      // failed Movie observations. Reuse the existing pending-response lifecycle.
+      if (
+        !runtime.active &&
+        ids.some(
+          (id) =>
+            this.missingCollections.has(id) &&
+            (this.recoveryInFlight.has(id) ||
+              now.getTime() >= (this.recoveryStates.peek(id)?.retryAt ?? 0))
+        )
+      ) {
+        runtime.active = this.recoverMembership(ids).finally(() => {
+          runtime.active = undefined;
+        });
+      }
     }
 
     const visibleIds = new Set(ids);
