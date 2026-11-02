@@ -15,7 +15,7 @@ const updateSchema = z
     apiToken: z.string().max(4096).optional(),
     filterId: z.number().int().nonnegative(),
     cachedFilterName: z.string().max(200),
-    freshVisibilityDays: z.number().int().min(1).max(90),
+    freshVisibilityDays: z.number().int().min(1).max(365),
     ...freshContentFilterSchema,
   })
   .strict();

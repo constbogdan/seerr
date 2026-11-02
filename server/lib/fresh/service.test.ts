@@ -3,7 +3,10 @@ import FreshSourceState from '@server/entity/FreshSourceState';
 import FreshWork from '@server/entity/FreshWork';
 import { SynchronizationPolicy } from '@server/job/synchronizationPolicy';
 import { freshSourceKey } from '@server/lib/fresh/engine';
-import { FreshService } from '@server/lib/fresh/service';
+import {
+  FreshService,
+  normalizeFreshSettings,
+} from '@server/lib/fresh/service';
 import Settings from '@server/lib/settings';
 import {
   createFixtureDatabase,
@@ -13,6 +16,24 @@ import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
 
 describe('Fresh V2 coordination and containment', () => {
+  it('preserves the 7-day default and saved visibility while accepting the extended range', () => {
+    assert.equal(new Settings().fresh.freshVisibilityDays, 7);
+    for (const days of [7, 90, 91, 365])
+      assert.equal(
+        normalizeFreshSettings({
+          ...fixtureSettings,
+          freshVisibilityDays: days,
+        }).freshVisibilityDays,
+        days
+      );
+    for (const days of [0, 366, 1.5])
+      assert.throws(() =>
+        normalizeFreshSettings({
+          ...fixtureSettings,
+          freshVisibilityDays: days,
+        })
+      );
+  });
   it('reads current health without provider calls, database writes or checkpoint advancement', async () => {
     const database = await createFixtureDatabase();
     const sourceKey = freshSourceKey(fixtureSettings);

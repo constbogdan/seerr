@@ -112,7 +112,6 @@ export const navigationDestinationRules: NavigationDestinationRule[] = [
   },
   {
     id: 'blocklist',
-    hidden: true,
     href: '/blocklist',
     messagesKey: 'blocklist',
     activeRegExp: /^\/blocklist(?:\/|$)/,

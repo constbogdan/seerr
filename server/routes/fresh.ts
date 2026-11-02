@@ -71,6 +71,9 @@ export const createFreshRoutes = ({
             now,
           }
         )
+        .andWhere(
+          'NOT EXISTS (SELECT 1 FROM blocklist blocked WHERE blocked."tmdbId" = discovery."tmdbId" AND blocked."mediaType" = discovery."mediaType")'
+        )
         .groupBy('discovery.mediaType')
         .addGroupBy('discovery.tmdbId');
       if (req.query.mediaType === 'movie' || req.query.mediaType === 'tv')

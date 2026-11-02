@@ -1,3 +1,4 @@
+import FreshCacheInvalidation from '@app/components/Fresh/FreshCacheInvalidation';
 import Layout from '@app/components/Layout';
 import LoadingBar from '@app/components/LoadingBar';
 import PWAHeader from '@app/components/PWAHeader';
@@ -197,6 +198,7 @@ const CoreApp: Omit<NextAppComponentType, 'origGetInitialProps'> = ({
         },
       }}
     >
+      <FreshCacheInvalidation />
       <LanguageContext.Provider value={{ locale: currentLocale, setLocale }}>
         <IntlProvider
           locale={currentLocale}

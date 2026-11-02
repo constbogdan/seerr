@@ -75,10 +75,7 @@ describe('shared application navigation', () => {
   });
 
   it('gives administrators the same complete feature-enabled inventory', () => {
-    assert.deepEqual(
-      visibleIds(Permission.ADMIN),
-      expectedFullInventory.filter((id) => id !== 'blocklist')
-    );
+    assert.deepEqual(visibleIds(Permission.ADMIN), expectedFullInventory);
   });
 
   it('does not expose administrator or delegated destinations without permission', () => {
@@ -97,26 +94,43 @@ describe('shared application navigation', () => {
     );
   });
 
-  it('preserves Issues permissions while hiding Blocklist navigation for every role', () => {
+  it('preserves Issues and Users permission rules', () => {
     assert.ok(visibleIds(Permission.CREATE_ISSUES).includes('issues'));
     assert.ok(visibleIds(Permission.VIEW_ISSUES).includes('issues'));
     assert.ok(visibleIds(Permission.MANAGE_ISSUES).includes('issues'));
+    assert.ok(visibleIds(Permission.MANAGE_USERS).includes('users'));
+  });
+
+  it('shows Blocklist once for either permission without adding bottom shortcuts', () => {
     for (const permission of [
       Permission.ADMIN,
       Permission.VIEW_BLOCKLIST,
       Permission.MANAGE_BLOCKLIST,
+      Permission.VIEW_BLOCKLIST | Permission.MANAGE_BLOCKLIST,
     ]) {
-      assert.ok(!visibleIds(permission).includes('blocklist'));
+      assert.equal(
+        visibleIds(permission).filter((id) => id === 'blocklist').length,
+        1
+      );
+      assert.ok(visibleIds(permission, false).includes('blocklist'));
       assert.ok(!bottomIds(permission, 'admin').includes('blocklist'));
       assert.ok(!bottomIds(permission, 'regular').includes('blocklist'));
     }
-    assert.ok(visibleIds(Permission.MANAGE_USERS).includes('users'));
+    for (const permission of [
+      Permission.NONE,
+      Permission.REQUEST,
+      Permission.MANAGE_USERS,
+      Permission.VIEW_ISSUES,
+    ]) {
+      assert.ok(!visibleIds(permission).includes('blocklist'));
+      assert.ok(!visibleIds(permission, false).includes('blocklist'));
+    }
   });
 
   it('removes only Fresh when the Fresh feature is disabled', () => {
     assert.deepEqual(
       visibleIds(Permission.ADMIN, false),
-      expectedFullInventory.filter((id) => id !== 'fresh' && id !== 'blocklist')
+      expectedFullInventory.filter((id) => id !== 'fresh')
     );
   });
 

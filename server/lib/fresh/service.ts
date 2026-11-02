@@ -34,7 +34,7 @@ export const normalizeFreshSettings = (
     value.filterId < (value.enabled ? 1 : 0) ||
     !Number.isInteger(value.freshVisibilityDays) ||
     value.freshVisibilityDays < 1 ||
-    value.freshVisibilityDays > 90
+    value.freshVisibilityDays > 365
   )
     throw new Error('Invalid Fresh configuration');
   return value;

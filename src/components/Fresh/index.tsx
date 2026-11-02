@@ -3,6 +3,7 @@ import Header from '@app/components/Common/Header';
 import ListView from '@app/components/Common/ListView';
 import MediaTypeFilter from '@app/components/Common/MediaTypeFilter';
 import PageTitle from '@app/components/Common/PageTitle';
+import WatchlistItemCount from '@app/components/Discover/DiscoverWatchlist/WatchlistItemCount';
 import {
   FRESH_API_PATH,
   type FreshMediaResult,
@@ -16,7 +17,6 @@ import { ArrowPathIcon, BarsArrowDownIcon } from '@heroicons/react/24/solid';
 import type { FreshSort } from '@server/lib/fresh';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
-import { useEffect, useRef } from 'react';
 import { useIntl } from 'react-intl';
 
 const messages = defineMessages('components.Fresh', {
@@ -47,10 +47,10 @@ const allowedSorts = new Set<FreshSort>([
 ]);
 
 export const resetFreshSortPages = (
-  previous: FreshSort,
-  next: FreshSort,
+  previous: string,
+  next: string,
   setPageCount: (count: number) => void
-): FreshSort => {
+): string => {
   if (previous !== next) setPageCount(1);
   return next;
 };
@@ -69,25 +69,36 @@ const Fresh = () => {
     FreshMediaResult,
     { status: FreshStatus },
     { mediaType: string; sort: FreshSort }
-  >(FRESH_API_PATH, { mediaType, sort });
-  const previousSort = useRef(sort);
-  const { setPageCount } = discover;
-  useEffect(() => {
-    // Reset only query changes, not an ordinary remount/Details → Back.
-    previousSort.current = resetFreshSortPages(
-      previousSort.current,
-      sort,
-      setPageCount
-    );
-  }, [sort, setPageCount]);
+  >(FRESH_API_PATH, { mediaType, sort }, { initialSize: 1 });
   const status = discover.firstResultData?.status;
-  const set = (key: string, value?: string) => updateQuery(key, value);
+  const set = (key: string, value?: string) => {
+    // Reset the departing feed before changing its key, not while SWR is already
+    // fetching the new key. Ordinary remounts/Details → Back retain cached pages.
+    resetFreshSortPages(
+      `${mediaType}:${sort}`,
+      `${key === 'mediaType' ? (value ?? 'all') : mediaType}:${key === 'sort' ? (value ?? 'freshest') : sort}`,
+      discover.setPageCount
+    );
+    updateQuery(key, value);
+  };
 
   return (
     <>
       <PageTitle title={intl.formatMessage(messages.fresh)} />
       <div className="mb-4 flex flex-col justify-between lg:flex-row lg:items-end">
-        <Header>{intl.formatMessage(messages.fresh)}</Header>
+        <Header>
+          <span className="inline-flex flex-wrap items-baseline gap-x-3">
+            <span>{intl.formatMessage(messages.fresh)}</span>
+            <WatchlistItemCount
+              count={discover.firstResultData?.totalResults}
+              loading={
+                discover.isLoadingInitialData ||
+                discover.isValidating ||
+                discover.hasError
+              }
+            />
+          </span>
+        </Header>
         <div className="mt-2 flex min-w-0 flex-wrap gap-2">
           <MediaTypeFilter
             ariaLabel={intl.formatMessage(messages.mediaType)}
