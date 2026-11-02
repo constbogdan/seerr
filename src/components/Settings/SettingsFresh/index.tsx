@@ -82,7 +82,7 @@ export const createFreshSettingsValidation = (invalid: string) =>
     freshVisibilityDays: Yup.number()
       .integer()
       .min(1)
-      .max(90)
+      .max(365)
       .required(invalid),
     minimumTmdbScore: Yup.number().min(0).max(10).required(invalid),
     minimumTmdbVotes: Yup.number()

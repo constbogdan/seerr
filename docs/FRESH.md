@@ -116,7 +116,9 @@ TMDB Season numbering. New regular Seasons may refresh the card once; Episodes
 and repeated releases from that Season do not. Missing Season metadata does not
 invalidate identity. Specials do not create refreshing Season events.
 
-The current configured visibility duration is applied to source discovery dates
+Fresh Visibility (Days) accepts integers from 1 through 365; the existing default
+of 7 days and saved administrator values are unchanged. The current configured
+visibility duration is applied to source discovery dates
 at read time. Stored deadlines preserve the duration in force when evidence was
 recorded. Changing visibility intentionally changes the viewing window, without
 resetting any discovery date. Expired discoveries remain durable for deduplication.
@@ -127,6 +129,12 @@ titles survive metadata outages. Enabled genre/language exclusions and inclusive
 minimum score/vote thresholds apply only to presentation, before totals and
 pagination. Zero disables a numeric threshold. Missing/invalid metadata cannot
 qualify for an enabled criterion. No discovery, work, checkpoint or clock changes.
+
+Global Blocklist membership is excluded by typed Movie/Series identity before
+counting, metadata filter/sort evaluation and pagination, for every user regardless
+of optional Blocklist display preferences. This does not delete discoveries or
+change Blocklist creation/removal behavior. Retained discoveries can become
+eligible again when the configured visibility window is increased.
 
 Filtered reads and TMDB rating/vote sorts evaluate the complete visibility-eligible typed population in
 batches of 20, reusing the same TMDB cache and concurrency limit. A maximum of
@@ -149,6 +157,13 @@ descending, media type and TMDB ID ascending. Both sorts reuse the same snapshot
 metadata without additional selected-page lookups. Freshest remains the default,
 including the Discover slider. Loading uses existing card
 skeletons. Last-good cards remain visible during transient refresh errors.
+The Fresh heading uses the Watchlist count presentation and the API's distinct
+eligible-title total, not loaded cards. Counts are hidden during loading,
+revalidation and errors. Pagination follows successfully loaded server pages and
+`totalPages`, including pages entirely hidden by client display preferences;
+Movie and Series numeric IDs are separate identities. The Discover slider keeps
+its intentional 20-card cap. Successful Fresh settings saves and Blocklist
+mutations invalidate only Fresh page/slider caches, including infinite aggregates.
 
 Administrator controls are limited to enablement, autobrr connection, filter,
 visibility, presentation-only content filters and basic synchronization health.

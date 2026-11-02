@@ -73,11 +73,15 @@ const items = [movie, series];
 let touch = false;
 let routeQuery: Record<string, string | undefined> = {};
 const queryChanges: Record<string, string | undefined>[] = [];
+const filterEvents: string[] = [];
 let discoverPageKey: (
   pageIndex: number,
   previous: { totalPages: number } | null
 ) => string | null;
 let infiniteOptions: { initialSize?: number; persistSize?: boolean };
+let validating = false;
+let fetchError: Error | undefined;
+let filteredTotal = 2;
 let sortControl: {
   value: string;
   onChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
@@ -141,6 +145,7 @@ stub('@app/hooks/useUpdateQueryParams', {
   useUpdateQueryParams:
     (base: Record<string, string | undefined>) =>
     (key: string, value?: string) => {
+      filterEvents.push('query');
       queryChanges.push({ ...base, [key]: value });
     },
 });
@@ -158,9 +163,11 @@ stub(
       discoverPageKey = getKey;
       infiniteOptions = options;
       return {
-        data: [{ results: items, totalPages: 1, totalResults: 2 }],
+        data: [{ results: items, totalPages: 1, totalResults: filteredTotal }],
+        isValidating: validating,
+        error: fetchError,
         size: 2,
-        setSize: empty,
+        setSize: (count: number) => filterEvents.push(`pages:${count}`),
       };
     }
   )
@@ -190,6 +197,37 @@ const render = (child: ReactNode, locale = 'en') =>
   );
 
 describe('Fresh ratings and shared card integration', () => {
+  it('uses the Watchlist heading count style, authoritative totals and loading/error suppression', async () => {
+    const { default: Fresh } = await import('./index');
+    try {
+      for (const count of [0, 1, 530]) {
+        filteredTotal = count;
+        const markup = render(createElement(Fresh));
+        assert.equal(infiniteOptions.initialSize, 1);
+        assert.match(markup, /inline-flex flex-wrap items-baseline gap-x-3/);
+        assert.match(markup, /text-base font-normal text-gray-400 sm:text-lg/);
+        assert.match(
+          markup,
+          new RegExp(`>${count} item${count === 1 ? '' : 's'}<`)
+        );
+      }
+      validating = true;
+      assert.doesNotMatch(
+        render(createElement(Fresh)),
+        /watchlist-filtered-item-count/
+      );
+      validating = false;
+      fetchError = new Error('fixture failure');
+      assert.doesNotMatch(
+        render(createElement(Fresh)),
+        /watchlist-filtered-item-count/
+      );
+    } finally {
+      filteredTotal = 2;
+      validating = false;
+      fetchError = undefined;
+    }
+  });
   it('renders localized sort choices and uses new page-one query keys when the selected sort changes', async () => {
     const { default: Fresh, resetFreshSortPages } = await import('./index');
     const { default: FreshSlider } = await import('../Discover/FreshSlider');
@@ -237,6 +275,8 @@ describe('Fresh ratings and shared card integration', () => {
         sortControl.onChange({
           target: { value: 'vote_count' },
         } as React.ChangeEvent<HTMLSelectElement>);
+        if (sort !== 'vote_count')
+          assert.deepEqual(filterEvents.slice(-2), ['pages:1', 'query']);
         assert.deepEqual(queryChanges.at(-1), {
           page: undefined,
           sort: 'vote_count',
@@ -259,6 +299,11 @@ describe('Fresh ratings and shared card integration', () => {
         '/api/v1/fresh?page=1&mediaType=all&sort=freshest'
       );
       render(createElement(FreshSlider));
+      assert.equal(
+        infiniteOptions.initialSize,
+        2,
+        'the slider prefetch is unchanged'
+      );
       assert.equal(
         discoverPageKey(0, null),
         '/api/v1/fresh?page=1',

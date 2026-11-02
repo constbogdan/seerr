@@ -142,6 +142,11 @@ describe('Fresh V2 API contract', () => {
     );
   beforeEach(async () => {
     database = await createFixtureDatabase();
+    // The isolated Fresh fixture omits unrelated entity graphs. Match the
+    // production Blocklist's typed unique index without Media enrichment.
+    await database.query(
+      'CREATE TABLE blocklist ("tmdbId" integer, "mediaType" varchar, UNIQUE ("tmdbId", "mediaType"))'
+    );
     referenceNow = Date.now();
     configured = { ...fixtureSettings };
     presentation = async () => new Map();
@@ -273,6 +278,123 @@ describe('Fresh V2 API contract', () => {
         .set('x-test-role', 'admin');
       assert.equal(res.status, 404);
     }
+  });
+  it('excludes global typed Blocklist membership before totals, pages and metadata snapshots for every role', async () => {
+    for (let id = 1; id <= 42; id++) await add(id);
+    await add(1, 'tv');
+    await add(1, 'tv', 2, 'season:2');
+    await database.query(
+      'INSERT INTO blocklist VALUES (1, ?), (2, ?), (3, ?)',
+      ['movie', 'movie', 'movie']
+    );
+    const history = await database.getRepository(FreshDiscovery).find();
+    const inspected = new Set<string>();
+    presentation = async (rows) =>
+      new Map(
+        rows.map((row) => {
+          inspected.add(freshPresentationKey(row));
+          return [
+            freshPresentationKey(row),
+            {
+              id: row.tmdbId,
+              genres: [{ id: 18, name: 'Drama' }],
+              original_language: 'en',
+              vote_average: 8,
+              vote_count: 100,
+            } as FreshProviderPresentation,
+          ];
+        })
+      );
+    const server = app();
+    for (const minimumTmdbScore of [0, 7]) {
+      configured = { ...configured, minimumTmdbScore, minimumTmdbVotes: 100 };
+      for (const role of ['admin', 'user']) {
+        const get = (page: number) =>
+          request(server)
+            .get(`/api/v1/fresh?page=${page}&sort=vote_average`)
+            .set('x-test-role', role);
+        const first = await get(1);
+        const second = await get(2);
+        const beyond = await get(3);
+        assert.equal(first.status, 200, JSON.stringify(first.body));
+        assert.equal(first.body.totalResults, 40);
+        assert.equal(first.body.totalPages, 2);
+        assert.equal(first.body.results.length, 20);
+        assert.equal(second.body.results.length, 20);
+        assert.equal(beyond.body.results.length, 0);
+        assert.equal(beyond.body.totalResults, 40);
+        const identities = new Set(
+          [...first.body.results, ...second.body.results].map(
+            (row) => `${row.mediaType}:${row.id}`
+          )
+        );
+        assert.equal(identities.size, 40);
+        assert.ok(identities.has('tv:1'));
+        for (const id of [1, 2, 3]) {
+          assert.ok(!identities.has(`movie:${id}`));
+          assert.ok(!inspected.has(`movie:${id}`));
+        }
+      }
+    }
+    assert.deepEqual(
+      await database.getRepository(FreshDiscovery).find(),
+      history
+    );
+    assert.deepEqual(await database.query('SELECT * FROM fresh_work'), []);
+    assert.deepEqual(
+      await database.query('SELECT * FROM fresh_source_state'),
+      []
+    );
+    // No optional Media row is needed, and ordinary subsequent reads see a
+    // changed membership population even while a previous snapshot is cached.
+    await database.query('INSERT INTO blocklist VALUES (1, ?)', ['tv']);
+    const changed = await request(server)
+      .get('/api/v1/fresh?sort=vote_average')
+      .set('x-test-role', 'user');
+    assert.equal(changed.body.totalResults, 39);
+    const empty = await request(server)
+      .get('/api/v1/fresh?mediaType=tv')
+      .set('x-test-role', 'admin');
+    assert.equal(empty.body.totalResults, 0);
+    assert.equal(empty.body.totalPages, 0);
+    assert.deepEqual(empty.body.results, []);
+  });
+  it('accepts 90, 91 and 365 days, rejects 366, and restores retained discoveries without changing history', async () => {
+    for (const days of [90, 91, 365]) {
+      const saved = mergeFreshSettingsUpdate(fixtureSettings, {
+        ...fixtureSettings,
+        freshVisibilityDays: days,
+      });
+      assert.equal(saved.freshVisibilityDays, days);
+    }
+    for (const days of [0, 366, 1.5])
+      assert.throws(() =>
+        mergeFreshSettingsUpdate(fixtureSettings, {
+          ...fixtureSettings,
+          freshVisibilityDays: days,
+        })
+      );
+    await add(1, 'movie', 90.5);
+    await add(2, 'movie', 364.999);
+    await add(3, 'movie', 365.001);
+    const history = await database.getRepository(FreshDiscovery).find();
+    const server = app();
+    for (const [days, count] of [
+      [90, 0],
+      [91, 1],
+      [365, 2],
+    ]) {
+      configured.freshVisibilityDays = days;
+      const response = await request(server)
+        .get('/api/v1/fresh')
+        .set('x-test-role', 'user');
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.totalResults, count);
+    }
+    assert.deepEqual(
+      await database.getRepository(FreshDiscovery).find(),
+      history
+    );
   });
   it('filters the full Movie/Series population before totals and pagination without writing discoveries or clocks', async () => {
     for (let id = 1; id <= 45; id++) await add(id, 'movie', id <= 5 ? 1 : 2);
@@ -655,6 +777,7 @@ describe('Fresh V2 API contract', () => {
       { minimumTmdbVotes: -1 },
       { excludeOriginalLanguages: ['Hindi'] },
       { excludeGenreIds: [-1] },
+      { freshVisibilityDays: 366 },
     ]) {
       const response = await request(app())
         .put('/api/v1/settings/fresh')

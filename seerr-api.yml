@@ -2070,7 +2070,7 @@ components:
         freshVisibilityDays:
           type: integer
           minimum: 1
-          maximum: 90
+          maximum: 365
           default: 7
           description: Visibility measured from the original autobrr discovery timestamp.
         excludeGenreIds:

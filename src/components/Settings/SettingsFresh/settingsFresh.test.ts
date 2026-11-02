@@ -319,7 +319,11 @@ describe('Fresh V2 settings presentation', () => {
     assert.equal(update.apiToken, '');
     for (const [field, validValues, invalidValues] of [
       ['port', ['1', '65535'], ['', '0', '65536', '1.5', 'bad']],
-      ['freshVisibilityDays', ['1', '90'], ['', '0', '91', '1.5', 'bad']],
+      [
+        'freshVisibilityDays',
+        ['1', '90', '91', '365'],
+        ['', '0', '366', '1.5', 'bad'],
+      ],
       ['minimumTmdbScore', ['0', '7.5', '10'], ['', '-1', '10.1', '7junk']],
       [
         'minimumTmdbVotes',

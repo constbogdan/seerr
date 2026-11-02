@@ -46,8 +46,10 @@ const useVerticalScroll = (
   );
 
   useEffect(() => {
+    // Cached filter/page resets can replace the callback without disabling the
+    // scroll gate. Recheck the committed layout when its pagination state changes.
     runCallback();
-  }, [runCallback, shouldFetch]);
+  }, [runCallback, shouldFetch, callback]);
 
   useEffect(() => {
     const onScroll = () => {
