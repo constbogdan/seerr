@@ -38,7 +38,7 @@ export const NEXT_SEASON_SERIES_LIMIT = 50;
 export const NEXT_SEASON_METADATA_LIMIT = 10;
 export const NEXT_SEASON_REQUEST_LIMIT = 5;
 export const NEXT_SEASON_DEADLINE_MS = 45_000;
-export const NEXT_SEASON_VIEWING_WINDOW_MS = 24 * 60 * 60 * 1000;
+export const NEXT_SEASON_VIEWING_WINDOW_MS = 72 * 60 * 60 * 1000;
 
 export interface NextSeasonSeriesCandidate {
   canonicalMediaId: number;

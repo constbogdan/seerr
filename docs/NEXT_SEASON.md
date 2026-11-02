@@ -12,7 +12,7 @@ every physically present regular Season independently for each viewer. Specials
 are excluded. The immediately following numbered Season is considered when at
 least one viewer has watched 70 percent or more of the source Season.
 That same viewer must have a confirmed latest viewing event in the source
-Season within the previous 24 hours. The boundary is inclusive; missing,
+Season within the previous 72 hours. The boundary is inclusive; missing,
 invalid, future, or older timestamps fail closed. Synchronization time does not
 refresh this window.
 
