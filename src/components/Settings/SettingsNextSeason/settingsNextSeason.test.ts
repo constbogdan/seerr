@@ -45,7 +45,7 @@ describe('Next Season settings presentation', () => {
   it('uses the concise user-facing automation description', () => {
     assert.match(
       source,
-      /Automatically request the next season when the current season viewing progress reaches 70% within the last 24 hours\./
+      /Automatically request the next season when a viewer has completed at least 70% of the current season and viewed it within the last 72 hours\./
     );
   });
 

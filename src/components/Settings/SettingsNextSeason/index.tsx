@@ -23,7 +23,7 @@ import {
 const messages = defineMessages('components.Settings.SettingsNextSeason', {
   title: 'Next Season Automation',
   description:
-    'Automatically request the next season when the current season viewing progress reaches 70% within the last 24 hours.',
+    'Automatically request the next season when a viewer has completed at least 70% of the current season and viewed it within the last 72 hours.',
   enable: 'Enable Next Season automation',
   upcoming: 'Upcoming',
   seriesSeason: 'Series / Season',

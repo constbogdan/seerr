@@ -161,7 +161,7 @@ describe('Next Season progress selection', () => {
     assert.equal(isNextSeasonProgressEligible(5.5, 8), false);
   });
 
-  it('uses an inclusive rolling 24-hour viewing-activity window', () => {
+  it('uses an inclusive rolling 72-hour viewing-activity window, not a waiting period', () => {
     assert.equal(
       isNextSeasonViewingActivityEligible('2026-10-23T11:55:00.000Z', now),
       true
@@ -171,14 +171,26 @@ describe('Next Season progress selection', () => {
       true
     );
     assert.equal(
-      isNextSeasonViewingActivityEligible('2026-10-22T12:00:00.000Z', now),
+      isNextSeasonViewingActivityEligible('2026-10-20T12:00:00.000Z', now),
       true
     );
     assert.equal(
-      isNextSeasonViewingActivityEligible('2026-10-22T11:00:00.000Z', now),
+      isNextSeasonViewingActivityEligible('2026-10-20T11:59:59.999Z', now),
       false
     );
     assert.equal(isNextSeasonViewingActivityEligible(null, now), false);
+    assert.equal(isNextSeasonViewingActivityEligible('', now), false);
+    assert.equal(
+      isNextSeasonViewingActivityEligible(now.toISOString(), now),
+      true
+    );
+    assert.equal(
+      isNextSeasonViewingActivityEligible(
+        now.toISOString(),
+        new Date('invalid')
+      ),
+      false
+    );
     assert.equal(isNextSeasonViewingActivityEligible('invalid', now), false);
     assert.equal(
       isNextSeasonViewingActivityEligible('2026-10-23T12:00:00.001Z', now),
@@ -209,8 +221,9 @@ describe('Next Season progress selection', () => {
 
     assert.equal(qualifies(7, '2026-10-23T11:55:00.000Z'), true);
     assert.equal(qualifies(8, '2026-10-22T13:00:00.000Z'), true);
-    assert.equal(qualifies(9, '2026-10-22T11:00:00.000Z'), false);
-    assert.equal(qualifies(7, '2026-10-22T12:00:00.000Z'), true);
+    assert.equal(qualifies(9, '2026-10-20T11:59:59.999Z'), false);
+    assert.equal(qualifies(7, '2026-10-20T12:00:00.000Z'), true);
+    assert.equal(qualifies(6, '2026-10-20T12:00:00.000Z'), false);
   });
 
   it('requires the same viewer to have qualifying progress and recent activity in the source Season', () => {
@@ -230,7 +243,7 @@ describe('Next Season progress selection', () => {
               key: 'stale-high-progress',
               userId: 2,
               watchedEpisodeCount: 9,
-              lastViewedAt: '2026-10-22T11:00:00.000Z',
+              lastViewedAt: '2026-10-20T11:00:00.000Z',
             },
             {
               key: 'recent-qualifying',
@@ -262,7 +275,7 @@ describe('Next Season progress selection', () => {
                 key: 'viewer',
                 userId: 1,
                 watchedEpisodeCount: 9,
-                lastViewedAt: '2026-10-22T11:00:00.000Z',
+                lastViewedAt: '2026-10-20T11:00:00.000Z',
               },
             ],
           },
@@ -584,7 +597,7 @@ describe('Next Season execution safety', () => {
         loadSeriesProgress: async () => {
           progressCalls += 1;
           if (progressCalls === 2) {
-            clock = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+            clock = new Date(now.getTime() + 72 * 60 * 60 * 1000);
           }
           return qualifyingDetail;
         },
@@ -612,7 +625,7 @@ describe('Next Season execution safety', () => {
             key: 'stale-viewer',
             userId: 1,
             watchedEpisodeCount: 9,
-            lastViewedAt: '2026-10-22T11:00:00.000Z',
+            lastViewedAt: '2026-10-20T11:00:00.000Z',
           },
         ],
       },
