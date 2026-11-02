@@ -380,6 +380,102 @@ describe('GET /request acquisition state', () => {
   });
 });
 
+describe('GET /request requester filters', () => {
+  it('filters before totals/pagination and composes with status, media and sorting', async () => {
+    const users = getRepository(User);
+    const admin = await users.findOneByOrFail({ id: 1 });
+    const retained = await users.findOneByOrFail({ email: 'demo@seerr.dev' });
+    retained.permissions = Permission.NONE;
+    retained.includeInUserMetrics = false;
+    await users.save(retained);
+    const matching: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      const type = i === 6 ? MediaType.TV : MediaType.MOVIE;
+      const media = await getRepository(Media).save(
+        new Media({
+          tmdbId: 90000 + i,
+          mediaType: type,
+          status: MediaStatus.PENDING,
+        })
+      );
+      const created = await getRepository(MediaRequest).save(
+        new MediaRequest({
+          type,
+          media,
+          requestedBy: i === 7 ? admin : retained,
+          is4k: false,
+          status:
+            i === 5 ? MediaRequestStatus.DECLINED : MediaRequestStatus.PENDING,
+        })
+      );
+      if (i < 5) matching.push(created.id);
+    }
+    const agent = await loginAs('admin@seerr.dev', 'test1234');
+    const all = await agent.get('/request?filter=all&take=100');
+    assert.equal(all.body.pageInfo.results, 8);
+    const own = await agent.get('/request?filter=all&requestedBy=1');
+    assert.equal(own.body.pageInfo.results, 1);
+    const ids: number[] = [];
+    for (const skip of [0, 2, 4]) {
+      const response = await agent.get(
+        `/request?requestedBy=${retained.id}&filter=pending&mediaType=movie&sort=added&sortDirection=asc&take=2&skip=${skip}`
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.body.pageInfo.results, 5);
+      assert.equal(response.body.pageInfo.pages, 3);
+      ids.push(...response.body.results.map((row: { id: number }) => row.id));
+      assert.ok(
+        response.body.results.every(
+          (row: { requestedBy: { id: number } }) =>
+            row.requestedBy.id === retained.id
+        )
+      );
+    }
+    assert.deepEqual(ids, matching);
+    const descending = await agent.get(
+      `/request?requestedBy=${retained.id}&filter=pending&mediaType=movie&sort=added&sortDirection=desc&take=100`
+    );
+    assert.deepEqual(
+      descending.body.results.map((row: { id: number }) => row.id),
+      [...matching].reverse()
+    );
+  });
+
+  for (const permissions of [
+    Permission.NONE,
+    Permission.MANAGE_USERS,
+    Permission.REQUEST_VIEW,
+    Permission.MANAGE_REQUESTS,
+  ]) {
+    it(`preserves backend requester isolation for permission ${permissions}`, async () => {
+      await seedRequest();
+      const users = getRepository(User);
+      const viewer = await users.findOneByOrFail({ email: 'demo@seerr.dev' });
+      viewer.permissions = permissions;
+      await users.save(viewer);
+      const canViewOthers =
+        permissions === Permission.REQUEST_VIEW ||
+        permissions === Permission.MANAGE_REQUESTS;
+      const agent = await loginAs('demo@seerr.dev', 'test1234');
+      assert.equal(
+        (await agent.get('/request?requestedBy=1')).status,
+        canViewOthers ? 200 : 403
+      );
+      const own = await agent.get(`/request?requestedBy=${viewer.id}`);
+      assert.equal(own.status, 200);
+      assert.equal(own.body.pageInfo.results, 1);
+      const all = await agent.get('/request?filter=all');
+      assert.equal(all.status, 200);
+      assert.ok(
+        all.body.results.every(
+          (row: { requestedBy: { id: number } }) =>
+            row.requestedBy.id === viewer.id
+        )
+      );
+    });
+  }
+});
+
 describe('DELETE /request/:requestId', () => {
   it('allows the owner to delete their own pending request', async () => {
     const mediaRequest = await seedRequest();
