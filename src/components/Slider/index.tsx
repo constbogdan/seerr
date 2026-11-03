@@ -145,7 +145,10 @@ const Slider = ({
 
   return (
     <div className="relative" data-testid="media-slider">
-      <div className="absolute right-0 -mt-10 flex text-gray-400">
+      <div
+        className="absolute right-0 -mt-10 flex w-12 justify-end text-gray-400"
+        data-testid="media-slider-navigation"
+      >
         <button
           className={`${
             scrollPos.isStart ? 'text-gray-800' : 'hover:text-white'

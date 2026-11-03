@@ -5,6 +5,7 @@ import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import CreateSlider from '@app/components/Discover/CreateSlider';
 import DiscoverSliderEdit from '@app/components/Discover/DiscoverSliderEdit';
+import FreshSlider from '@app/components/Discover/FreshSlider';
 import MovieGenreSlider from '@app/components/Discover/MovieGenreSlider';
 import NetworkSlider from '@app/components/Discover/NetworkSlider';
 import PlexWatchlistSlider from '@app/components/Discover/PlexWatchlistSlider';
@@ -212,6 +213,9 @@ const Discover = () => {
         let sliderComponent: React.ReactNode;
 
         switch (slider.type) {
+          case DiscoverSliderType.FRESH:
+            sliderComponent = <FreshSlider />;
+            break;
           case DiscoverSliderType.RECENTLY_ADDED:
             sliderComponent = <RecentlyAddedSlider />;
             break;

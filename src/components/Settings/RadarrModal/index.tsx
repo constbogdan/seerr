@@ -1,13 +1,16 @@
 import Badge from '@app/components/Common/Badge';
 import Modal from '@app/components/Common/Modal';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
+import SlideCheckbox from '@app/components/Common/SlideCheckbox';
 import Tooltip from '@app/components/Common/Tooltip';
+import ServarrRootColorPicker from '@app/components/Settings/ServarrRootColorPicker';
 import type { RadarrTestResponse } from '@app/components/Settings/SettingsServices';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { isValidURL } from '@app/utils/urlValidationHelper';
 import { Transition } from '@headlessui/react';
+import type { StorageRootColor } from '@server/constants/storageRoot';
 import type { RadarrSettings } from '@server/lib/settings';
 import axios from 'axios';
 import { Field, Formik } from 'formik';
@@ -54,6 +57,11 @@ const messages = defineMessages('components.Settings.RadarrModal', {
   externalUrl: 'External URL',
   qualityprofile: 'Quality Profile',
   rootfolder: 'Root Folder',
+  rootFolderNames: 'Root folder names',
+  rootFolderNamesHelp:
+    'Optional names, colors, and Animation designations used in Library.',
+  optionalDisplayName: 'Optional display name',
+  animation: 'Animation',
   minimumAvailability: 'Minimum Availability',
   server4k: '4K Server',
   server4kHelp:
@@ -109,6 +117,15 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
     rootFolders: [],
     tags: [],
   });
+  const [rootFolderNames, setRootFolderNames] = useState<
+    Record<number, string>
+  >({});
+  const [animationRoots, setAnimationRoots] = useState<Record<number, boolean>>(
+    {}
+  );
+  const [rootFolderColors, setRootFolderColors] = useState<
+    Record<number, StorageRootColor | null>
+  >({});
 
   const RadarrSettingsSchema = Yup.object().shape({
     name: Yup.string().required(
@@ -181,11 +198,33 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
             port: Number(port),
             baseUrl,
             useSsl,
+            serviceId: radarr?.id,
           }
         );
 
         setIsValidated(true);
         setTestResponse(response.data);
+        setRootFolderNames(
+          Object.fromEntries(
+            response.data.rootFolders.map((folder) => [
+              folder.id,
+              folder.displayName ?? '',
+            ])
+          )
+        );
+        setAnimationRoots(
+          Object.fromEntries(
+            response.data.rootFolders.map((folder) => [
+              folder.id,
+              folder.isAnimation,
+            ])
+          )
+        );
+        setRootFolderColors(
+          Object.fromEntries(
+            response.data.rootFolders.map((folder) => [folder.id, folder.color])
+          )
+        );
         if (initialLoad.current) {
           addToast(intl.formatMessage(messages.toastRadarrTestSuccess), {
             appearance: 'success',
@@ -205,7 +244,7 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
         initialLoad.current = true;
       }
     },
-    [addToast, intl]
+    [addToast, intl, radarr?.id]
   );
 
   useEffect(() => {
@@ -278,6 +317,13 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
               downloadQueueSize: Number(values.downloadQueueSize),
               preventSearch: !values.enableSearch,
               tagRequests: values.tagRequests,
+              rootFolderNames: testResponse.rootFolders.map((folder) => ({
+                sourceRootId: folder.id,
+                path: folder.path,
+                displayName: rootFolderNames[folder.id] ?? '',
+                isAnimation: animationRoots[folder.id] ?? false,
+                color: rootFolderColors[folder.id] ?? null,
+              })),
             };
             if (!radarr) {
               await axios.post('/api/v1/settings/radarr', submission);
@@ -342,6 +388,7 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
                 isSubmitting
               }
               okDisabled={!isValidated || isSubmitting || isTesting || !isValid}
+              okButtonProps={{ type: 'button' }}
               onOk={() => handleSubmit()}
               title={
                 !radarr
@@ -620,6 +667,77 @@ const RadarrModal = ({ onClose, radarr, onSave }: RadarrModalProps) => {
                       )}
                   </div>
                 </div>
+                {isValidated && testResponse.rootFolders.length > 0 && (
+                  <div className="form-row">
+                    <label className="text-label">
+                      {intl.formatMessage(messages.rootFolderNames)}
+                    </label>
+                    <div className="form-input-area">
+                      <div className="space-y-3">
+                        {testResponse.rootFolders.map((folder) => (
+                          <div
+                            key={`root-folder-name-${folder.id}`}
+                            className="rounded-md border border-gray-700 bg-gray-800/50 p-3"
+                          >
+                            <span
+                              className="block break-all text-sm text-gray-300"
+                              title={folder.path}
+                            >
+                              {folder.path}
+                            </span>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
+                              <input
+                                id={`root-folder-name-${folder.id}`}
+                                type="text"
+                                className="w-full min-w-0"
+                                maxLength={120}
+                                value={rootFolderNames[folder.id] ?? ''}
+                                placeholder={intl.formatMessage(
+                                  messages.optionalDisplayName
+                                )}
+                                onChange={(event) =>
+                                  setRootFolderNames((current) => ({
+                                    ...current,
+                                    [folder.id]: event.target.value,
+                                  }))
+                                }
+                              />
+                              <div className="flex min-w-0 items-center justify-between gap-3 sm:justify-start">
+                                <label className="flex items-center gap-2 whitespace-nowrap text-sm text-gray-300">
+                                  <SlideCheckbox
+                                    ariaLabel={intl.formatMessage(
+                                      messages.animation
+                                    )}
+                                    checked={animationRoots[folder.id] ?? false}
+                                    onClick={() =>
+                                      setAnimationRoots((current) => ({
+                                        ...current,
+                                        [folder.id]: !current[folder.id],
+                                      }))
+                                    }
+                                  />
+                                  {intl.formatMessage(messages.animation)}
+                                </label>
+                                <ServarrRootColorPicker
+                                  value={rootFolderColors[folder.id] ?? null}
+                                  onChange={(color) =>
+                                    setRootFolderColors((current) => ({
+                                      ...current,
+                                      [folder.id]: color,
+                                    }))
+                                  }
+                                />
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="mt-2 text-sm text-gray-400">
+                        {intl.formatMessage(messages.rootFolderNamesHelp)}
+                      </p>
+                    </div>
+                  </div>
+                )}
                 <div className="form-row">
                   <label htmlFor="minimumAvailability" className="text-label">
                     {intl.formatMessage(messages.minimumAvailability)}

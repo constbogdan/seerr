@@ -10,7 +10,7 @@ import ErrorPage from '@app/pages/_error';
 import defineMessages from '@app/utils/defineMessages';
 import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import axios from 'axios';
-import { Form, Formik } from 'formik';
+import { Field, Form, Formik } from 'formik';
 import { useRouter } from 'next/router';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
@@ -22,6 +22,7 @@ const messages = defineMessages(
     toastSettingsFailure: 'Something went wrong while saving settings.',
     permissions: 'Permissions',
     unauthorizedDescription: 'You cannot modify your own permissions.',
+    includeInUserMetrics: 'Include in user metrics',
   }
 );
 
@@ -37,7 +38,7 @@ const UserPermissions = () => {
     data,
     error,
     mutate: revalidate,
-  } = useSWR<{ permissions?: number }>(
+  } = useSWR<{ permissions?: number; includeInUserMetrics: boolean }>(
     user ? `/api/v1/user/${user?.id}/settings/permissions` : null
   );
 
@@ -80,12 +81,14 @@ const UserPermissions = () => {
       <Formik
         initialValues={{
           currentPermissions: data?.permissions,
+          includeInUserMetrics: data.includeInUserMetrics,
         }}
         enableReinitialize
         onSubmit={async (values) => {
           try {
             await axios.post(`/api/v1/user/${user?.id}/settings/permissions`, {
               permissions: values.currentPermissions ?? 0,
+              includeInUserMetrics: values.includeInUserMetrics,
             });
 
             addToast(intl.formatMessage(messages.toastSettingsSuccess), {
@@ -115,6 +118,23 @@ const UserPermissions = () => {
                     setFieldValue('currentPermissions', newPermission)
                   }
                 />
+                <div className="relative mt-4 flex items-start">
+                  <div className="flex h-6 items-center">
+                    <Field
+                      type="checkbox"
+                      id="includeInUserMetrics"
+                      name="includeInUserMetrics"
+                    />
+                  </div>
+                  <div className="ml-3 text-sm leading-6">
+                    <label
+                      htmlFor="includeInUserMetrics"
+                      className="block font-medium text-white"
+                    >
+                      {intl.formatMessage(messages.includeInUserMetrics)}
+                    </label>
+                  </div>
+                </div>
               </div>
               <div className="actions">
                 <div className="flex justify-end">

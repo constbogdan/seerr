@@ -6,7 +6,6 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import PageTitle from '@app/components/Common/PageTitle';
 import Tooltip from '@app/components/Common/Tooltip';
 import RequestModal from '@app/components/RequestModal';
-import Slider from '@app/components/Slider';
 import StatusBadge from '@app/components/StatusBadge';
 import TitleCard from '@app/components/TitleCard';
 import useSettings from '@app/hooks/useSettings';
@@ -238,6 +237,10 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
   const blocklistVisibility = hasPermission(
     [Permission.MANAGE_BLOCKLIST, Permission.VIEW_BLOCKLIST],
     { type: 'or' }
+  );
+  const visibleParts = data.parts.filter(
+    (part) =>
+      blocklistVisibility || part.mediaInfo?.status !== MediaStatus.BLOCKLISTED
   );
 
   const collectionAttributes: React.ReactNode[] = [];
@@ -482,33 +485,31 @@ const CollectionDetails = ({ collection }: CollectionDetailsProps) => {
           <span>{intl.formatMessage(globalMessages.movies)}</span>
         </div>
       </div>
-      <Slider
-        sliderKey="collection-movies"
-        isLoading={false}
-        isEmpty={data.parts.length === 0}
-        items={data.parts
-          .filter((title) => {
-            if (!blocklistVisibility) {
-              return title.mediaInfo?.status !== MediaStatus.BLOCKLISTED;
-            }
-            return title;
-          })
-          .map((title) => (
-            <TitleCard
-              key={`collection-movie-${title.id}`}
-              id={title.id}
-              isAddedToWatchlist={title.mediaInfo?.watchlists?.length ?? 0}
-              image={title.posterPath}
-              status={title.mediaInfo?.status}
-              summary={title.overview}
-              title={title.title}
-              userScore={title.voteAverage}
-              year={title.releaseDate}
-              mediaType={title.mediaType}
-              mutateParent={revalidate}
-            />
+      {visibleParts.length > 0 ? (
+        <ul className="cards-vertical">
+          {visibleParts.map((title) => (
+            <li key={`collection-movie-${title.id}`}>
+              <TitleCard
+                id={title.id}
+                isAddedToWatchlist={title.mediaInfo?.watchlists?.length ?? 0}
+                image={title.posterPath}
+                status={title.mediaInfo?.status}
+                summary={title.overview}
+                title={title.title}
+                userScore={title.voteAverage}
+                year={title.releaseDate}
+                mediaType={title.mediaType}
+                mutateParent={revalidate}
+                canExpand
+              />
+            </li>
           ))}
-      />
+        </ul>
+      ) : (
+        <div className="mb-16 mt-16 text-center font-medium text-gray-400">
+          {intl.formatMessage(globalMessages.noresults)}
+        </div>
+      )}
       <div className="extra-bottom-space relative" />
     </div>
   );

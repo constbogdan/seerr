@@ -13,6 +13,7 @@ import type {
   TvResult,
 } from '@server/models/Search';
 import { useIntl } from 'react-intl';
+import { searchResultOccurrenceKey, watchlistOccurrenceKey } from './identity';
 
 type ListViewProps = {
   items?: (TvResult | MovieResult | PersonResult | CollectionResult)[];
@@ -22,6 +23,8 @@ type ListViewProps = {
   isReachingEnd?: boolean;
   onScrollBottom: () => void;
   mutateParent?: () => void;
+  showWatchlistOwner?: boolean;
+  showRatings?: boolean;
 };
 
 const ListView = ({
@@ -32,6 +35,8 @@ const ListView = ({
   isReachingEnd,
   plexItems,
   mutateParent,
+  showWatchlistOwner = false,
+  showRatings = false,
 }: ListViewProps) => {
   const intl = useIntl();
   const { hasPermission } = useUser();
@@ -52,15 +57,21 @@ const ListView = ({
       <ul className="cards-vertical">
         {plexItems?.map((title, index) => {
           return (
-            <li key={`${title.ratingKey}-${index}`}>
-              <TmdbTitleCard
-                id={title.tmdbId}
-                tmdbId={title.tmdbId}
-                type={title.mediaType}
-                isAddedToWatchlist={true}
-                canExpand
-                mutateParent={mutateParent}
-              />
+            <li key={watchlistOccurrenceKey(title, index)}>
+              <div className="relative">
+                <TmdbTitleCard
+                  id={title.tmdbId}
+                  tmdbId={title.tmdbId}
+                  type={title.mediaType}
+                  isAddedToWatchlist={true}
+                  canExpand
+                  mutateParent={mutateParent}
+                  watchState={title.watchState}
+                  watchlistOwner={
+                    showWatchlistOwner ? title.requestedBy : undefined
+                  }
+                />
+              </div>
             </li>
           );
         })}
@@ -90,6 +101,7 @@ const ListView = ({
                     summary={title.overview}
                     title={title.title}
                     userScore={title.voteAverage}
+                    showRating={showRatings}
                     year={title.releaseDate}
                     mediaType={title.mediaType}
                     inProgress={
@@ -112,6 +124,7 @@ const ListView = ({
                     summary={title.overview}
                     title={title.name}
                     userScore={title.voteAverage}
+                    showRating={showRatings}
                     year={title.firstAirDate}
                     mediaType={title.mediaType}
                     inProgress={
@@ -145,7 +158,9 @@ const ListView = ({
                 break;
             }
 
-            return <li key={`${title.id}-${index}`}>{titleCard}</li>;
+            return (
+              <li key={searchResultOccurrenceKey(title, index)}>{titleCard}</li>
+            );
           })}
         {isLoading &&
           !isReachingEnd &&

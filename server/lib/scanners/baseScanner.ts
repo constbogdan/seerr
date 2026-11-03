@@ -8,6 +8,11 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import MediaRequest from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
+import {
+  settleAvailableMovieRequests,
+  settleSonarrRequests,
+  type SonarrSettlementObservation,
+} from '@server/lib/requestSettlement';
 import { getSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import AsyncLock from '@server/utils/asyncLock';
@@ -24,7 +29,7 @@ export type StatusBase = {
 };
 
 export interface RunnableScanner<T> {
-  run: () => Promise<void>;
+  run: () => Promise<unknown>;
   status: () => T & StatusBase;
 }
 
@@ -36,6 +41,7 @@ export interface MediaIds {
 }
 
 interface ProcessOptions {
+  sonarrObservation?: SonarrSettlementObservation;
   is4k?: boolean;
   mediaAddedAt?: Date;
   ratingKey?: string;
@@ -59,6 +65,7 @@ export interface ProcessableSeason {
 }
 
 class BaseScanner<T> {
+  protected processingGuard?: () => void;
   private bundleSize;
   private updateRate;
   protected progress = 0;
@@ -203,6 +210,7 @@ class BaseScanner<T> {
         }
 
         if (changedExisting) {
+          this.processingGuard?.();
           await mediaRepository.save(existing);
           this.log(
             `Media for ${title} exists. Changes were detected and the title will be updated.`,
@@ -210,6 +218,12 @@ class BaseScanner<T> {
           );
         } else {
           this.log(`Title already exists and no changes detected for ${title}`);
+        }
+        if (!processing && hasFile) {
+          this.processingGuard?.();
+          await settleAvailableMovieRequests(existing.id, is4k, () =>
+            this.processingGuard?.()
+          );
         }
       } else {
         if (!processing && !hasFile) {
@@ -256,8 +270,15 @@ class BaseScanner<T> {
             is4k && this.enable4kMovie ? jellyfinMediaId : undefined;
         }
 
+        this.processingGuard?.();
         await mediaRepository.save(newMedia);
         this.log(`Saved new media: ${title}`);
+        if (!processing && hasFile) {
+          this.processingGuard?.();
+          await settleAvailableMovieRequests(newMedia.id, is4k, () =>
+            this.processingGuard?.()
+          );
+        }
       }
     });
   }
@@ -285,6 +306,7 @@ class BaseScanner<T> {
       externalServiceSlug,
       is4k = false,
       title = 'Unknown Title',
+      sonarrObservation,
     }: ProcessOptions = {}
   ): Promise<void> {
     const mediaRepository = getRepository(Media);
@@ -546,7 +568,10 @@ class BaseScanner<T> {
                 : media.status4k === MediaStatus.DELETED
                   ? MediaStatus.DELETED
                   : MediaStatus.UNKNOWN;
+        this.processingGuard?.();
         await mediaRepository.save(media);
+        if (sonarrObservation)
+          await settleSonarrRequests(media.id, sonarrObservation);
         this.log(`Updating existing title: ${title}`);
       } else {
         // For new media, check actual newSeasons objects instead of scanner
@@ -643,7 +668,10 @@ class BaseScanner<T> {
                   ? MediaStatus.PROCESSING
                   : MediaStatus.UNKNOWN,
         });
+        this.processingGuard?.();
         await mediaRepository.save(newMedia);
+        if (sonarrObservation)
+          await settleSonarrRequests(newMedia.id, sonarrObservation);
         this.log(`Saved ${title}`);
       }
     });

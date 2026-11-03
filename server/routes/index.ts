@@ -37,19 +37,26 @@ import authRoutes from './auth';
 import blocklistRoutes from './blocklist';
 import collectionRoutes from './collection';
 import discoverRoutes, { createTmdbWithRegionLanguage } from './discover';
+import freshRoutes from './fresh';
+import historyImportRoutes from './historyImport';
 import issueRoutes from './issue';
 import issueCommentRoutes from './issueComment';
+import leavingSoonRoutes from './leavingSoon';
+import libraryRoutes from './library';
 import mediaRoutes from './media';
 import movieRoutes from './movie';
 import personRoutes from './person';
 import requestRoutes from './request';
 import searchRoutes from './search';
 import serviceRoutes from './service';
+import subtitleReportingRoutes from './subtitleReporting';
 import tvRoutes from './tv';
 import user from './user';
 
 const router = Router();
 
+// Token-only integration must never inherit session/API-key impersonation.
+router.use('/integrations/jellyfin/subtitle-issues', subtitleReportingRoutes);
 router.use(checkUser);
 
 router.get<unknown, StatusResponse>('/status', async (req, res) => {
@@ -163,6 +170,10 @@ router.get(
 router.use('/settings', isAuthenticated(Permission.ADMIN), settingsRoutes);
 router.use('/search', isAuthenticated(), searchRoutes);
 router.use('/discover', isAuthenticated(), discoverRoutes);
+router.use('/fresh', isAuthenticated(), freshRoutes);
+router.use('/library', isAuthenticated(), libraryRoutes);
+router.use('/leaving-soon', isAuthenticated(), leavingSoonRoutes);
+router.use('/settings/history-import', historyImportRoutes);
 router.use('/request', isAuthenticated(), requestRoutes);
 router.use('/watchlist', isAuthenticated(), watchlistRoutes);
 router.use('/blocklist', isAuthenticated(), blocklistRoutes);

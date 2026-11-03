@@ -13,7 +13,7 @@ import type {
   TvResult,
 } from '@server/models/Search';
 import Link from 'next/link';
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
 import useSWRInfinite from 'swr/infinite';
 
 interface MixedResult {
@@ -31,6 +31,8 @@ interface MediaSliderProps {
   hideWhenEmpty?: boolean;
   extraParams?: string;
   onNewTitles?: (titleCount: number) => void;
+  headerAction?: ReactNode;
+  showRatings?: boolean;
 }
 
 const MediaSlider = ({
@@ -41,6 +43,8 @@ const MediaSlider = ({
   sliderKey,
   hideWhenEmpty = false,
   onNewTitles,
+  headerAction,
+  showRatings = false,
 }: MediaSliderProps) => {
   const settings = useSettings();
   const { hasPermission } = useUser();
@@ -140,6 +144,7 @@ const MediaSlider = ({
               summary={title.overview}
               title={title.title}
               userScore={title.voteAverage}
+              showRating={showRatings}
               year={title.releaseDate}
               mediaType={title.mediaType}
               inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
@@ -156,6 +161,7 @@ const MediaSlider = ({
               summary={title.overview}
               title={title.name}
               userScore={title.voteAverage}
+              showRating={showRatings}
               year={title.firstAirDate}
               mediaType={title.mediaType}
               inProgress={(title.mediaInfo?.downloadStatus ?? []).length > 0}
@@ -189,13 +195,23 @@ const MediaSlider = ({
     <>
       <div className="slider-header">
         {linkUrl ? (
-          <Link href={linkUrl} className="slider-title min-w-0 pr-16">
+          <Link href={linkUrl} className="slider-title min-w-0">
             <span className="truncate">{title}</span>
             <ArrowRightCircleIcon />
           </Link>
         ) : (
           <div className="slider-title">
             <span>{title}</span>
+          </div>
+        )}
+        {headerAction && (
+          <div className="ml-auto flex shrink-0 items-center gap-2 pl-2">
+            <div data-testid="media-slider-header-action">{headerAction}</div>
+            <div
+              aria-hidden="true"
+              className="h-6 w-12 shrink-0"
+              data-testid="media-slider-navigation-reservation"
+            />
           </div>
         )}
       </div>

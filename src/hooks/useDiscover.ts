@@ -1,7 +1,7 @@
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
 import { MediaStatus } from '@server/constants/media';
-import { useEffect } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useIntl } from 'react-intl';
 import useSWRInfinite from 'swr/infinite';
 import useSettings from './useSettings';
@@ -29,11 +29,24 @@ interface DiscoverResult<T, S> {
   fetchMore: () => void;
   isEmpty: boolean;
   isReachingEnd: boolean;
+  isValidating: boolean;
+  hasError: boolean;
   error: unknown;
   titles: T[];
   firstResultData?: BaseSearchResult<T> & S;
   mutate?: () => void;
+  pageCount: number;
+  setPageCount: (pageCount: number) => void;
 }
+
+interface DiscoverBehaviorOptions {
+  hideAvailable?: boolean;
+  hideBlocklisted?: boolean;
+  hideRequested?: boolean;
+  initialSize?: number;
+}
+
+export const DEFAULT_DISCOVER_PAGE_COUNT = 3;
 
 const extraEncodes: [RegExp, string][] = [
   [/\(/g, '%28'],
@@ -57,18 +70,29 @@ const useDiscover = <
   S = Record<string, never>,
   O = Record<string, unknown>,
 >(
-  endpoint: string,
+  endpoint: string | null,
   options?: O,
-  { hideAvailable = true, hideBlocklisted = true, hideRequested = true } = {}
+  {
+    hideAvailable = true,
+    hideBlocklisted = true,
+    hideRequested = true,
+    initialSize = DEFAULT_DISCOVER_PAGE_COUNT,
+  }: DiscoverBehaviorOptions = {}
 ): DiscoverResult<T, S> => {
   const settings = useSettings();
   const { hasPermission } = useUser();
   const { addToast } = useToasts();
   const intl = useIntl();
+  const requestedBoundary = useRef<string | null>(null);
+  const queryIdentity = JSON.stringify([endpoint, options]);
   const { data, error, size, setSize, isValidating, mutate } = useSWRInfinite<
     BaseSearchResult<T> & S
   >(
     (pageIndex: number, previousPageData) => {
+      if (!endpoint) {
+        return null;
+      }
+
       if (previousPageData && pageIndex + 1 > previousPageData.totalPages) {
         return null;
       }
@@ -88,14 +112,15 @@ const useDiscover = <
       return `${endpoint}?${finalQueryString}`;
     },
     {
-      initialSize: 3,
+      initialSize,
       revalidateFirstPage: false,
       dedupingInterval: 30000,
       revalidateOnFocus: false,
+      keepPreviousData: false,
     }
   );
 
-  const resultIds: Set<number> = new Set<number>();
+  const resultIds = new Set<string>();
 
   const isLoadingInitialData = !data && !error;
   const isLoadingMore =
@@ -105,16 +130,20 @@ const useDiscover = <
       typeof data[size - 1] === 'undefined' &&
       isValidating);
 
-  const fetchMore = () => {
-    setSize(size + 1);
-  };
+  const setPageCount = useCallback(
+    (pageCount: number) => {
+      void setSize(Math.max(1, Math.floor(pageCount)));
+    },
+    [setSize]
+  );
 
   let titles = (data ?? []).reduce((a, v) => {
     const results: T[] = [];
 
     for (const result of v.results) {
-      if (!resultIds.has(result.id)) {
-        resultIds.add(result.id);
+      const identity = `${result.mediaType}:${result.id}`;
+      if (!resultIds.has(identity)) {
+        resultIds.add(identity);
         results.push(result);
       }
     }
@@ -153,12 +182,48 @@ const useDiscover = <
     });
   }
 
-  const isEmpty = !isLoadingInitialData && titles?.length === 0;
-  const isReachingEnd =
-    isEmpty ||
-    (!!data && (data[data?.length - 1]?.results.length ?? 0) < 20) ||
-    (!!data && (data[data?.length - 1]?.totalResults ?? 0) <= size * 20) ||
-    (!!data && (data[data?.length - 1]?.totalResults ?? 0) < 41);
+  const loadedPages = data?.length ?? 0;
+  const lastPage = data?.[loadedPages - 1];
+  const isReachingEnd = !!lastPage && loadedPages >= lastPage.totalPages;
+  const isEmpty = !isLoadingInitialData && titles.length === 0 && isReachingEnd;
+  const fetchMore = useCallback(() => {
+    const boundary = `${queryIdentity}:${loadedPages + 1}`;
+    if (
+      !error &&
+      !isValidating &&
+      loadedPages >= size &&
+      !isReachingEnd &&
+      requestedBoundary.current !== boundary
+    ) {
+      // setSize can start duplicate requests even with an identical size. Fence
+      // synchronous scroll callbacks until this loaded-page boundary advances.
+      requestedBoundary.current = boundary;
+      // SWR exposes the error state; don't also create an unhandled rejection.
+      void setSize(loadedPages + 1).catch(() => undefined);
+    }
+  }, [
+    error,
+    isValidating,
+    loadedPages,
+    size,
+    isReachingEnd,
+    setSize,
+    queryIdentity,
+  ]);
+
+  useEffect(() => {
+    if (
+      error ||
+      requestedBoundary.current === `${queryIdentity}:${loadedPages}`
+    )
+      requestedBoundary.current = null;
+  }, [error, queryIdentity, loadedPages]);
+
+  useEffect(() => {
+    // Client display filters may hide a whole server page. Advance one loaded
+    // boundary at a time, stopping at totalPages or an error, never on a timer.
+    if (loadedPages && !titles.length) fetchMore();
+  }, [loadedPages, titles.length, fetchMore]);
 
   useEffect(() => {
     if (error && titles.length) {
@@ -176,10 +241,14 @@ const useDiscover = <
     fetchMore,
     isEmpty,
     isReachingEnd,
+    isValidating,
+    hasError: !!error,
     error: error && titles.length ? null : error,
     titles,
     firstResultData: data?.[0],
     mutate,
+    pageCount: size,
+    setPageCount,
   };
 };
 

@@ -9,7 +9,6 @@ import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import { User } from '@server/entity/User';
 import { UserPushSubscription } from '@server/entity/UserPushSubscription';
-import { Watchlist } from '@server/entity/Watchlist';
 import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
 import type {
   QuotaResponse,
@@ -19,6 +18,10 @@ import type {
 } from '@server/interfaces/api/userInterfaces';
 import { Permission, hasPermission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
+import {
+  getWatchlistForUser,
+  parseWatchlistQuery,
+} from '@server/lib/watchlist';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import { getHostname } from '@server/utils/getHostname';
@@ -49,6 +52,17 @@ router.get('/', async (req, res, next) => {
     const sortDirectionQuery = req.query.sortDirection
       ? req.query.sortDirection.toString().toLowerCase()
       : undefined;
+    const includeInUserMetrics = req.query.includeInUserMetrics?.toString();
+    if (
+      includeInUserMetrics &&
+      includeInUserMetrics !== 'true' &&
+      includeInUserMetrics !== 'false'
+    ) {
+      return next({
+        status: 400,
+        message: 'Invalid includeInUserMetrics value.',
+      });
+    }
 
     let sortDirection: 'ASC' | 'DESC';
     if (sortDirectionQuery === 'asc') {
@@ -76,9 +90,18 @@ router.get('/', async (req, res, next) => {
 
     let query = getRepository(User).createQueryBuilder('user');
 
+    if (includeInUserMetrics) {
+      query = query.andWhere(
+        'user.includeInUserMetrics = :includeInUserMetrics',
+        {
+          includeInUserMetrics: includeInUserMetrics === 'true',
+        }
+      );
+    }
+
     if (q) {
-      query = query.where(
-        'LOWER(user.username) LIKE :q OR LOWER(user.email) LIKE :q OR LOWER(user.plexUsername) LIKE :q OR LOWER(user.jellyfinUsername) LIKE :q',
+      query = query.andWhere(
+        '(LOWER(user.username) LIKE :q OR LOWER(user.email) LIKE :q OR LOWER(user.plexUsername) LIKE :q OR LOWER(user.jellyfinUsername) LIKE :q)',
         { q: `%${q}%` }
       );
     }
@@ -511,10 +534,17 @@ export const canMakePermissionsChange = (
 router.put<
   Record<string, never>,
   Partial<User>[],
-  { ids: string[]; permissions: number }
+  { ids: string[]; permissions: number; includeInUserMetrics: boolean }
 >('/', isAuthenticated(Permission.MANAGE_USERS), async (req, res, next) => {
   try {
     const isOwner = req.user?.id === 1;
+
+    if (typeof req.body.includeInUserMetrics !== 'boolean') {
+      return next({
+        status: 400,
+        message: 'includeInUserMetrics must be a boolean.',
+      });
+    }
 
     if (!canMakePermissionsChange(req.body.permissions, req.user)) {
       return next({
@@ -538,6 +568,7 @@ router.put<
         return userRepository.save(<User>{
           ...user,
           ...{ permissions: req.body.permissions },
+          includeInUserMetrics: req.body.includeInUserMetrics,
         });
       })
     );
@@ -937,12 +968,7 @@ router.get<{ id: string }, WatchlistResponse>(
   async (req, res, next) => {
     if (
       Number(req.params.id) !== req.user?.id &&
-      !req.user?.hasPermission(
-        [Permission.MANAGE_REQUESTS, Permission.WATCHLIST_VIEW],
-        {
-          type: 'or',
-        }
-      )
+      !req.user?.hasPermission(Permission.WATCHLIST_VIEW)
     ) {
       return next({
         status: 403,
@@ -950,61 +976,17 @@ router.get<{ id: string }, WatchlistResponse>(
       });
     }
 
-    const itemsPerPage = 20;
-    const page = req.query.page ? Number(req.query.page) : 1;
-    const offset = (page - 1) * itemsPerPage;
-
     const user = await getRepository(User).findOneOrFail({
       where: { id: Number(req.params.id) },
       select: ['id', 'plexToken'],
     });
 
-    if (user) {
-      const [result, total] = await getRepository(Watchlist).findAndCount({
-        where: { requestedBy: { id: user?.id } },
-        relations: {
-          /*requestedBy: true,media:true*/
-        },
-        // loadRelationIds: true,
-        take: itemsPerPage,
-        skip: offset,
-      });
-      if (total) {
-        return res.json({
-          page: page,
-          totalPages: Math.ceil(total / itemsPerPage),
-          totalResults: total,
-          results: result,
-        });
-      }
-    }
-
-    // We will just return an empty array if the user has no Plex token
-    if (!user.plexToken) {
-      return res.json({
-        page: 1,
-        totalPages: 1,
-        totalResults: 0,
-        results: [],
-      });
-    }
-
-    const plexTV = new PlexTvAPI(user.plexToken);
-
-    const watchlist = await plexTV.getWatchlist({ offset });
-
-    return res.json({
-      page,
-      totalPages: Math.ceil(watchlist.totalSize / itemsPerPage),
-      totalResults: watchlist.totalSize,
-      results: watchlist.items.map((item) => ({
-        id: item.tmdbId,
-        ratingKey: item.ratingKey,
-        title: item.title,
-        mediaType: item.type === 'show' ? 'tv' : 'movie',
-        tmdbId: item.tmdbId,
-      })),
-    });
+    return res.json(
+      await getWatchlistForUser({
+        user,
+        query: parseWatchlistQuery(req.query),
+      })
+    );
   }
 );
 

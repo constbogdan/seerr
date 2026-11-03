@@ -1,16 +1,58 @@
 import { Blocklist } from '@server/entity/Blocklist';
+import {
+  CanonicalEpisode,
+  CanonicalEpisodeIdentity,
+  CanonicalMedia,
+  CanonicalMediaIdentity,
+  CanonicalSeason,
+  CanonicalSeasonIdentity,
+} from '@server/entity/CanonicalMedia';
+import { CurrentViewingState } from '@server/entity/CurrentViewingState';
 import DiscoverSlider from '@server/entity/DiscoverSlider';
+import FreshAdmissionOverride from '@server/entity/FreshAdmissionOverride';
+import FreshCandidate from '@server/entity/FreshCandidate';
+import FreshCandidateVisibility from '@server/entity/FreshCandidateVisibility';
+import FreshDiscovery from '@server/entity/FreshDiscovery';
+import FreshDiscoveryHistory from '@server/entity/FreshDiscoveryHistory';
+import FreshManualResolution from '@server/entity/FreshManualResolution';
+import FreshMedia from '@server/entity/FreshMedia';
+import FreshObservation from '@server/entity/FreshObservation';
+import FreshSourceState from '@server/entity/FreshSourceState';
+import { FreshSyncState } from '@server/entity/FreshSyncState';
+import FreshWork from '@server/entity/FreshWork';
 import Issue from '@server/entity/Issue';
 import IssueComment from '@server/entity/IssueComment';
+import {
+  LibraryFile,
+  LibraryFileEpisode,
+  LibraryPresence,
+  StorageRoot,
+} from '@server/entity/LibraryHistory';
+import {
+  HydrationRun,
+  LibraryHydrationEpoch,
+  LibrarySourceObservation,
+  SourceCheckpoint,
+} from '@server/entity/LibraryHydration';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
 import OverrideRule from '@server/entity/OverrideRule';
+import {
+  RemovalExecution,
+  RemovalExecutionClaim,
+} from '@server/entity/RemovalExecution';
+import { RemovalSchedule } from '@server/entity/RemovalSchedule';
 import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
+import { SeriesRelocationExecution } from '@server/entity/SeriesRelocationExecution';
 import { Session } from '@server/entity/Session';
 import { User } from '@server/entity/User';
+import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { UserPushSubscription } from '@server/entity/UserPushSubscription';
 import { UserSettings } from '@server/entity/UserSettings';
+import { Viewer } from '@server/entity/Viewer';
+import { ViewingEvidence } from '@server/entity/ViewingEvidence';
 import { Watchlist } from '@server/entity/Watchlist';
 import { IssueCommentSubscriber } from '@server/subscriber/IssueCommentSubscriber';
 import { IssueSubscriber } from '@server/subscriber/IssueSubscriber';
@@ -26,18 +68,52 @@ const DB_SSL_PREFIX = 'DB_SSL_';
 
 const entities = [
   Blocklist,
+  CanonicalEpisode,
+  CanonicalEpisodeIdentity,
+  CanonicalMedia,
+  CanonicalMediaIdentity,
+  CanonicalSeason,
+  CanonicalSeasonIdentity,
+  CurrentViewingState,
   DiscoverSlider,
+  FreshAdmissionOverride,
+  FreshCandidate,
+  FreshCandidateVisibility,
+  FreshDiscoveryHistory,
+  FreshDiscovery,
+  FreshSourceState,
+  FreshWork,
+  FreshManualResolution,
+  FreshMedia,
+  FreshObservation,
+  FreshSyncState,
   Issue,
   IssueComment,
+  HydrationRun,
+  LibraryHydrationEpoch,
+  LibraryFile,
+  LibraryFileEpisode,
+  LibraryPresence,
+  LibrarySourceObservation,
   Media,
   MediaRequest,
   OverrideRule,
+  RemovalExecution,
+  RemovalExecutionClaim,
+  RemovalSchedule,
+  SeriesRelocationExecution,
   Season,
   SeasonRequest,
   Session,
+  SourceCheckpoint,
+  StorageRoot,
   User,
+  UserMediaState,
+  UserMediaIntentOccurrence,
   UserPushSubscription,
   UserSettings,
+  Viewer,
+  ViewingEvidence,
   Watchlist,
 ];
 

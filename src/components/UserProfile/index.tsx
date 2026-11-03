@@ -84,12 +84,7 @@ const UserProfile = () => {
   const { data: watchlistItems, error: watchlistError } =
     useSWR<WatchlistResponse>(
       user?.id === currentUser?.id ||
-        currentHasPermission(
-          [Permission.MANAGE_REQUESTS, Permission.WATCHLIST_VIEW],
-          {
-            type: 'or',
-          }
-        )
+        currentHasPermission(Permission.WATCHLIST_VIEW)
         ? `/api/v1/user/${user?.id}/watchlist`
         : null,
       {
@@ -324,10 +319,7 @@ const UserProfile = () => {
           </>
         )}
       {(user.id === currentUser?.id ||
-        currentHasPermission(
-          [Permission.MANAGE_REQUESTS, Permission.WATCHLIST_VIEW],
-          { type: 'or' }
-        )) &&
+        currentHasPermission(Permission.WATCHLIST_VIEW)) &&
         (!watchlistItems ||
           !!watchlistItems.results.length ||
           (user.id === currentUser?.id &&

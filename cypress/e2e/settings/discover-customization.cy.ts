@@ -1,3 +1,56 @@
+const sliderSelector = '[data-testid=discover-slider-edit-mode]';
+
+const dragSliderOnto = (sourceTitle: string, targetTitle: string): void => {
+  cy.window().then((window) => {
+    const dataTransfer = new window.DataTransfer();
+    const dragEvent = {
+      dataTransfer,
+      eventConstructor: 'DragEvent',
+    };
+
+    cy.contains(sliderSelector, sourceTitle)
+      .trigger('dragstart', dragEvent)
+      .then(() => {
+        expect(Array.from(dataTransfer.types)).to.include('id');
+        Object.defineProperty(dataTransfer, 'effectAllowed', {
+          configurable: true,
+          value: 'all',
+        });
+        expect(dataTransfer.effectAllowed).to.equal('all');
+      });
+    cy.contains(sliderSelector, targetTitle).then(($target) => {
+      const targetBounds = $target[0].getBoundingClientRect();
+      const targetEvent = {
+        ...dragEvent,
+        clientX: targetBounds.left + targetBounds.width / 2,
+        clientY: targetBounds.bottom - 1,
+      };
+
+      cy.wrap($target)
+        .trigger('dragenter', targetEvent)
+        .trigger('dragover', targetEvent);
+      cy.wrap($target).trigger('drop', targetEvent);
+    });
+    cy.contains(sliderSelector, sourceTitle).trigger('dragend', dragEvent);
+  });
+};
+
+const expectConsecutiveSliderOrder = (
+  firstTitle: string,
+  secondTitle: string
+): void => {
+  cy.get(sliderSelector).then(($sliders) => {
+    const labels = Array.from($sliders, (slider) => slider.textContent ?? '');
+    const firstIndex = labels.findIndex((label) => label.includes(firstTitle));
+    const secondIndex = labels.findIndex((label) =>
+      label.includes(secondTitle)
+    );
+
+    expect(firstIndex, `${firstTitle} slider index`).to.be.greaterThan(-1);
+    expect(secondIndex, `${secondTitle} slider index`).to.equal(firstIndex + 1);
+  });
+};
+
 describe('Discover Customization', () => {
   beforeEach(() => {
     cy.loginAsAdmin();
@@ -25,24 +78,13 @@ describe('Discover Customization', () => {
   });
 
   it('can drag to re-order elements and save to persist the changes', () => {
-    let dataTransfer = new DataTransfer();
     cy.visit('/');
 
     cy.get('[data-testid=discover-start-editing]').click();
 
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .first()
-      .trigger('dragstart', { dataTransfer });
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .eq(1)
-      .trigger('drop', { dataTransfer });
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .eq(1)
-      .trigger('dragend', { dataTransfer });
-
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .eq(1)
-      .should('contain', 'Recently Added');
+    expectConsecutiveSliderOrder('Recently Added', 'Recent Requests');
+    dragSliderOnto('Recently Added', 'Recent Requests');
+    expectConsecutiveSliderOrder('Recent Requests', 'Recently Added');
 
     cy.get('[data-testid=discover-customize-submit').click();
     cy.wait('@getDiscoverSliders');
@@ -51,25 +93,9 @@ describe('Discover Customization', () => {
 
     cy.get('[data-testid=discover-start-editing]').click();
 
-    dataTransfer = new DataTransfer();
-
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .eq(1)
-      .should('contain', 'Recently Added');
-
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .first()
-      .trigger('dragstart', { dataTransfer });
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .eq(1)
-      .trigger('drop', { dataTransfer });
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .eq(1)
-      .trigger('dragend', { dataTransfer });
-
-    cy.get('[data-testid=discover-slider-edit-mode]')
-      .eq(1)
-      .should('contain', 'Recent Requests');
+    expectConsecutiveSliderOrder('Recent Requests', 'Recently Added');
+    dragSliderOnto('Recently Added', 'Recent Requests');
+    expectConsecutiveSliderOrder('Recently Added', 'Recent Requests');
 
     cy.get('[data-testid=discover-customize-submit').click();
     cy.wait('@getDiscoverSliders');

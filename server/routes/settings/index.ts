@@ -14,7 +14,11 @@ import type {
   LogsResultsResponse,
   SettingsAboutResponse,
 } from '@server/interfaces/api/settingsInterfaces';
-import { scheduledJobs } from '@server/job/schedule';
+import { isDryRunActionAvailable, scheduledJobs } from '@server/job/schedule';
+import {
+  SynchronizationExecutionBlockedError,
+  synchronizationPolicy,
+} from '@server/job/synchronizationPolicy';
 import type { AvailableCacheIds } from '@server/lib/cache';
 import cacheManager from '@server/lib/cache';
 import ImageProxy from '@server/lib/imageproxy';
@@ -23,9 +27,14 @@ import { jellyfinFullScanner } from '@server/lib/scanners/jellyfin';
 import { plexFullScanner } from '@server/lib/scanners/plex';
 import type { JobId, Library, MainSettings } from '@server/lib/settings';
 import { getSettings } from '@server/lib/settings';
+import { isValidSubtitleReportingSettings } from '@server/lib/settings/subtitleReporting';
 import logger from '@server/logger';
 import { isAuthenticated } from '@server/middleware/auth';
 import discoverSettingRoutes from '@server/routes/settings/discover';
+import freshSettingRoutes from '@server/routes/settings/fresh';
+import removalSettingRoutes from '@server/routes/settings/removal';
+import storageSettingRoutes from '@server/routes/settings/storage';
+import watchlistRouletteSettingRoutes from '@server/routes/settings/watchlistRoulette';
 import { ApiError } from '@server/types/error';
 import { appDataPath } from '@server/utils/appDataVolume';
 import {
@@ -56,6 +65,10 @@ settingsRoutes.use('/notifications', notificationRoutes);
 settingsRoutes.use('/radarr', radarrRoutes);
 settingsRoutes.use('/sonarr', sonarrRoutes);
 settingsRoutes.use('/discover', discoverSettingRoutes);
+settingsRoutes.use('/fresh', freshSettingRoutes);
+settingsRoutes.use('/removal', removalSettingRoutes);
+settingsRoutes.use('/storage', storageSettingRoutes);
+settingsRoutes.use('/watchlist-roulette', watchlistRouletteSettingRoutes);
 settingsRoutes.use('/metadatas', metadataRoutes);
 
 const libraryUpdateSchema = z.object({
@@ -294,10 +307,18 @@ settingsRoutes.get('/plex/sync', (_req, res) => {
   return res.status(200).json(plexFullScanner.status());
 });
 
-settingsRoutes.post('/plex/sync', (req, res) => {
+settingsRoutes.post('/plex/sync', (req, res, next) => {
   if (req.body.cancel) {
     plexFullScanner.cancel();
   } else if (req.body.start) {
+    try {
+      synchronizationPolicy.assertDirectManualExecutionAllowed();
+    } catch (error) {
+      if (error instanceof SynchronizationExecutionBlockedError) {
+        return next({ status: error.status, message: error.message });
+      }
+      return next(error);
+    }
     plexFullScanner.run();
   }
   return res.status(200).json(plexFullScanner.status());
@@ -312,6 +333,14 @@ settingsRoutes.get('/jellyfin', (_req, res) => {
 settingsRoutes.post('/jellyfin', async (req, res, next) => {
   const userRepository = getRepository(User);
   const settings = getSettings();
+  const tempJellyfinSettings = { ...settings.jellyfin, ...req.body };
+  if (!isValidSubtitleReportingSettings(tempJellyfinSettings)) {
+    return next({
+      status: 400,
+      message:
+        'Subtitle reporting requires a boolean enable flag and a safe HTTPS Jellyfin External URL without credentials, query or fragment.',
+    });
+  }
 
   try {
     const admin = await userRepository.findOneOrFail({
@@ -319,8 +348,6 @@ settingsRoutes.post('/jellyfin', async (req, res, next) => {
       select: ['id', 'jellyfinUserId', 'jellyfinDeviceId'],
       order: { id: 'ASC' },
     });
-
-    const tempJellyfinSettings = { ...settings.jellyfin, ...req.body };
 
     const jellyfinClient = new JellyfinAPI(
       getHostname(tempJellyfinSettings),
@@ -490,10 +517,18 @@ settingsRoutes.get('/jellyfin/sync', (_req, res) => {
   return res.status(200).json(jellyfinFullScanner.status());
 });
 
-settingsRoutes.post('/jellyfin/sync', (req, res) => {
+settingsRoutes.post('/jellyfin/sync', (req, res, next) => {
   if (req.body.cancel) {
     jellyfinFullScanner.cancel();
   } else if (req.body.start) {
+    try {
+      synchronizationPolicy.assertDirectManualExecutionAllowed();
+    } catch (error) {
+      if (error instanceof SynchronizationExecutionBlockedError) {
+        return next({ status: error.status, message: error.message });
+      }
+      return next(error);
+    }
     jellyfinFullScanner.run();
   }
   return res.status(200).json(jellyfinFullScanner.status());
@@ -720,18 +755,46 @@ settingsRoutes.get(
   }
 );
 
+const scheduledJobResponse = (job: (typeof scheduledJobs)[number]) => {
+  const enabled = job.enabled ? job.enabled() : true;
+  const freshSyncEnabled = getSettings().fresh.enabled;
+  const lastResult = job.result?.() ?? null;
+  const lastExecutionTime =
+    lastResult &&
+    typeof lastResult === 'object' &&
+    'completedAt' in lastResult &&
+    typeof lastResult.completedAt === 'string'
+      ? lastResult.completedAt
+      : null;
+  return {
+    id: job.id,
+    name: job.name,
+    type: job.type,
+    interval: job.interval,
+    cronSchedule: job.cronSchedule,
+    nextExecutionTime: enabled ? job.job.nextInvocation() : null,
+    running: job.running ? job.running() : false,
+    enabled,
+    configurableEnabled: job.configurableEnabled === true,
+    dryRunAvailable: isDryRunActionAvailable(job),
+    lastResult,
+    lastExecutionTime,
+    scheduledExecutionAllowed:
+      enabled && synchronizationPolicy.scheduledExecutionAllowed,
+    manualExecutionAllowed:
+      enabled &&
+      synchronizationPolicy.manualExecutionAllowed(job.id, freshSyncEnabled),
+  };
+};
+
+settingsRoutes.get('/synchronization-containment', (_req, res) => {
+  return res
+    .status(200)
+    .json(synchronizationPolicy.status(getSettings().fresh.enabled));
+});
+
 settingsRoutes.get('/jobs', (_req, res) => {
-  return res.status(200).json(
-    scheduledJobs.map((job) => ({
-      id: job.id,
-      name: job.name,
-      type: job.type,
-      interval: job.interval,
-      cronSchedule: job.cronSchedule,
-      nextExecutionTime: job.job.nextInvocation(),
-      running: job.running ? job.running() : false,
-    }))
-  );
+  return res.status(200).json(scheduledJobs.map(scheduledJobResponse));
 });
 
 settingsRoutes.post<{ jobId: string }>('/jobs/:jobId/run', (req, res, next) => {
@@ -741,18 +804,70 @@ settingsRoutes.post<{ jobId: string }>('/jobs/:jobId/run', (req, res, next) => {
     return next({ status: 404, message: 'Job not found.' });
   }
 
-  scheduledJob.job.invoke();
+  if (scheduledJob.enabled && !scheduledJob.enabled()) {
+    return next({ status: 409, message: 'Job is disabled.' });
+  }
 
-  return res.status(200).json({
-    id: scheduledJob.id,
-    name: scheduledJob.name,
-    type: scheduledJob.type,
-    interval: scheduledJob.interval,
-    cronSchedule: scheduledJob.cronSchedule,
-    nextExecutionTime: scheduledJob.job.nextInvocation(),
-    running: scheduledJob.running ? scheduledJob.running() : false,
-  });
+  try {
+    if (synchronizationPolicy.mode === 'commissioning') {
+      if (!scheduledJob.commissioningRun) {
+        throw new SynchronizationExecutionBlockedError(
+          `${scheduledJob.id} is not permitted during synchronization commissioning.`
+        );
+      }
+      synchronizationPolicy.startCommissioningJob(
+        scheduledJob.id,
+        getSettings().fresh.enabled,
+        scheduledJob.commissioningRun
+      );
+    } else {
+      synchronizationPolicy.assertDirectManualExecutionAllowed();
+      scheduledJob.job.invoke();
+    }
+  } catch (error) {
+    if (error instanceof SynchronizationExecutionBlockedError) {
+      return next({ status: error.status, message: error.message });
+    }
+    return next(error);
+  }
+
+  return res.status(200).json(scheduledJobResponse(scheduledJob));
 });
+
+settingsRoutes.post<{ jobId: string }>(
+  '/jobs/:jobId/dry-run',
+  async (req, res, next) => {
+    const scheduledJob = scheduledJobs.find(
+      (job) => job.id === req.params.jobId
+    );
+    if (!scheduledJob?.dryRun) {
+      return next({ status: 404, message: 'Dry-run job not found.' });
+    }
+    try {
+      return res.status(200).json(await scheduledJob.dryRun());
+    } catch (error) {
+      return next(error);
+    }
+  }
+);
+
+settingsRoutes.post<{ jobId: JobId }>(
+  '/jobs/:jobId/enabled',
+  async (req, res, next) => {
+    const scheduledJob = scheduledJobs.find(
+      (job) => job.id === req.params.jobId
+    );
+    if (!scheduledJob?.configurableEnabled || !scheduledJob.setEnabled) {
+      return next({ status: 404, message: 'Configurable job not found.' });
+    }
+    const parsed = z.object({ enabled: z.boolean() }).safeParse(req.body);
+    if (!parsed.success) {
+      return next({ status: 400, message: 'Invalid job enabled state.' });
+    }
+    await scheduledJob.setEnabled(parsed.data.enabled);
+    return res.status(200).json(scheduledJobResponse(scheduledJob));
+  }
+);
 
 settingsRoutes.post<{ jobId: JobId }>(
   '/jobs/:jobId/cancel',
@@ -769,15 +884,7 @@ settingsRoutes.post<{ jobId: JobId }>(
       scheduledJob.cancelFn();
     }
 
-    return res.status(200).json({
-      id: scheduledJob.id,
-      name: scheduledJob.name,
-      type: scheduledJob.type,
-      interval: scheduledJob.interval,
-      cronSchedule: scheduledJob.cronSchedule,
-      nextExecutionTime: scheduledJob.job.nextInvocation(),
-      running: scheduledJob.running ? scheduledJob.running() : false,
-    });
+    return res.status(200).json(scheduledJobResponse(scheduledJob));
   }
 );
 
@@ -801,15 +908,7 @@ settingsRoutes.post<{ jobId: JobId }>(
 
       scheduledJob.cronSchedule = req.body.schedule;
 
-      return res.status(200).json({
-        id: scheduledJob.id,
-        name: scheduledJob.name,
-        type: scheduledJob.type,
-        interval: scheduledJob.interval,
-        cronSchedule: scheduledJob.cronSchedule,
-        nextExecutionTime: scheduledJob.job.nextInvocation(),
-        running: scheduledJob.running ? scheduledJob.running() : false,
-      });
+      return res.status(200).json(scheduledJobResponse(scheduledJob));
     } else {
       return next({ status: 400, message: 'Invalid job schedule.' });
     }

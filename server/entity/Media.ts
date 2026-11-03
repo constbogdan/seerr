@@ -9,7 +9,9 @@ import { MediaServerType } from '@server/constants/server';
 import { getRepository } from '@server/datasource';
 import { Blocklist } from '@server/entity/Blocklist';
 import type { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
+import { AcquisitionPhase } from '@server/lib/acquisitionPhase';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
 import downloadTracker from '@server/lib/downloadtracker';
 import { getSettings } from '@server/lib/settings';
@@ -33,6 +35,36 @@ import Season from './Season';
 @Entity()
 @Index(['tmdbId', 'mediaType'])
 class Media {
+  private static async attachUserMediaState(
+    user: User | undefined,
+    media: Media[]
+  ): Promise<void> {
+    if (!user || media.length === 0) return;
+
+    const states = await getRepository(UserMediaState)
+      .createQueryBuilder('state')
+      .where('state.userId = :userId', { userId: user.id })
+      .andWhere('state.tmdbId IN (:...tmdbIds)', {
+        tmdbIds: [...new Set(media.map((item) => item.tmdbId))],
+      })
+      .getMany();
+    const byIdentity = new Map(
+      states.map((state) => [`${state.mediaType}:${state.tmdbId}`, state])
+    );
+    for (const item of media) {
+      const state = byIdentity.get(`${item.mediaType}:${item.tmdbId}`);
+      if (!state) continue;
+      item.watchState =
+        state.jellyfinPlayed === true
+          ? 'watched'
+          : state.jellyfinPlayed === false
+            ? 'not_watched'
+            : 'unknown';
+      item.watchStateLastPlayedAt = state.jellyfinLastPlayedAt ?? null;
+      item.watchStateSyncedAt = state.jellyfinPlayStateSyncedAt ?? null;
+    }
+  }
+
   public static async getRelatedMedia(
     user: User | undefined,
     items: { tmdbId: number; mediaType: string }[],
@@ -61,6 +93,8 @@ class Media {
       const relatedMedia = media.filter((m) =>
         items.some((i) => i.tmdbId === m.tmdbId && i.mediaType === m.mediaType)
       );
+
+      await Media.attachUserMediaState(user, relatedMedia);
 
       if (
         includeActiveRequest &&
@@ -96,7 +130,8 @@ class Media {
 
   public static async getMedia(
     id: number,
-    mediaType: MediaType
+    mediaType: MediaType,
+    user?: User
   ): Promise<Media | undefined> {
     const mediaRepository = getRepository(Media);
 
@@ -106,6 +141,9 @@ class Media {
         relations: { requests: true, issues: true },
       });
 
+      if (media) {
+        await Media.attachUserMediaState(user, [media]);
+      }
       return media ?? undefined;
     } catch (e) {
       logger.error(e.message);
@@ -220,6 +258,9 @@ class Media {
   public serviceUrl?: string;
   public serviceUrl4k?: string;
   public hasActiveRequest?: boolean;
+  public watchState?: 'watched' | 'not_watched' | 'unknown';
+  public watchStateLastPlayedAt?: Date | null;
+  public watchStateSyncedAt?: Date | null;
   public downloadStatus?: DownloadingItem[] = [];
   public downloadStatus4k?: DownloadingItem[] = [];
 
@@ -380,9 +421,12 @@ class Media {
         this.serviceId !== undefined &&
         this.serviceId !== null
       ) {
-        this.downloadStatus = downloadTracker.getMovieProgress(
-          this.serviceId,
-          this.externalServiceId
+        this.downloadStatus = this.preferAvailableOverFinalizing(
+          downloadTracker.getMovieProgress(
+            this.serviceId,
+            this.externalServiceId
+          ),
+          this.status
         );
       }
 
@@ -392,9 +436,12 @@ class Media {
         this.serviceId4k !== undefined &&
         this.serviceId4k !== null
       ) {
-        this.downloadStatus4k = downloadTracker.getMovieProgress(
-          this.serviceId4k,
-          this.externalServiceId4k
+        this.downloadStatus4k = this.preferAvailableOverFinalizing(
+          downloadTracker.getMovieProgress(
+            this.serviceId4k,
+            this.externalServiceId4k
+          ),
+          this.status4k
         );
       }
     }
@@ -406,9 +453,12 @@ class Media {
         this.serviceId !== undefined &&
         this.serviceId !== null
       ) {
-        this.downloadStatus = downloadTracker.getSeriesProgress(
-          this.serviceId,
-          this.externalServiceId
+        this.downloadStatus = this.preferAvailableOverFinalizing(
+          downloadTracker.getSeriesProgress(
+            this.serviceId,
+            this.externalServiceId
+          ),
+          this.status
         );
       }
 
@@ -418,12 +468,26 @@ class Media {
         this.serviceId4k !== undefined &&
         this.serviceId4k !== null
       ) {
-        this.downloadStatus4k = downloadTracker.getSeriesProgress(
-          this.serviceId4k,
-          this.externalServiceId4k
+        this.downloadStatus4k = this.preferAvailableOverFinalizing(
+          downloadTracker.getSeriesProgress(
+            this.serviceId4k,
+            this.externalServiceId4k
+          ),
+          this.status4k
         );
       }
     }
+  }
+
+  private preferAvailableOverFinalizing(
+    items: DownloadingItem[],
+    status: MediaStatus
+  ): DownloadingItem[] {
+    return status === MediaStatus.AVAILABLE
+      ? items.filter(
+          (item) => item.acquisitionPhase !== AcquisitionPhase.FINALIZING
+        )
+      : items;
   }
 }
 

@@ -40,6 +40,8 @@ tags:
     description: Collection of media to watch later
   - name: blocklist
     description: Blocklisted media from discovery page.
+  - name: library
+    description: Administrator factual current and historical Library.
 servers:
   - url: '{server}/api/v1'
     variables:
@@ -47,7 +49,1030 @@ servers:
         default: http://localhost:5055
 
 components:
+  responses:
+    SubtitleReportError:
+      description: Report rejected. No issue is created for rejected authentication, identity or policy checks.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: false
+            required: [message]
+            properties:
+              message: { type: string }
+              errors:
+                type: array
+                items:
+                  type: object
+                  additionalProperties: true
   schemas:
+    LibraryUser:
+      type: object
+      required: [id, displayName, avatar]
+      properties:
+        id: { type: integer }
+        displayName: { type: string }
+        avatar: { type: string, nullable: true }
+    LibraryRequestSeasonFact:
+      type: object
+      required: [id, seasonNumber, status, createdAt, updatedAt]
+      properties:
+        id: { type: integer }
+        seasonNumber: { type: integer, minimum: 0 }
+        status: { type: integer, enum: [1, 2, 3, 4, 5] }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+    LibraryRequestFact:
+      type: object
+      required:
+        [id, type, status, is4k, isAutoRequest, createdAt, updatedAt, seasons]
+      properties:
+        id: { type: integer }
+        type: { type: string, enum: [movie, tv] }
+        status: { type: integer, enum: [1, 2, 3, 4, 5] }
+        is4k: { type: boolean }
+        isAutoRequest: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        seasons:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryRequestSeasonFact' }
+    LibraryRequester:
+      allOf:
+        - $ref: '#/components/schemas/LibraryUser'
+        - type: object
+          required: [requests]
+          properties:
+            requests:
+              type: array
+              items: { $ref: '#/components/schemas/LibraryRequestFact' }
+    LibraryFilterUser:
+      allOf:
+        - $ref: '#/components/schemas/LibraryUser'
+        - type: object
+          required: [available]
+          properties:
+            available: { type: boolean }
+    LibraryWatchedUser:
+      type: object
+      required:
+        - key
+        - userId
+        - displayName
+        - avatar
+        - watchedEpisodeCount
+        - availableEpisodeCount
+        - watchedPercentage
+        - lastViewedAt
+      properties:
+        key: { type: string }
+        userId: { type: integer, nullable: true }
+        displayName: { type: string }
+        avatar: { type: string, nullable: true }
+        watchedEpisodeCount: { type: integer, minimum: 1, nullable: true }
+        availableEpisodeCount: { type: integer, minimum: 1, nullable: true }
+        watchedPercentage: { type: integer, minimum: 0, maximum: 100 }
+        lastViewedAt: { type: string, format: date-time, nullable: true }
+    LibraryItem:
+      type: object
+      required:
+        - canonicalMediaId
+        - tmdbId
+        - mediaType
+        - libraryState
+        - title
+        - year
+        - posterPath
+        - backdropPath
+        - addedAt
+        - removedAt
+        - removalSource
+        - logicalSizeBytes
+        - resolution
+        - watchlistUsers
+        - watchedUsers
+        - watchedUserCount
+        - hasWatchedDetail
+        - lastActiveAt
+        - lastActiveUsers
+        - requesters
+        - storageRoots
+        - fresh
+        - seasonSummaries
+        - externalLinks
+        - tmdbRating
+        - collection
+      properties:
+        canonicalMediaId: { type: integer }
+        tmdbId: { type: integer, nullable: true }
+        mediaType: { type: string, enum: [movie, series] }
+        libraryState: { type: string, enum: [current, archive] }
+        title: { type: string }
+        year: { type: integer, nullable: true }
+        posterPath: { type: string, nullable: true }
+        backdropPath: { type: string, nullable: true }
+        addedAt: { type: string, format: date-time, nullable: true }
+        removedAt: { type: string, format: date-time, nullable: true }
+        removalSource:
+          type: string
+          nullable: true
+          enum: [manual, scheduled, external, unknown]
+        logicalSizeBytes: { type: string, nullable: true }
+        resolution:
+          type: integer
+          nullable: true
+          enum: [1080, 2160]
+          description: Uniform confirmed resolution across every applicable file; null when files are missing resolution, mixed, or use another resolution.
+        watchlistUsers:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryUser' }
+        likedUserCount:
+          type: integer
+          minimum: 0
+          description: Distinct eligible users with a source-bound observed Jellyfin Like.
+        dislikedUserCount:
+          type: integer
+          minimum: 0
+          description: Distinct eligible users with a source-bound observed Jellyfin Dislike.
+        watchedUsers:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryWatchedUser' }
+        watchedUserCount:
+          type: integer
+          minimum: 0
+          description: Watched users included by the existing user-metrics aggregate.
+        hasWatchedDetail: { type: boolean }
+        lastActiveAt: { type: string, format: date-time, nullable: true }
+        lastActiveUsers:
+          type: array
+          description: Users with qualifying activity exactly matching the authoritative Last active timestamp.
+          items:
+            allOf:
+              - $ref: '#/components/schemas/LibraryUser'
+              - type: object
+                properties:
+                  episode:
+                    type: object
+                    required: [seasonNumber, episodeNumber]
+                    properties:
+                      seasonNumber: { type: integer, minimum: 0 }
+                      episodeNumber: { type: integer, minimum: 1 }
+                      title: { type: string }
+                      classification: { type: string, enum: [partial, watched] }
+        requesters:
+          type: array
+          description: Distinct requesters with their factual canonical-title request history; requests do not imply causation of the current acquisition.
+          items: { $ref: '#/components/schemas/LibraryRequester' }
+        storageRoots:
+          type: array
+          description: Safe labels for current configured physical roots; raw paths are never returned.
+          items:
+            type: object
+            required: [id, label, color]
+            properties:
+              id: { type: integer }
+              label: { type: string }
+              color:
+                type: string
+                pattern: '^#[0-9a-f]{6}$'
+                nullable: true
+        fresh: { type: boolean }
+        seasonSummaries:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                key,
+                seasonNumber,
+                isSpecial,
+                state,
+                availableEpisodeCount,
+                knownEpisodeCount,
+                resolution,
+                requestable,
+                acquiring,
+              ]
+            properties:
+              key: { type: string }
+              seasonNumber: { type: integer, minimum: 0 }
+              isSpecial: { type: boolean }
+              state: { type: string, enum: [current, archive, known_missing] }
+              availableEpisodeCount: { type: integer, minimum: 0 }
+              knownEpisodeCount:
+                type: integer
+                minimum: 1
+                nullable: true
+                description: Distinct canonical Episode count when the Foundation has a reliable complete Season hierarchy; null when the total is unknown or incomplete.
+              resolution:
+                type: integer
+                nullable: true
+                enum: [1080, 2160]
+                description: Uniform confirmed resolution across every applicable file in the Season.
+              requestable:
+                type: boolean
+                description: Whether the existing standard Seerr request workflow currently considers this Season requestable before user-specific permission and settings checks.
+              acquiring:
+                type: boolean
+                description: Whether the otherwise-missing Season has an exact active standard request association.
+        externalLinks:
+          type: array
+          description: Verified current-media links computed by the server without credentials.
+          items:
+            type: object
+            required: [service, label, url]
+            properties:
+              service: { type: string, enum: [radarr, sonarr, jellyfin] }
+              label: { type: string }
+              url: { type: string, format: uri }
+        tmdbRating:
+          type: object
+          nullable: true
+          required: [voteAverage, voteCount]
+          properties:
+            voteAverage: { type: number, minimum: 0, maximum: 10 }
+            voteCount: { type: integer, minimum: 0 }
+        collection:
+          type: object
+          nullable: true
+          required: [id, name, posterPath, backdropPath]
+          description: TMDB collection membership projected from the existing page presentation enrichment for Movies only.
+          properties:
+            id: { type: integer }
+            name: { type: string }
+            posterPath: { type: string, nullable: true }
+            backdropPath: { type: string, nullable: true }
+        removalSchedules:
+          type: array
+          items: { $ref: '#/components/schemas/RemovalSchedule' }
+    RemovalSchedule:
+      type: object
+      required:
+        [
+          id,
+          canonicalMediaId,
+          targetType,
+          seasonNumber,
+          origin,
+          status,
+          scheduledAt,
+          removeAt,
+          revision,
+        ]
+      properties:
+        id: { type: integer }
+        canonicalMediaId: { type: integer }
+        targetType: { type: string, enum: [movie, series, season] }
+        seasonNumber: { type: integer, nullable: true, minimum: 0 }
+        origin: { type: string, enum: [manual, automatic] }
+        status: { type: string, enum: [active, deferred] }
+        scheduledAt: { type: string, format: date-time }
+        removeAt: { type: string, format: date-time }
+        revision: { type: integer, minimum: 1 }
+    LibraryBulkActionTarget:
+      type: object
+      additionalProperties: false
+      required: [canonicalMediaId, targetType]
+      properties:
+        canonicalMediaId: { type: integer, minimum: 1 }
+        targetType: { type: string, enum: [movie, series, season] }
+        seasonNumber: { type: integer, minimum: 0 }
+    LibraryBulkActionRequest:
+      type: object
+      additionalProperties: false
+      required: [action, targets]
+      properties:
+        action:
+          type: string
+          enum: [schedule, cancel_schedule, remove_now]
+          description: remove_now accepts at most 10 targets; schedule and cancel_schedule accept at most 100.
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/LibraryBulkActionTarget' }
+    LibraryBulkActionEligibilityRequest:
+      type: object
+      additionalProperties: false
+      required: [targets]
+      properties:
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items: { $ref: '#/components/schemas/LibraryBulkActionTarget' }
+    LibraryBulkActionEligibilityResult:
+      type: object
+      additionalProperties: false
+      required: [target, eligibility, reason]
+      properties:
+        target: { $ref: '#/components/schemas/LibraryBulkActionTarget' }
+        eligibility:
+          type: string
+          enum: [schedule, cancel_schedule, unavailable, conflict, unknown]
+        reason:
+          type: string
+          enum:
+            [
+              unscheduled,
+              scheduled,
+              processing_lease,
+              execution_in_progress,
+              whole_series_scheduled,
+              not_current,
+              missing,
+              ambiguous_source,
+              active_acquisition,
+              identity_conflict,
+              configuration,
+              unavailable,
+            ]
+    LibraryBulkActionEligibilityResponse:
+      type: object
+      additionalProperties: false
+      required: [results]
+      properties:
+        results:
+          type: array
+          items:
+            { $ref: '#/components/schemas/LibraryBulkActionEligibilityResult' }
+    LibrarySelectionSizeRequest:
+      type: object
+      additionalProperties: false
+      required: [targets]
+      properties:
+        targets:
+          type: array
+          minItems: 1
+          maxItems: 5000
+          items: { $ref: '#/components/schemas/LibraryBulkActionTarget' }
+    LibrarySelectionSizeResponse:
+      type: object
+      additionalProperties: false
+      required: [targets, sizeBytes, fileCount, unknownFileCount]
+      properties:
+        targets:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryBulkActionTarget' }
+        sizeBytes:
+          type: string
+          nullable: true
+          description: Sum of known current file sizes, or null when no selected file has a reliable size.
+        fileCount: { type: integer, minimum: 0 }
+        unknownFileCount: { type: integer, minimum: 0 }
+    LibraryBulkActionResult:
+      type: object
+      additionalProperties: false
+      required: [target, outcome, code, retryable, message, affectedSchedules]
+      properties:
+        target: { $ref: '#/components/schemas/LibraryBulkActionTarget' }
+        outcome:
+          type: string
+          enum:
+            [
+              scheduled,
+              already_scheduled,
+              cancelled,
+              not_scheduled,
+              provider_acknowledged,
+              provider_absent_reconciled,
+              not_current,
+              missing,
+              ambiguous_source,
+              active_acquisition,
+              in_progress,
+              identity_conflict,
+              cross_season_file,
+              remote_removed_local_failed,
+              failed,
+              not_attempted,
+            ]
+        code: { type: string }
+        retryable: { type: boolean }
+        message: { type: string }
+        affectedSchedules: { type: integer, minimum: 0 }
+    LibraryBulkActionResponse:
+      type: object
+      additionalProperties: false
+      required:
+        [action, requested, succeeded, unchanged, skipped, failed, results]
+      properties:
+        action: { type: string, enum: [schedule, cancel_schedule, remove_now] }
+        requested: { type: integer, minimum: 1, maximum: 100 }
+        succeeded: { type: integer, minimum: 0 }
+        unchanged: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryBulkActionResult' }
+    LibraryRemovalTargetRequest:
+      type: object
+      required: [targetType]
+      properties:
+        targetType: { type: string, enum: [movie, series, season] }
+        seasonNumber:
+          type: integer
+          minimum: 0
+          description: Required only for a Season target.
+        sourceScope:
+          type: string
+          maxLength: 128
+          description: Optional exact Servarr source scope when the canonical target has more than one source.
+    LibraryRemovalResult:
+      type: object
+      additionalProperties: false
+      required: [targetType, providerResult]
+      properties:
+        targetType: { type: string, enum: [movie, series, season] }
+        providerResult:
+          type: string
+          enum: [removed, absent]
+          description: removed means the provider acknowledged the command; absent means read-only provider reconciliation confirmed the target absent. Neither value independently guarantees physical file deletion.
+    RemovalAutomaticPolicy:
+      type: object
+      additionalProperties: false
+      required: [enabled, minimumAgeMonths, inactivityMonths, itemsPerRun]
+      properties:
+        enabled: { type: boolean }
+        minimumAgeMonths: { type: integer, minimum: 0, maximum: 120 }
+        inactivityMonths: { type: integer, minimum: 0, maximum: 120 }
+        itemsPerRun: { type: integer, minimum: 0, maximum: 1000 }
+    RemovalSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - removalDelayDays
+        - removalScanEnabled
+        - removalProcessingEnabled
+        - movie
+        - series
+      properties:
+        removalDelayDays:
+          type: integer
+          enum: [10, 20, 30, 60, 90]
+        removalScanEnabled: { type: boolean }
+        removalProcessingEnabled: { type: boolean }
+        movie: { $ref: '#/components/schemas/RemovalAutomaticPolicy' }
+        series: { $ref: '#/components/schemas/RemovalAutomaticPolicy' }
+    OverflowRoute:
+      type: object
+      additionalProperties: false
+      required:
+        - sourceVolumeId
+        - destinationVolumeId
+        - thresholdGb
+        - enabled
+      properties:
+        sourceVolumeId:
+          { type: string, pattern: '^(physical|location):[^\s]+$' }
+        destinationVolumeId:
+          { type: string, pattern: '^(physical|location):[^\s]+$' }
+        thresholdGb: { type: integer, minimum: 1, default: 50 }
+        enabled: { type: boolean }
+    OverflowSettings:
+      type: object
+      additionalProperties: false
+      required:
+        - enabled
+        - freeSpaceThreshold
+        - automaticSeriesPlacement
+        - defaultSeriesVolumeId
+        - expansionSeriesVolumeId
+        - seriesSeasonThreshold
+        - torrentRelocationDelayHours
+        - routes
+      properties:
+        enabled: { type: boolean, default: false }
+        freeSpaceThreshold:
+          { type: integer, enum: [5, 10, 15, 20], default: 10 }
+        automaticSeriesPlacement: { type: boolean, default: false }
+        defaultSeriesVolumeId:
+          {
+            type: string,
+            nullable: true,
+            pattern: '^(physical|location):[^\s]+$',
+          }
+        expansionSeriesVolumeId:
+          {
+            type: string,
+            nullable: true,
+            pattern: '^(physical|location):[^\s]+$',
+          }
+        seriesSeasonThreshold: { type: integer, minimum: 1, default: 3 }
+        torrentRelocationDelayHours: { type: integer, minimum: 0, default: 48 }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/OverflowRoute' }
+    StorageLocation:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - provider
+        - serviceId
+        - serviceName
+        - rootFolderId
+        - name
+        - path
+        - color
+        - diskSpacePath
+        - totalSpace
+        - usedSpace
+        - freeSpace
+        - usedPercentage
+        - accessible
+        - routable
+      properties:
+        id: { type: string }
+        provider: { type: string, enum: [radarr, sonarr] }
+        serviceId: { type: integer, minimum: 0 }
+        serviceName: { type: string }
+        rootFolderId: { type: integer, minimum: 0, nullable: true }
+        name: { type: string }
+        path: { type: string }
+        color: { type: string, nullable: true }
+        isAnimation: { type: boolean }
+        diskSpacePath: { type: string, nullable: true }
+        totalSpace: { type: number, minimum: 0, nullable: true }
+        usedSpace: { type: number, minimum: 0, nullable: true }
+        freeSpace: { type: number, minimum: 0, nullable: true }
+        usedPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+        accessible: { type: boolean }
+        routable: { type: boolean }
+    StorageUsageSegment:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - locationId
+        - provider
+        - serviceId
+        - serviceName
+        - rootFolderId
+        - label
+        - path
+        - color
+        - indexedUsageBytes
+        - percentage
+        - pendingRemovalBytes
+        - pendingRemovalPercentage
+      properties:
+        id: { type: string }
+        locationId: { type: string }
+        provider: { type: string, enum: [radarr, sonarr] }
+        serviceId: { type: integer, minimum: 0 }
+        serviceName: { type: string }
+        rootFolderId: { type: integer, minimum: 0, nullable: true }
+        label: { type: string }
+        path: { type: string }
+        color: { type: string }
+        indexedUsageBytes: { type: string, pattern: '^\d+$' }
+        percentage: { type: number, minimum: 0, nullable: true }
+        pendingRemovalBytes: { type: string, pattern: '^\d+$', nullable: true }
+        pendingRemovalPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+    PhysicalVolume:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - volumeKey
+        - locationIds
+        - segments
+        - totalSpace
+        - usedSpace
+        - freeSpace
+        - usedPercentage
+        - knownLibraryUsageBytes
+        - pendingRemovalBytes
+        - pendingRemovalPercentage
+        - pendingRemovalAvailable
+        - pendingRemovalComplete
+        - omittedRemovalScheduleCount
+        - unaccountedUsageBytes
+        - provisionedSpaceBytes
+        - usageExceedsPhysical
+        - capacityReadingsDiffer
+        - accessible
+      properties:
+        id: { type: string }
+        name: { type: string }
+        volumeKey: { type: string, nullable: true }
+        locationIds:
+          type: array
+          items: { type: string }
+        segments:
+          type: array
+          items: { $ref: '#/components/schemas/StorageUsageSegment' }
+        totalSpace: { type: number, minimum: 0, nullable: true }
+        usedSpace: { type: number, minimum: 0, nullable: true }
+        freeSpace: { type: number, minimum: 0, nullable: true }
+        usedPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+        knownLibraryUsageBytes: { type: string, pattern: '^\d+$' }
+        pendingRemovalBytes: { type: string, pattern: '^\d+$', nullable: true }
+        pendingRemovalPercentage:
+          { type: number, minimum: 0, maximum: 100, nullable: true }
+        pendingRemovalAvailable: { type: boolean }
+        pendingRemovalComplete: { type: boolean }
+        omittedRemovalScheduleCount: { type: integer, minimum: 0 }
+        unaccountedUsageBytes:
+          { type: string, pattern: '^\d+$', nullable: true }
+        provisionedSpaceBytes:
+          { type: string, pattern: '^\d+$', nullable: true }
+        usageExceedsPhysical: { type: boolean }
+        capacityReadingsDiffer: { type: boolean }
+        accessible: { type: boolean }
+    StorageInstanceStatus:
+      type: object
+      additionalProperties: false
+      required: [provider, serviceId, serviceName, available, capacityAvailable]
+      properties:
+        provider: { type: string, enum: [radarr, sonarr] }
+        serviceId: { type: integer, minimum: 0 }
+        serviceName: { type: string }
+        available: { type: boolean }
+        capacityAvailable: { type: boolean }
+    StorageSettingsResponse:
+      type: object
+      additionalProperties: false
+      required: [settings, locations, volumes, instances, refreshedAt]
+      properties:
+        settings: { $ref: '#/components/schemas/OverflowSettings' }
+        locations:
+          type: array
+          items: { $ref: '#/components/schemas/StorageLocation' }
+        volumes:
+          type: array
+          items: { $ref: '#/components/schemas/PhysicalVolume' }
+        instances:
+          type: array
+          items: { $ref: '#/components/schemas/StorageInstanceStatus' }
+        refreshedAt: { type: string, format: date-time }
+    SeriesRelocationPreviewCandidate:
+      type: object
+      additionalProperties: false
+      required:
+        - canonicalMediaId
+        - title
+        - year
+        - retainedSeasonCount
+        - totalBytes
+        - sonarrUrl
+      properties:
+        canonicalMediaId: { type: integer, minimum: 1 }
+        title: { type: string }
+        year: { type: integer, nullable: true }
+        retainedSeasonCount: { type: integer, minimum: 1 }
+        totalBytes: { type: string, pattern: '^\d+$' }
+        sonarrUrl: { type: string, format: uri, nullable: true }
+    SeriesRelocationPreviewResult:
+      type: object
+      additionalProperties: false
+      required: [status, candidate, reason]
+      properties:
+        status: { type: string, enum: [eligible, none, unavailable] }
+        candidate:
+          type: object
+          allOf:
+            - { $ref: '#/components/schemas/SeriesRelocationPreviewCandidate' }
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+          enum:
+            - configuration-incomplete
+            - provider-unavailable
+            - incomplete-evidence
+    RemovalPreviewCandidate:
+      type: object
+      additionalProperties: false
+      required: [canonicalMediaId, title, year, addedAt, lastActiveAt]
+      properties:
+        canonicalMediaId: { type: integer }
+        title: { type: string }
+        year: { type: integer, nullable: true }
+        addedAt: { type: string, format: date-time }
+        lastActiveAt: { type: string, format: date-time, nullable: true }
+    RemovalPreviewPool:
+      type: object
+      additionalProperties: false
+      required:
+        - eligibleUnscheduled
+        - itemsPerRun
+        - oldestCurrentAddedAt
+        - maximumSelectableMonths
+        - candidates
+      properties:
+        eligibleUnscheduled: { type: integer, minimum: 0 }
+        itemsPerRun: { type: integer, minimum: 0 }
+        oldestCurrentAddedAt:
+          { type: string, format: date-time, nullable: true }
+        maximumSelectableMonths: { type: integer, minimum: 0 }
+        candidates:
+          type: array
+          items: { $ref: '#/components/schemas/RemovalPreviewCandidate' }
+    RemovalPreview:
+      type: object
+      additionalProperties: false
+      required: [actionableScheduleCount, movie, series]
+      properties:
+        actionableScheduleCount: { type: integer, minimum: 0 }
+        movie: { $ref: '#/components/schemas/RemovalPreviewPool' }
+        series: { $ref: '#/components/schemas/RemovalPreviewPool' }
+    LibraryResponse:
+      type: object
+      required: [pageInfo, results, storageLocations, sourceStatus]
+      properties:
+        pageInfo:
+          type: object
+          required: [pages, page, results, pageSize]
+          properties:
+            pages: { type: integer }
+            page: { type: integer }
+            results: { type: integer }
+            pageSize: { type: integer }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryItem' }
+        storageLocations:
+          type: array
+          items:
+            type: object
+            required: [id, label]
+            properties:
+              id: { type: integer }
+              label: { type: string }
+        sourceStatus:
+          type: object
+          required:
+            [library, currentViewing, historicalViewing, historicalImport]
+          properties:
+            library: { type: string, enum: [current, incomplete] }
+            currentViewing: { type: string, enum: [current, incomplete] }
+            historicalViewing: { type: string, enum: [current, incomplete] }
+            historicalImport:
+              $ref: '#/components/schemas/HistoricalImportStatus'
+        collectionMembershipUnknownCount:
+          type: integer
+          minimum: 0
+          description: Movies matching the other filters whose TMDB collection membership has not yet been hydrated. Present when collectionMembership is in or none.
+        presentation:
+          $ref: '#/components/schemas/LibraryPresentationBatchStatus'
+    LibraryCollectionItem:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - name
+        - overview
+        - posterPath
+        - backdropPath
+        - availableMovies
+        - totalMovies
+        - completeness
+      properties:
+        id: { type: integer, minimum: 1 }
+        name: { type: string }
+        overview: { type: string, nullable: true }
+        posterPath: { type: string, nullable: true }
+        backdropPath: { type: string, nullable: true }
+        availableMovies: { type: integer, minimum: 0, nullable: true }
+        totalMovies: { type: integer, minimum: 0, nullable: true }
+        completeness:
+          type: string
+          enum: [complete, incomplete, unknown]
+    LibraryCollectionsResponse:
+      type: object
+      additionalProperties: false
+      required:
+        - pageInfo
+        - results
+        - status
+        - stale
+        - discoveredCollections
+        - failedCollections
+        - refreshedAt
+      properties:
+        pageInfo:
+          type: object
+          required: [pages, page, results, pageSize]
+          properties:
+            pages: { type: integer }
+            page: { type: integer }
+            results: { type: integer }
+            pageSize: { type: integer }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryCollectionItem' }
+        status:
+          type: string
+          enum: [pending, complete, partial, unavailable]
+        stale: { type: boolean }
+        discoveredCollections: { type: integer, minimum: 0 }
+        failedCollections: { type: integer, minimum: 0 }
+        refreshedAt: { type: string, format: date-time, nullable: true }
+    LibraryPresentationStatus:
+      type: object
+      additionalProperties: false
+      required: [state, revision, pendingCount]
+      properties:
+        state:
+          type: string
+          enum: [complete, pending, partial, expired]
+        revision: { type: integer, minimum: 0 }
+        pendingCount: { type: integer, minimum: 0 }
+    LibraryPresentationBatchStatus:
+      type: object
+      additionalProperties: false
+      required: [state, revision, pendingCount]
+      properties:
+        state:
+          type: string
+          enum: [complete, pending, partial]
+        revision: { type: integer, minimum: 0 }
+        pendingCount: { type: integer, minimum: 0 }
+        batchId: { type: string, format: uuid }
+    LeavingSoonItem:
+      type: object
+      additionalProperties: false
+      required:
+        [
+          canonicalMediaId,
+          tmdbId,
+          mediaType,
+          title,
+          year,
+          posterPath,
+          schedules,
+        ]
+      properties:
+        canonicalMediaId: { type: integer, minimum: 1 }
+        tmdbId: { type: integer, minimum: 1, nullable: true }
+        mediaType: { type: string, enum: [movie, series] }
+        title: { type: string }
+        year: { type: integer, nullable: true }
+        posterPath: { type: string, nullable: true }
+        schedules:
+          type: array
+          items: { $ref: '#/components/schemas/RemovalSchedule' }
+    LeavingSoonResultsResponse:
+      type: object
+      additionalProperties: false
+      required: [pageInfo, results]
+      properties:
+        pageInfo: { $ref: '#/components/schemas/PageInfo' }
+        results:
+          type: array
+          items: { $ref: '#/components/schemas/LeavingSoonItem' }
+        presentation:
+          $ref: '#/components/schemas/LibraryPresentationBatchStatus'
+    LibraryFilterUsersResponse:
+      type: object
+      required: [users]
+      properties:
+        users:
+          type: array
+          items: { $ref: '#/components/schemas/LibraryFilterUser' }
+    LibrarySeriesDetail:
+      type: object
+      required: [canonicalMediaId, seasons]
+      properties:
+        canonicalMediaId: { type: integer }
+        seasons:
+          type: array
+          items:
+            type: object
+            required:
+              [
+                seasonNumber,
+                isSpecial,
+                availableEpisodeCount,
+                resolution,
+                sizeBytes,
+                removedAt,
+                removalSource,
+                users,
+              ]
+            properties:
+              seasonNumber: { type: integer }
+              isSpecial: { type: boolean }
+              availableEpisodeCount: { type: integer, minimum: 1 }
+              resolution:
+                type: integer
+                nullable: true
+                enum: [1080, 2160]
+              sizeBytes:
+                type: string
+                nullable: true
+                description: Current physical Season size for Current detail, or a historical file-size aggregate for Archive detail; null when any applicable file size is unknown.
+              removedAt: { type: string, format: date-time, nullable: true }
+              removalSource:
+                type: string
+                nullable: true
+                enum: [manual, scheduled, external, unknown]
+              users:
+                type: array
+                items:
+                  type: object
+                  required:
+                    [
+                      key,
+                      userId,
+                      displayName,
+                      avatar,
+                      watchedEpisodeCount,
+                      watchedPercentage,
+                      lastViewedAt,
+                    ]
+                  properties:
+                    key: { type: string }
+                    userId: { type: integer, nullable: true }
+                    displayName: { type: string }
+                    avatar: { type: string, nullable: true }
+                    watchedEpisodeCount: { type: integer, minimum: 1 }
+                    watchedPercentage:
+                      { type: integer, minimum: 0, maximum: 100 }
+                    lastViewedAt:
+                      { type: string, format: date-time, nullable: true }
+    HistoricalObservedRange:
+      type: object
+      required: [startedAt, endedAt, completeness]
+      properties:
+        startedAt: { type: string, format: date-time, nullable: true }
+        endedAt: { type: string, format: date-time, nullable: true }
+        completeness: { type: string, enum: [not-asserted] }
+    HistoricalImportStatus:
+      type: object
+      required: [state, observedRange, contentHash]
+      properties:
+        state: { type: string, enum: [not-imported, accepted] }
+        observedRange:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/HistoricalObservedRange'
+        contentHash: { type: string, nullable: true }
+    HistoryImportValidation:
+      type: object
+      required:
+        - valid
+        - importable
+        - disposition
+        - schema
+        - datasetId
+        - contentHash
+        - observedRange
+        - acceptedObservedRange
+        - acceptedContentHash
+        - counts
+        - comparison
+        - issues
+      properties:
+        valid: { type: boolean }
+        importable: { type: boolean }
+        disposition:
+          type: string
+          enum:
+            - first-import
+            - exact-repeat
+            - repair
+            - additive-cumulative
+            - corrected-facts
+            - regressive-artifact
+            - historical-omission
+        schema: { type: string, enum: [wholphin-history-v1] }
+        datasetId: { type: string }
+        contentHash: { type: string }
+        observedRange:
+          $ref: '#/components/schemas/HistoricalObservedRange'
+        acceptedObservedRange:
+          type: object
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/HistoricalObservedRange'
+        acceptedContentHash: { type: string, nullable: true }
+        counts: { type: object, additionalProperties: { type: integer } }
+        comparison:
+          type: object
+          required: [exactFacts, missingFacts, correctedFacts, omittedFacts]
+          properties:
+            exactFacts: { type: integer }
+            missingFacts: { type: integer }
+            correctedFacts: { type: integer }
+            omittedFacts: { type: integer }
+        issues:
+          type: array
+          items:
+            type: object
+            required: [code, factType, sourceIdentity]
+            properties:
+              code: { type: string }
+              factType: { type: string }
+              sourceIdentity: { type: string }
     Blocklist:
       type: object
       properties:
@@ -63,20 +1088,47 @@ components:
           example: 1
     Watchlist:
       type: object
+      required: [tmdbId, mediaType]
       properties:
         id:
           type: integer
           example: 1
           readOnly: true
         tmdbId:
-          type: number
+          type: integer
+          minimum: 1
+          maximum: 9007199254740991
           example: 1
         ratingKey:
           type: string
-        type:
+        mediaType:
           type: string
+          enum:
+            - movie
+            - tv
         title:
           type: string
+        genreIds:
+          type: array
+          nullable: true
+          readOnly: true
+          items:
+            type: number
+        watchState:
+          type: string
+          readOnly: true
+          enum:
+            - watched
+            - not_watched
+            - unknown
+        lastPlayedAt:
+          type: string
+          format: date-time
+          readOnly: true
+        watchStateSyncedAt:
+          type: string
+          format: date-time
+          readOnly: true
         media:
           $ref: '#/components/schemas/MediaInfo'
         createdAt:
@@ -89,6 +1141,156 @@ components:
           readOnly: true
         requestedBy:
           $ref: '#/components/schemas/User'
+    WatchlistHistoryOccurrence:
+      type: object
+      required: [id, mediaType, tmdbId, state, startedAt]
+      properties:
+        id:
+          type: integer
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        tmdbId:
+          type: integer
+        state:
+          type: string
+          enum: [ACTIVE, SATISFIED, REMOVED]
+        startedAt:
+          type: string
+          format: date-time
+        endedAt:
+          type: string
+          format: date-time
+        endReason:
+          type: string
+          enum: [user_removed, confirmed_completion]
+        completionEvidenceId:
+          type: integer
+    WatchlistHistoryResponse:
+      type: object
+      required: [page, totalPages, totalResults, results]
+      properties:
+        page:
+          type: integer
+        totalPages:
+          type: integer
+        totalResults:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchlistHistoryOccurrence'
+    WatchlistRouletteRunSummary:
+      type: object
+      required:
+        - startedAt
+        - completedAt
+        - status
+        - requested
+        - skipped
+        - failed
+        - examined
+        - requestIds
+      properties:
+        startedAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        status: { type: string, enum: [succeeded, failed] }
+        requested: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        examined: { type: integer, minimum: 0 }
+        requestIds:
+          type: array
+          items: { type: integer, minimum: 1 }
+        failureCode:
+          type: string
+          enum:
+            - request-owner-unavailable
+            - provider-not-configured
+            - acquisition-state-unavailable
+            - unexpected-error
+        limitReason:
+          type: string
+          enum: [metadata-budget, metadata-deadline]
+    WatchlistRouletteSettings:
+      type: object
+      required: [requestOwnerUserId, movieItemsPerRun, seriesItemsPerRun]
+      properties:
+        requestOwnerUserId:
+          type: integer
+          minimum: 1
+          nullable: true
+        movieItemsPerRun:
+          { type: integer, minimum: 1, maximum: 100, default: 3 }
+        seriesItemsPerRun:
+          { type: integer, minimum: 1, maximum: 100, default: 1 }
+        lastMovieRun:
+          $ref: '#/components/schemas/WatchlistRouletteRunSummary'
+        lastSeriesRun:
+          $ref: '#/components/schemas/WatchlistRouletteRunSummary'
+    WatchlistRouletteAdministrator:
+      type: object
+      required: [id, displayName]
+      properties:
+        id: { type: integer, minimum: 1 }
+        displayName: { type: string }
+    WatchlistRouletteSelection:
+      type: object
+      required:
+        - requestId
+        - mediaType
+        - tmdbId
+        - title
+        - year
+        - seerrUrl
+        - servarrUrl
+        - unavailable
+      properties:
+        requestId: { type: integer, minimum: 1 }
+        mediaType:
+          type: string
+          enum: [movie, tv]
+          nullable: true
+        tmdbId: { type: integer, minimum: 1, nullable: true }
+        title: { type: string, nullable: true }
+        year: { type: integer, nullable: true }
+        seerrUrl: { type: string, nullable: true }
+        servarrUrl: { type: string, format: uri, nullable: true }
+        unavailable: { type: boolean }
+    WatchlistRouletteLastRun:
+      type: object
+      required: [summary, selections]
+      properties:
+        summary:
+          $ref: '#/components/schemas/WatchlistRouletteRunSummary'
+        selections:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchlistRouletteSelection'
+    WatchlistRouletteSettingsResponse:
+      type: object
+      required:
+        - settings
+        - administrators
+        - lastMovieRun
+        - lastSeriesRun
+      properties:
+        settings:
+          $ref: '#/components/schemas/WatchlistRouletteSettings'
+        administrators:
+          type: array
+          items:
+            $ref: '#/components/schemas/WatchlistRouletteAdministrator'
+        lastMovieRun:
+          type: object
+          allOf:
+            - $ref: '#/components/schemas/WatchlistRouletteLastRun'
+          nullable: true
+        lastSeriesRun:
+          type: object
+          allOf:
+            - $ref: '#/components/schemas/WatchlistRouletteLastRun'
+          nullable: true
     User:
       type: object
       properties:
@@ -115,6 +1317,10 @@ components:
           type: integer
           example: 1
           readOnly: true
+        includeInUserMetrics:
+          type: boolean
+          default: true
+          description: Whether this account participates in user-oriented metrics and selectors. This does not affect authentication or permissions.
         permissions:
           type: number
           example: 0
@@ -507,6 +1713,9 @@ components:
         jellyfinForgotPasswordUrl:
           type: string
           example: 'http://my.jellyfin.host/web/index.html#!/forgotpassword.html'
+        subtitleReportingEnabled:
+          type: boolean
+          description: Enable token-only subtitle reporting (disabled by default). Requires a safe HTTPS externalHostname; its exact origin is the only permitted Jellyfin Web Origin. Existing linked-user issue permissions remain required. Omission preserves the existing setting on updates.
         adminUser:
           type: string
           example: 'admin'
@@ -611,6 +1820,10 @@ components:
         preventSearch:
           type: boolean
           example: false
+        rootFolderNames:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageRootDisplayNameInput'
       required:
         - name
         - hostname
@@ -659,6 +1872,12 @@ components:
         activeLanguageProfileId:
           type: number
           example: 1
+        seriesType:
+          type: string
+          enum: [standard, daily, anime]
+        animeSeriesType:
+          type: string
+          enum: [standard, daily, anime]
         activeAnimeProfileId:
           type: number
           nullable: true
@@ -678,6 +1897,9 @@ components:
         enableSeasonFolders:
           type: boolean
           example: false
+        monitorNewItems:
+          type: string
+          enum: [all, none]
         isDefault:
           type: boolean
           example: false
@@ -695,6 +1917,10 @@ components:
         preventSearch:
           type: boolean
           example: false
+        rootFolderNames:
+          type: array
+          items:
+            $ref: '#/components/schemas/StorageRootDisplayNameInput'
       required:
         - name
         - hostname
@@ -704,8 +1930,11 @@ components:
         - activeProfileId
         - activeProfileName
         - activeDirectory
+        - seriesType
+        - animeSeriesType
         - is4k
         - enableSeasonFolders
+        - monitorNewItems
         - isDefault
     ServarrTag:
       type: object
@@ -721,6 +1950,7 @@ components:
       required:
         - initialized
         - plexClientIdentifier
+        - freshEnabled
       properties:
         initialized:
           type: boolean
@@ -730,6 +1960,10 @@ components:
           format: uuid
           description: Instance Plex OAuth client identifier
           example: 6919275e-142a-48d8-be6b-93594cbd4626
+        freshEnabled:
+          type: boolean
+          description: Whether the optional Fresh discovery source is enabled
+          example: false
     MovieResult:
       type: object
       required:
@@ -822,6 +2056,105 @@ components:
           type: string
         mediaInfo:
           $ref: '#/components/schemas/MediaInfo'
+    FreshSettings:
+      type: object
+      required:
+        [enabled, baseUrl, filterId, cachedFilterName, freshVisibilityDays]
+      properties:
+        enabled: { type: boolean }
+        baseUrl: { type: string }
+        apiToken: { type: string, writeOnly: true }
+        apiTokenConfigured: { type: boolean, readOnly: true }
+        filterId: { type: integer, minimum: 0 }
+        cachedFilterName: { type: string }
+        freshVisibilityDays:
+          type: integer
+          minimum: 1
+          maximum: 365
+          default: 7
+          description: Visibility measured from the original autobrr discovery timestamp.
+        excludeGenreIds:
+          type: array
+          maxItems: 1000
+          items: { type: integer, minimum: 1 }
+          default: []
+          description: Presentation-only genre exclusions, applied before feed pagination.
+        excludeOriginalLanguages:
+          type: array
+          maxItems: 300
+          items: { type: string, pattern: '^[a-z]{2}$' }
+          default: []
+        minimumTmdbScore:
+          type: number
+          minimum: 0
+          maximum: 10
+          default: 0
+          description: Inclusive minimum; zero disables score filtering.
+        minimumTmdbVotes:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          default: 0
+          description: Inclusive minimum; zero disables vote filtering.
+    FreshStatus:
+      type: object
+      required: [status, refreshing, backfillComplete, itemCount, pendingWork]
+      properties:
+        status:
+          type: string
+          enum: [disabled, preparing, refreshing, ready, stale, unavailable]
+        refreshing: { type: boolean }
+        backfillComplete: { type: boolean }
+        itemCount: { type: integer, minimum: 0 }
+        pendingWork: { type: integer, minimum: 0 }
+        lastRefresh: { type: string, format: date-time }
+        checkpoint: { type: string }
+        error: { type: string }
+    FreshResult:
+      oneOf:
+        - allOf:
+            - $ref: '#/components/schemas/MovieResult'
+            - type: object
+              required:
+                - freshFirstSeenAt
+                - mediaType
+              properties:
+                mediaType: { type: string, enum: [movie] }
+                freshFirstSeenAt:
+                  type: string
+                  format: date-time
+        - allOf:
+            - $ref: '#/components/schemas/TvResult'
+            - type: object
+              required:
+                - freshFirstSeenAt
+                - mediaType
+              properties:
+                mediaType: { type: string, enum: [tv] }
+                freshFirstSeenAt:
+                  type: string
+                  format: date-time
+    FreshResponse:
+      type: object
+      required:
+        - page
+        - totalPages
+        - totalResults
+        - results
+        - status
+      properties:
+        page:
+          type: integer
+        totalPages:
+          type: integer
+        totalResults:
+          type: integer
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/FreshResult'
+        status:
+          $ref: '#/components/schemas/FreshStatus'
     PersonResult:
       type: object
       properties:
@@ -1290,6 +2623,113 @@ components:
       required:
         - id
         - status
+    DownloadingItem:
+      type: object
+      description: Safe live acquisition state derived from an authoritative Radarr or Sonarr queue item.
+      properties:
+        mediaType:
+          type: string
+          enum: [movie, tv]
+        externalId: { type: number }
+        size: { type: number }
+        sizeLeft: { type: number }
+        status:
+          type: string
+          enum:
+            [
+              unknown,
+              queued,
+              paused,
+              downloading,
+              completed,
+              failed,
+              warning,
+              delay,
+              downloadClientUnavailable,
+              fallback,
+            ]
+        trackedDownloadStatus:
+          type: string
+          enum: [ok, warning, error]
+        trackedDownloadState:
+          type: string
+          enum:
+            [
+              downloading,
+              importBlocked,
+              importPending,
+              importing,
+              imported,
+              failedPending,
+              failed,
+              ignored,
+            ]
+        trackedStatus:
+          type: string
+          enum: [ok, warning, error]
+          deprecated: true
+          description: Compatibility alias for trackedDownloadStatus.
+        acquisitionPhase:
+          type: string
+          enum:
+            [
+              waiting,
+              downloading,
+              processing,
+              importPending,
+              importing,
+              importBlocked,
+              finalizing,
+              paused,
+              delayed,
+              warning,
+              failed,
+            ]
+        acquisitionPhaseStartedAt:
+          type: string
+          format: date-time
+        health:
+          type: string
+          enum: [ok, warning, error]
+        safeReason:
+          type: string
+          enum:
+            [
+              insufficient_space,
+              download_client_unavailable,
+              import_blocked,
+              import_failed,
+              delayed,
+              paused,
+              unknown_error,
+            ]
+        timeLeft: { type: string }
+        estimatedCompletionTime:
+          type: string
+          format: date-time
+        title:
+          type: string
+          description: Provider title; ordinary UI redacts this for non-administrators.
+        downloadId: { type: string }
+        episode:
+          type: object
+          properties:
+            seasonNumber: { type: number }
+            episodeNumber: { type: number }
+            absoluteEpisodeNumber: { type: number }
+            id: { type: number }
+          required: [seasonNumber, episodeNumber, absoluteEpisodeNumber, id]
+      required:
+        [
+          mediaType,
+          externalId,
+          size,
+          sizeLeft,
+          status,
+          timeLeft,
+          title,
+          downloadId,
+        ]
     MediaInfo:
       type: object
       properties:
@@ -1312,6 +2752,16 @@ components:
           readOnly: true
           items:
             $ref: '#/components/schemas/MediaRequest'
+        downloadStatus:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/DownloadingItem'
+        downloadStatus4k:
+          type: array
+          readOnly: true
+          items:
+            $ref: '#/components/schemas/DownloadingItem'
         createdAt:
           type: string
           example: '2020-09-12T10:00:27.000Z'
@@ -1319,6 +2769,21 @@ components:
         updatedAt:
           type: string
           example: '2020-09-12T10:00:27.000Z'
+          readOnly: true
+        watchState:
+          type: string
+          enum: [watched, not_watched, unknown]
+          description: Current watched state projected only for the authenticated user.
+          readOnly: true
+        watchStateLastPlayedAt:
+          type: string
+          format: date-time
+          nullable: true
+          readOnly: true
+        watchStateSyncedAt:
+          type: string
+          format: date-time
+          nullable: true
           readOnly: true
     Cast:
       type: object
@@ -1400,6 +2865,80 @@ components:
         name:
           type: string
           example: 720p/1080p
+    StorageRootDisplayNameInput:
+      type: object
+      properties:
+        sourceRootId:
+          type: integer
+          minimum: 0
+        path:
+          type: string
+        displayName:
+          type: string
+          maxLength: 120
+          nullable: true
+        isAnimation:
+          type: boolean
+          default: false
+        color:
+          type: string
+          enum:
+            [
+              '#60a5fa',
+              '#22d3ee',
+              '#2dd4bf',
+              '#4ade80',
+              '#a3e635',
+              '#facc15',
+              '#fb923c',
+              '#f87171',
+              '#f472b6',
+              '#c084fc',
+              '#818cf8',
+              '#94a3b8',
+              null,
+            ]
+          nullable: true
+      required:
+        - sourceRootId
+        - path
+    StorageRootWithDisplayName:
+      type: object
+      properties:
+        id:
+          type: integer
+        path:
+          type: string
+        displayName:
+          type: string
+          nullable: true
+        isAnimation:
+          type: boolean
+          default: false
+        color:
+          type: string
+          enum:
+            [
+              '#60a5fa',
+              '#22d3ee',
+              '#2dd4bf',
+              '#4ade80',
+              '#a3e635',
+              '#facc15',
+              '#fb923c',
+              '#f87171',
+              '#f472b6',
+              '#c084fc',
+              '#818cf8',
+              '#94a3b8',
+              null,
+            ]
+          nullable: true
+      required:
+        - id
+        - path
+        - isAnimation
+        - color
     PageInfo:
       type: object
       properties:
@@ -1636,7 +3175,7 @@ components:
           enum: [process, command]
         interval:
           type: string
-          enum: [short, long, fixed]
+          enum: [seconds, minutes, hours, days, fixed]
         name:
           type: string
           example: A Job Name
@@ -1646,6 +3185,80 @@ components:
         running:
           type: boolean
           example: false
+        enabled:
+          type: boolean
+          description: Whether the job's intrinsic feature gate is enabled.
+        configurableEnabled:
+          type: boolean
+          description: Whether administrators may change the job feature gate.
+        dryRunAvailable:
+          type: boolean
+          description: Whether the Jobs list should offer this job's read-only dry-run action.
+        lastResult:
+          type: object
+          nullable: true
+          additionalProperties: true
+        lastExecutionTime:
+          type: string
+          format: date-time
+          nullable: true
+        scheduledExecutionAllowed:
+          type: boolean
+          description: Whether the current synchronization mode permits scheduled execution.
+        manualExecutionAllowed:
+          type: boolean
+          description: Whether the current synchronization mode and commissioning order permit manual execution.
+    SynchronizationContainmentStatus:
+      type: object
+      required:
+        - mode
+        - startupCatchUpsAllowed
+        - scheduledExecutionAllowed
+        - manualSynchronizationAllowed
+        - manualExecutionPolicy
+        - restartRequired
+        - commissioning
+      properties:
+        mode:
+          type: string
+          enum: [normal, contained, commissioning]
+        startupCatchUpsAllowed:
+          type: boolean
+        scheduledExecutionAllowed:
+          type: boolean
+        manualSynchronizationAllowed:
+          type: boolean
+        manualExecutionPolicy:
+          type: string
+          enum: [all, blocked, commissioning-sequence]
+        restartRequired:
+          type: boolean
+          enum: [true]
+        commissioning:
+          type: object
+          nullable: true
+          required:
+            - activeJobId
+            - nextRequiredJobId
+            - completedJobIds
+            - lastFailedJobId
+            - freshSyncEnabled
+          properties:
+            activeJobId:
+              type: string
+              nullable: true
+            nextRequiredJobId:
+              type: string
+              nullable: true
+            completedJobIds:
+              type: array
+              items:
+                type: string
+            lastFailedJobId:
+              type: string
+              nullable: true
+            freshSyncEnabled:
+              type: boolean
     PersonDetails:
       type: object
       properties:
@@ -2156,6 +3769,10 @@ components:
               meaning: 'Some material may not be suitable for children under 10.'
               order: 2
   securitySchemes:
+    jellyfinToken:
+      type: http
+      scheme: bearer
+      description: Jellyfin user access token, verified against the configured server. Seerr cookies and API keys are not accepted.
     cookieAuth:
       type: apiKey
       name: connect.sid
@@ -2166,6 +3783,84 @@ components:
       name: X-Api-Key
 
 paths:
+  /integrations/jellyfin/subtitle-issues:
+    options:
+      security: []
+      summary: Allowed Jellyfin Web origin preflight
+      responses:
+        '204':
+          description: Preflight accepted only when reporting is enabled; only the HTTPS origin of the configured Jellyfin External URL is allowed.
+        '403':
+          $ref: '#/components/responses/SubtitleReportError'
+        '503':
+          $ref: '#/components/responses/SubtitleReportError'
+    post:
+      tags: [media]
+      summary: Report a subtitle issue using a Jellyfin user token
+      description: |
+        Resolves authoritative typed identity in the verified user's Jellyfin context.
+        Regular Seasons use their authoritative parent Series and positive index,
+        reporting all Episodes of that Season. Season 0-wide reporting is rejected;
+        individual Specials Episodes remain supported. Series-wide reports retain 0/0.
+        Requires an existing linked Seerr user with CREATE_ISSUES or MANAGE_ISSUES.
+        Subtitle reporting must be explicitly enabled in Jellyfin service settings;
+        it is disabled by default, including for native requests.
+        Only this token-only operation is exempt from cookie CSRF; browser Origins
+        must match the configured Jellyfin external hostname origin. Native requests
+        may omit Origin. HTTPS is required except for loopback development.
+        Duplicate open reports are acknowledged without comments or notifications.
+      security:
+        - jellyfinToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [itemId]
+              properties:
+                itemId:
+                  type: string
+                  maxLength: 36
+                  pattern: '^(?:[0-9a-fA-F]{32}|[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})$'
+      responses:
+        '201':
+          description: Subtitle issue created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, enum: [created] }
+        '200':
+          description: Equivalent open issue already exists. No reporter or issue details are disclosed.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [status]
+                properties:
+                  status: { type: string, enum: [already-reported] }
+        '400':
+          $ref: '#/components/responses/SubtitleReportError'
+        '401':
+          $ref: '#/components/responses/SubtitleReportError'
+        '403':
+          $ref: '#/components/responses/SubtitleReportError'
+        '404':
+          $ref: '#/components/responses/SubtitleReportError'
+        '422':
+          $ref: '#/components/responses/SubtitleReportError'
+        '429':
+          $ref: '#/components/responses/SubtitleReportError'
+        '502':
+          $ref: '#/components/responses/SubtitleReportError'
+        '503':
+          $ref: '#/components/responses/SubtitleReportError'
   /status:
     get:
       summary: Get Seerr status
@@ -2314,7 +4009,7 @@ paths:
                 $ref: '#/components/schemas/JellyfinSettings'
     post:
       summary: Update Jellyfin settings
-      description: Updates Jellyfin settings with the provided values.
+      description: Updates Jellyfin settings with the provided values. Subtitle reporting is disabled by default and reuses the existing connection, externalHostname origin and linked users. Enabling requires an HTTPS externalHostname without credentials, query or fragment.
       tags:
         - settings
       requestBody:
@@ -2324,6 +4019,15 @@ paths:
             schema:
               $ref: '#/components/schemas/JellyfinSettings'
       responses:
+        '400':
+          description: Invalid subtitle-reporting enable flag or unsafe HTTPS External URL.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
         '200':
           description: 'Values were successfully updated'
           content:
@@ -2828,6 +4532,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RadarrSettings'
+        '400':
+          { description: Complete Radarr or Storage Root payload is invalid }
+        '500':
+          {
+            description: Cross-resource compensation failed; retry the same desired update,
+          }
+        '503': { description: Update was rolled back and is safe to retry }
   /settings/radarr/test:
     post:
       summary: Test Radarr configuration
@@ -2855,6 +4566,8 @@ paths:
                   example: false
                 baseUrl:
                   type: string
+                serviceId:
+                  type: integer
               required:
                 - hostname
                 - port
@@ -2872,6 +4585,10 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ServiceProfile'
+                  rootFolders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StorageRootWithDisplayName'
   /settings/radarr/{radarrId}:
     put:
       summary: Update Radarr instance
@@ -2898,6 +4615,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RadarrSettings'
+        '400':
+          {
+            description: Identifier or complete Radarr/Storage Root payload is invalid,
+          }
+        '404': { description: Radarr instance not found }
+        '500':
+          {
+            description: Cross-resource compensation failed; retry the same desired update,
+          }
+        '503': { description: Update was rolled back and is safe to retry }
     delete:
       summary: Delete Radarr instance
       description: Deletes an existing Radarr instance based on the radarrId parameter.
@@ -2917,6 +4644,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/RadarrSettings'
+        '400': { description: Invalid Radarr identifier }
+        '404': { description: Radarr instance not found }
+        '500':
+          {
+            description: Cross-resource compensation failed; retry the same desired update,
+          }
+        '503': { description: Update was rolled back and is safe to retry }
   /settings/radarr/{radarrId}/profiles:
     get:
       summary: Get available Radarr profiles
@@ -2972,6 +4706,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SonarrSettings'
+        '400':
+          { description: Complete Sonarr or Storage Root payload is invalid }
+        '500':
+          {
+            description: Cross-resource compensation failed; retry the same desired update,
+          }
+        '503': { description: Update was rolled back and is safe to retry }
   /settings/sonarr/test:
     post:
       summary: Test Sonarr configuration
@@ -2999,6 +4740,8 @@ paths:
                   example: false
                 baseUrl:
                   type: string
+                serviceId:
+                  type: integer
               required:
                 - hostname
                 - port
@@ -3016,6 +4759,10 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/ServiceProfile'
+                  rootFolders:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/StorageRootWithDisplayName'
   /settings/sonarr/{sonarrId}:
     put:
       summary: Update Sonarr instance
@@ -3042,6 +4789,16 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SonarrSettings'
+        '400':
+          {
+            description: Identifier or complete Sonarr/Storage Root payload is invalid,
+          }
+        '404': { description: Sonarr instance not found }
+        '500':
+          {
+            description: Cross-resource compensation failed; retry the same desired update,
+          }
+        '503': { description: Update was rolled back and is safe to retry }
     delete:
       summary: Delete Sonarr instance
       description: Deletes an existing Sonarr instance based on the sonarrId parameter.
@@ -3061,6 +4818,13 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SonarrSettings'
+        '400': { description: Invalid Sonarr identifier }
+        '404': { description: Sonarr instance not found }
+        '500':
+          {
+            description: Cross-resource compensation failed; retry the same desired update,
+          }
+        '503': { description: Update was rolled back and is safe to retry }
   /settings/public:
     get:
       summary: Get public settings
@@ -3103,6 +4867,19 @@ paths:
                 type: array
                 items:
                   $ref: '#/components/schemas/Job'
+  /settings/synchronization-containment:
+    get:
+      summary: Get synchronization containment status
+      description: Returns the immutable process synchronization mode and its effective startup, scheduled, and manual execution policy.
+      tags:
+        - settings
+      responses:
+        '200':
+          description: Synchronization containment status returned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SynchronizationContainmentStatus'
   /settings/jobs/{jobId}/run:
     post:
       summary: Invoke a specific job
@@ -3122,6 +4899,30 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+        '409':
+          description: Job execution is blocked by its feature gate, synchronization containment, or commissioning order.
+  /settings/jobs/{jobId}/dry-run:
+    post:
+      summary: Evaluate a supported job without mutations
+      description: Runs a supported administrator-only diagnostic without creating requests or invoking provider mutations.
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Dry-run result returned
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: Dry-run job not found
   /settings/jobs/{jobId}/cancel:
     post:
       summary: Cancel a specific job
@@ -3141,6 +4942,36 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Job'
+  /settings/jobs/{jobId}/enabled:
+    post:
+      summary: Enable or disable a configurable job
+      tags:
+        - settings
+      parameters:
+        - in: path
+          name: jobId
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Updated job
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '404':
+          description: Configurable job not found
   /settings/jobs/{jobId}/schedule:
     post:
       summary: Modify job schedule
@@ -4330,6 +6161,12 @@ paths:
           required: false
           schema:
             type: string
+        - in: query
+          name: includeInUserMetrics
+          required: false
+          description: Filter users by explicit metrics inclusion.
+          schema:
+            type: boolean
       responses:
         '200':
           description: A JSON array of all users
@@ -4392,6 +6229,13 @@ paths:
                     type: integer
                 permissions:
                   type: integer
+                includeInUserMetrics:
+                  type: boolean
+                  description: Boolean value applied to every selected user.
+              required:
+                - ids
+                - permissions
+                - includeInUserMetrics
       responses:
         '200':
           description: Successfully updated user details
@@ -4843,7 +6687,9 @@ paths:
           required: true
           example: '1'
           schema:
-            type: string
+            type: integer
+            minimum: 1
+            maximum: 9007199254740991
         - in: query
           name: mediaType
           required: true
@@ -5069,12 +6915,45 @@ paths:
             schema:
               $ref: '#/components/schemas/Watchlist'
       responses:
-        '200':
+        '201':
           description: Watchlist data returned
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Watchlist'
+        '400':
+          description: Invalid TMDB identity or media type
+  /watchlist/history:
+    get:
+      summary: Get durable Watchlist intent history
+      description: Returns the authenticated user's lifecycle occurrences. WATCHLIST_VIEW is required to inspect another user.
+      tags:
+        - watchlist
+      parameters:
+        - in: query
+          name: userId
+          schema:
+            type: integer
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: state
+          schema:
+            type: string
+            enum: [ACTIVE, SATISFIED, REMOVED]
+      responses:
+        '200':
+          description: Watchlist lifecycle history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistHistoryResponse'
+        '403':
+          description: Insufficient permission to inspect another user
   /watchlist/{tmdbId}:
     delete:
       summary: Delete watchlist item
@@ -5089,6 +6968,7 @@ paths:
           example: '1'
           schema:
             type: string
+            pattern: '^[0-9]+$'
         - in: query
           name: mediaType
           required: true
@@ -5100,11 +6980,14 @@ paths:
       responses:
         '204':
           description: Succesfully removed watchlist item
+        '400':
+          description: Invalid TMDB identifier or media type
   /user/{userId}/watchlist:
     get:
-      summary: Get the Plex watchlist for a specific user
+      summary: Get the canonical watchlist for a specific user
       description: |
-        Retrieves a user's Plex Watchlist in a JSON object.
+        Retrieves the user's Plex Watchlist when Plex identity is configured,
+        otherwise their local Seerr Watchlist.
       tags:
         - users
         - watchlist
@@ -5120,6 +7003,27 @@ paths:
             type: number
             example: 1
             default: 1
+        - in: query
+          name: watched
+          description: Local Jellyfin-backed Watchlist completion filter. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: not_watched
+            enum:
+              - not_watched
+              - watched
+              - all
+        - in: query
+          name: libraryStatus
+          description: Local physical Library Status filter. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: absent
+            enum:
+              - any
+              - absent
+              - active
+              - archived
       responses:
         '200':
           description: Watchlist data returned
@@ -5134,6 +7038,19 @@ paths:
                     type: number
                   totalResults:
                     type: number
+                  source:
+                    type: string
+                    enum:
+                      - local
+                      - plex
+                  supportsPresentation:
+                    type: boolean
+                  supportsWatchState:
+                    type: boolean
+                  supportsLibraryStatus:
+                    type: boolean
+                  hasUnclassifiedItems:
+                    type: boolean
                   results:
                     type: array
                     items:
@@ -5144,10 +7061,25 @@ paths:
                           example: 1
                         ratingKey:
                           type: string
-                        type:
+                        mediaType:
                           type: string
+                          enum:
+                            - movie
+                            - tv
                         title:
                           type: string
+                        watchState:
+                          type: string
+                          enum:
+                            - watched
+                            - not_watched
+                            - unknown
+                        lastPlayedAt:
+                          type: string
+                          format: date-time
+                        watchStateSyncedAt:
+                          type: string
+                          format: date-time
   /user/{userId}/settings/main:
     get:
       summary: Get general settings for a user
@@ -5440,6 +7372,9 @@ paths:
                   permissions:
                     type: number
                     example: 2
+                  includeInUserMetrics:
+                    type: boolean
+                    default: true
     post:
       summary: Update permission settings for a user
       description: Updates and returns permission settings for a specific user. Requires `MANAGE_USERS` permission if editing other users.
@@ -5460,6 +7395,8 @@ paths:
               properties:
                 permissions:
                   type: number
+                includeInUserMetrics:
+                  type: boolean
               required:
                 - permissions
       responses:
@@ -5473,6 +7410,9 @@ paths:
                   permissions:
                     type: number
                     example: 2
+                  includeInUserMetrics:
+                    type: boolean
+                    default: true
   /user/{userId}/watch_data:
     get:
       summary: Get watch data
@@ -5630,6 +7570,1022 @@ paths:
                     type: array
                     items:
                       $ref: '#/components/schemas/Company'
+  /library:
+    get:
+      summary: Get factual Library data
+      description: Returns an administrator-only, read-only factual Current, Archive, or All Library projection.
+      tags: [library]
+      parameters:
+        - in: query
+          name: take
+          schema: { type: integer, minimum: 1, maximum: 100, default: 25 }
+        - in: query
+          name: skip
+          schema: { type: integer, minimum: 0, default: 0 }
+        - in: query
+          name: scope
+          schema:
+            { type: string, enum: [current, archive, all], default: current }
+        - in: query
+          name: search
+          schema: { type: string, maxLength: 300 }
+        - in: query
+          name: mediaType
+          schema: { type: string, enum: [all, movie, series], default: all }
+        - in: query
+          name: collectionMembership
+          description: Confirmed TMDB Movie collection membership. Active values restrict results to Movies without changing the stored mediaType preference.
+          schema: { type: string, enum: [any, in, none], default: any }
+        - in: query
+          name: animation
+          description: Whether an item belongs to an administrator-designated Animation storage root in the selected Library scope.
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: storageRootId
+          deprecated: true
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: storageRootIds
+          description: Comma-separated storage-root IDs; matches any selected root.
+          schema: { type: string, pattern: '^\d+(,\d+)*$' }
+        - in: query
+          name: watchlist
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: watched
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: requested
+          description: Whether any durable request record exists for the typed media identity.
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: liked
+          description: Any is unrestricted; yes matches an eligible selected user's explicit Like, no an explicit Dislike. Neutral and Unknown match neither. Matches any selected user, independently of other association filters.
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: userId
+          deprecated: true
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: userIds
+          description: Comma-separated user IDs; selected users match any active people association.
+          schema: { type: string, pattern: '^\d+(,\d+)*$' }
+        - in: query
+          name: addedFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: addedTo
+          schema: { type: string, format: date }
+        - in: query
+          name: activity
+          schema: { type: string, enum: [any, present, none], default: any }
+        - in: query
+          name: activityFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: activityTo
+          schema: { type: string, format: date }
+        - in: query
+          name: sort
+          schema:
+            {
+              type: string,
+              enum: [title, added, lastActive, size, removed, watchedUsers],
+              default: size,
+            }
+        - in: query
+          name: sortDirection
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - in: query
+          name: scheduled
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: removalDueFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: removalDueTo
+          schema: { type: string, format: date }
+        - in: query
+          name: removedFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: removedTo
+          schema: { type: string, format: date }
+        - in: query
+          name: removalSources
+          description: Comma-separated factual removal sources.
+          schema:
+            {
+              type: string,
+              pattern: '^(manual|scheduled|external|unknown)(,(manual|scheduled|external|unknown))*$',
+            }
+      responses:
+        '200':
+          description: Factual Library projection for the selected scope
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryResponse' }
+        '403': { description: Administrator permission required }
+  /library/presentation-status/{batchId}:
+    get:
+      summary: Get asynchronous Library presentation status
+      description: Returns the bounded, process-local enrichment state for a Library page so clients can revalidate once without polling the full Library query.
+      tags: [library]
+      parameters:
+        - in: path
+          name: batchId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current presentation enrichment state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryPresentationStatus' }
+        '400': { description: Invalid presentation batch identity }
+        '403': { description: Administrator permission required }
+  /library/collections:
+    get:
+      summary: Browse TMDB collections represented in the current Library
+      description: Discovers confirmed collection identities from current Library Movies, then returns a bounded cached collection projection with strict availability counts.
+      tags: [library]
+      parameters:
+        - in: query
+          name: take
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: skip
+          schema: { type: integer, minimum: 0, default: 0 }
+        - in: query
+          name: completeness
+          schema:
+            { type: string, enum: [all, complete, incomplete], default: all }
+        - in: query
+          name: sort
+          schema:
+            {
+              type: string,
+              enum: [name, completeness, available],
+              default: name,
+            }
+        - in: query
+          name: sortDirection
+          schema: { type: string, enum: [asc, desc], default: asc }
+      responses:
+        '200':
+          description: Current Library collection discovery snapshot
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/LibraryCollectionsResponse' }
+        '403': { description: Administrator permission required }
+  /library/user-availability:
+    get:
+      summary: Get Library filter-user availability
+      description: Returns administrator-only, read-only user availability for the canonical Library filter state without applying selected-user constraints.
+      tags: [library]
+      parameters:
+        - in: query
+          name: scope
+          schema:
+            { type: string, enum: [current, archive, all], default: current }
+        - in: query
+          name: search
+          schema: { type: string, maxLength: 300 }
+        - in: query
+          name: mediaType
+          schema: { type: string, enum: [all, movie, series], default: all }
+        - in: query
+          name: collectionMembership
+          description: Confirmed TMDB Movie collection membership. Active values restrict candidates to Movies.
+          schema: { type: string, enum: [any, in, none], default: any }
+        - in: query
+          name: animation
+          description: Whether an item belongs to an administrator-designated Animation storage root in the selected Library scope.
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: storageRootId
+          deprecated: true
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: storageRootIds
+          description: Comma-separated storage-root IDs; matches any selected root.
+          schema: { type: string, pattern: '^\d+(,\d+)*$' }
+        - in: query
+          name: watchlist
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: watched
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: requested
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: liked
+          description: Eligible candidate user's explicit preference; yes is Like, no is Dislike, never Neutral or Unknown.
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: userId
+          deprecated: true
+          description: Included only so an explicitly selected user remains present in the response; it does not constrain candidate availability.
+          schema: { type: integer, minimum: 1 }
+        - in: query
+          name: userIds
+          description: Comma-separated selected user IDs retained in the response but excluded from candidate constraints.
+          schema: { type: string, pattern: '^\d+(,\d+)*$' }
+        - in: query
+          name: addedFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: addedTo
+          schema: { type: string, format: date }
+        - in: query
+          name: activity
+          schema: { type: string, enum: [any, present, none], default: any }
+        - in: query
+          name: activityFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: activityTo
+          schema: { type: string, format: date }
+        - in: query
+          name: scheduled
+          schema: { type: string, enum: [any, 'yes', 'no'], default: any }
+        - in: query
+          name: removalDueFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: removalDueTo
+          schema: { type: string, format: date }
+        - in: query
+          name: removedFrom
+          schema: { type: string, format: date }
+        - in: query
+          name: removedTo
+          schema: { type: string, format: date }
+        - in: query
+          name: removalSources
+          description: Comma-separated factual removal sources.
+          schema:
+            {
+              type: string,
+              pattern: '^(manual|scheduled|external|unknown)(,(manual|scheduled|external|unknown))*$',
+            }
+      responses:
+        '200':
+          description: Filter-user availability for the selected Library facts
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/LibraryFilterUsersResponse' }
+        '403': { description: Administrator permission required }
+  /library/bulk-actions:
+    post:
+      summary: Schedule, cancel, or immediately remove selected Library targets
+      description: Administrator-only deterministic batch orchestration. Remove Now requests provider file deletion sequentially and is limited to 10 targets; other actions accept up to 100 targets.
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LibraryBulkActionRequest' }
+      responses:
+        '200':
+          description: Processed batch, including partial-success results
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryBulkActionResponse' }
+        '400': { description: Structurally invalid batch }
+        '403': { description: Administrator permission required }
+  /library/bulk-actions/eligibility:
+    post:
+      summary: Preview Schedule and Cancel eligibility for Library targets
+      description: Administrator-only read-only classification using exact target identity, actionable schedule state, processing leases, and current removal authority. The mutation endpoint revalidates every target at execution time.
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              {
+                $ref: '#/components/schemas/LibraryBulkActionEligibilityRequest',
+              }
+      responses:
+        '200':
+          description: Eligibility in deterministic request order
+          content:
+            application/json:
+              schema:
+                {
+                  $ref: '#/components/schemas/LibraryBulkActionEligibilityResponse',
+                }
+        '400': { description: Structurally invalid target selection }
+        '403': { description: Administrator permission required }
+  /library/selection-size:
+    post:
+      summary: Project current storage size for selected Library targets
+      description: Administrator-only read-only aggregation from current authoritative Foundation files. Durable file identities are deduplicated across Movie, Series, and Season targets.
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LibrarySelectionSizeRequest' }
+      responses:
+        '200':
+          description: Selected current file-size projection in deterministic target order
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/LibrarySelectionSizeResponse' }
+        '400': { description: Structurally invalid target selection }
+        '403': { description: Administrator permission required }
+  /library/{canonicalMediaId}/series-detail:
+    get:
+      summary: Get factual Season-first Series watched detail
+      tags: [library]
+      parameters:
+        - in: path
+          name: canonicalMediaId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Bounded Season-first Series watched detail
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibrarySeriesDetail' }
+        '403': { description: Administrator permission required }
+        '404': { description: Canonical Series not found }
+  /library/{canonicalMediaId}/remove:
+    post:
+      summary: Remove a current Movie, Series, or Season and its files
+      tags: [library]
+      parameters:
+        - in: path
+          name: canonicalMediaId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LibraryRemovalTargetRequest' }
+      responses:
+        '200':
+          description: Provider outcome was durably recorded and local Foundation/schedule reconciliation completed. A removed outcome is provider acknowledgment, not independent proof of physical deletion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryRemovalResult' }
+        '400': { description: Invalid target identity or Season fields }
+        '403': { description: Administrator permission required }
+        '404': { description: Current canonical target was not found }
+        '409':
+          description: Non-retryable identity, configuration, acquisition, overlap, or uncertain-outcome safety conflict
+        '503':
+          description: Retryable provider or execution-claim conflict before a destructive outcome became uncertain
+  /library/{canonicalMediaId}/removal-schedules:
+    post:
+      summary: Schedule manual removal
+      tags: [library]
+      parameters:
+        - in: path
+          name: canonicalMediaId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LibraryRemovalTargetRequest' }
+      responses:
+        '201':
+          description: Active removal schedule
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RemovalSchedule' }
+        '400': { description: Invalid target identity or Season fields }
+        '403': { description: Administrator permission required }
+        '404': { description: Current canonical target was not found }
+        '409':
+          description: 'Identity, provider, acquisition, overlap, or active-execution conflict'
+  /library/removal-schedules/{scheduleId}:
+    delete:
+      summary: Cancel an active removal schedule
+      tags: [library]
+      parameters:
+        - in: path
+          name: scheduleId
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200': { description: Cancelled schedule }
+        '400': { description: Invalid schedule identifier }
+        '403': { description: Administrator permission required }
+        '404': { description: Schedule not found }
+        '409': { description: Schedule has active execution ownership }
+  /leaving-soon:
+    get:
+      summary: Get active scheduled removals
+      tags: [library]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+      responses:
+        '200':
+          description: User-safe paginated Leaving Soon projection
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/LeavingSoonResultsResponse' }
+        '403': { description: Authentication required }
+  /leaving-soon/presentation-status/{batchId}:
+    get:
+      summary: Get presentation status for the requesting user's Leaving Soon batch
+      description: Returns only the bounded presentation status for a batch previously issued to the same authenticated user.
+      tags: [library]
+      parameters:
+        - in: path
+          name: batchId
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Current presentation enrichment state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LibraryPresentationStatus' }
+        '400': { description: Invalid presentation batch identity }
+        '403': { description: Authentication required }
+        '404':
+          { description: Batch was not issued to this user or is unavailable }
+  /settings/removal:
+    get:
+      summary: Get removal settings
+      tags: [settings]
+      responses:
+        '200':
+          description: Removal settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RemovalSettings' }
+        '403': { description: Administrator permission required }
+    post:
+      summary: Update validated removal settings
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RemovalSettings' }
+      responses:
+        '200':
+          description: Updated removal settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RemovalSettings' }
+        '403': { description: Administrator permission required }
+  /settings/storage:
+    get:
+      summary: Get Overflow settings and fresh Servarr storage capacity
+      tags: [settings]
+      responses:
+        '200':
+          description: Overflow settings and read-only storage locations
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/StorageSettingsResponse' }
+        '403': { description: Administrator permission required }
+    post:
+      summary: Update Overflow settings and volume mappings
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OverflowSettings' }
+      responses:
+        '200':
+          description: Updated Overflow settings
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OverflowSettings' }
+        '400': { description: Invalid settings or missing storage root }
+        '403': { description: Administrator permission required }
+        '503': { description: A referenced Servarr instance is unavailable }
+  /settings/watchlist-roulette:
+    get:
+      summary: Get Watchlist Roulette configuration and last-run selections
+      tags: [settings]
+      responses:
+        '200':
+          description: Watchlist Roulette settings, administrator choices, and last-run selections
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistRouletteSettingsResponse'
+        '403': { description: Administrator permission required }
+    post:
+      summary: Update Watchlist Roulette request ownership and per-run limits
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required:
+                [requestOwnerUserId, movieItemsPerRun, seriesItemsPerRun]
+              properties:
+                requestOwnerUserId:
+                  type: integer
+                  minimum: 1
+                  nullable: true
+                movieItemsPerRun: { type: integer, minimum: 1, maximum: 100 }
+                seriesItemsPerRun: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: Updated Watchlist Roulette settings
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WatchlistRouletteSettings'
+        '400': { description: Invalid settings or request owner }
+        '403': { description: Administrator permission required }
+  /settings/storage/series-relocation/next-candidate:
+    get:
+      summary: Evaluate the next eligible Series Relocation candidate
+      tags: [settings]
+      responses:
+        '200':
+          description: Read-only Series Relocation candidate evaluation
+          content:
+            application/json:
+              schema:
+                { $ref: '#/components/schemas/SeriesRelocationPreviewResult' }
+        '403': { description: Administrator permission required }
+  /settings/removal/clear:
+    post:
+      summary: Cancel every actionable removal schedule without removing media
+      tags: [settings]
+      responses:
+        '200':
+          description: Number of schedules cancelled atomically
+          content:
+            application/json:
+              schema: { type: integer, minimum: 0 }
+        '409':
+          {
+            description: Clear All was rejected atomically because an actionable schedule has an active durable execution claim or legacy processing lease,
+          }
+        '403': { description: Administrator permission required }
+  /settings/removal/preview:
+    post:
+      summary: Preview removal eligibility without mutating settings or schedules
+      tags: [settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RemovalSettings'
+      responses:
+        '200':
+          description: Read-only Movie and Series eligibility preview
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RemovalPreview' }
+        '403': { description: Administrator permission required }
+  /settings/history-import:
+    get:
+      summary: Get supported historical-data import capabilities
+      tags: [settings]
+      responses:
+        '200':
+          description: Supported portable history schemas and upload limit
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [supportedSchemas, maximumFileBytes, status]
+                properties:
+                  supportedSchemas:
+                    type: array
+                    items: { type: string, enum: [wholphin-history-v1] }
+                  maximumFileBytes: { type: integer }
+                  status:
+                    $ref: '#/components/schemas/HistoricalImportStatus'
+        '403': { description: Administrator permission required }
+    post:
+      summary: Atomically import a portable Wholphin history file
+      tags: [settings]
+      requestBody:
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Historical-data merge summary
+          content:
+            application/json:
+              schema: { type: object, additionalProperties: true }
+        '403': { description: Administrator permission required }
+        '409':
+          description: Historical facts conflict with accepted evidence
+  /settings/history-import/validate:
+    post:
+      summary: Validate a portable Wholphin history file without writing it
+      tags: [settings]
+      requestBody:
+        content:
+          application/octet-stream:
+            schema: { type: string, format: binary }
+      responses:
+        '200':
+          description: Validated dataset metadata
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/HistoryImportValidation' }
+        '403': { description: Administrator permission required }
+  /fresh:
+    get:
+      summary: Get Fresh media
+      description: >-
+        Returns discovered Fresh media with native Seerr media state. Administrator
+        content filters apply to the full visibility-eligible population before
+        totals and pagination. Rating/vote sorts order the complete qualifying
+        population by the selected metric descending (missing/invalid/zero last),
+        First Seen descending, then media type and TMDB ID ascending. Filtered or
+        metric-sorted metadata evaluation is bounded to 5000
+        typed identities and two minutes checked between batches; incomplete or
+        busy evaluation returns 503, never partial filtered totals.
+      tags:
+        - search
+      parameters:
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: mediaType
+          schema:
+            type: string
+            enum: [all, movie, tv]
+            default: all
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum:
+              - freshest
+              - oldest
+              - vote_average
+              - vote_count
+            default: freshest
+      responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '200':
+          description: Fresh media projection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshResponse'
+  /settings/fresh:
+    get:
+      summary: Get Fresh settings
+      tags:
+        - settings
+      responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '200':
+          description: Fresh settings without the API token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshSettings'
+    put:
+      summary: Update Fresh settings
+      tags:
+        - settings
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FreshSettings'
+      responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '200':
+          description: Updated Fresh settings without the API token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshSettings'
+  /settings/fresh/test:
+    post:
+      summary: Test Fresh autobrr connection
+      tags:
+        - settings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                baseUrl:
+                  type: string
+                apiToken:
+                  type: string
+                  writeOnly: true
+      responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '200':
+          description: Connection succeeded
+  /settings/fresh/filters:
+    post:
+      summary: Get browser-safe autobrr filter options
+      tags:
+        - settings
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                baseUrl:
+                  type: string
+                apiToken:
+                  type: string
+                  writeOnly: true
+      responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '200':
+          description: autobrr filter options
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  required: [id, name]
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    enabled:
+                      type: boolean
+  /settings/fresh/status:
+    get:
+      summary: Get Fresh refresh status
+      tags:
+        - settings
+      responses:
+        '400':
+          description: Invalid Fresh configuration or query
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '403':
+          description: Authentication or administrator permission required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '502':
+          description: Discovery source temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '503':
+          description: Fresh temporarily unavailable
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message: { type: string }
+                  status: { type: integer }
+                  error: { type: string }
+        '200':
+          description: Fresh refresh status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FreshStatus'
   /discover/movies:
     get:
       summary: Discover movies
@@ -6457,7 +9413,7 @@ paths:
                       example: Genre Name
   /discover/watchlist:
     get:
-      summary: Get the Plex watchlist.
+      summary: Get the current user's canonical watchlist.
       tags:
         - search
       parameters:
@@ -6467,6 +9423,60 @@ paths:
             type: number
             example: 1
             default: 1
+        - in: query
+          name: category
+          description: Local Watchlist category. Ignored for Plex Watchlists.
+          schema:
+            type: string
+            default: all
+            enum:
+              - all
+              - movies
+              - series
+              - animation
+        - in: query
+          name: sort
+          description: Local Watchlist ordering. Ignored for Plex Watchlists.
+          schema:
+            type: string
+            default: added_desc
+            enum:
+              - added_desc
+              - added_asc
+              - title_asc
+              - title_desc
+        - in: query
+          name: watched
+          description: Local Jellyfin-backed Watchlist completion filter. Unknown remains in Not Watched. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: not_watched
+            enum:
+              - not_watched
+              - watched
+              - all
+        - in: query
+          name: libraryStatus
+          description: Local physical Library Status filter. Unsupported for Plex Watchlists.
+          schema:
+            type: string
+            default: absent
+            enum:
+              - any
+              - absent
+              - active
+              - archived
+        - in: query
+          name: owner
+          description: Watchlist owner scope. `all` and another user's numeric ID require `WATCHLIST_VIEW`; omitted or `me` selects the authenticated user.
+          schema:
+            oneOf:
+              - type: string
+                enum:
+                  - me
+                  - all
+              - type: string
+                pattern: '^[1-9][0-9]*$'
       responses:
         '200':
           description: Watchlist data returned
@@ -6481,6 +9491,19 @@ paths:
                     type: number
                   totalResults:
                     type: number
+                  source:
+                    type: string
+                    enum:
+                      - local
+                      - plex
+                  supportsPresentation:
+                    type: boolean
+                  supportsWatchState:
+                    type: boolean
+                  supportsLibraryStatus:
+                    type: boolean
+                  hasUnclassifiedItems:
+                    type: boolean
                   results:
                     type: array
                     items:
@@ -6491,10 +9514,34 @@ paths:
                           example: 1
                         ratingKey:
                           type: string
-                        type:
+                        mediaType:
                           type: string
+                          enum:
+                            - movie
+                            - tv
                         title:
                           type: string
+                        watchState:
+                          type: string
+                          enum:
+                            - watched
+                            - not_watched
+                            - unknown
+                        lastPlayedAt:
+                          type: string
+                          format: date-time
+                        watchStateSyncedAt:
+                          type: string
+                          format: date-time
+                        requestedBy:
+                          type: object
+                          properties:
+                            id:
+                              type: integer
+                            displayName:
+                              type: string
+                            avatar:
+                              type: string
   /request:
     get:
       summary: Get all requests
@@ -6594,7 +9641,9 @@ paths:
                   enum: [movie, tv]
                   example: movie
                 mediaId:
-                  type: number
+                  type: integer
+                  minimum: 1
+                  maximum: 9007199254740991
                   example: 123
                 tvdbId:
                   type: number
@@ -6602,8 +9651,10 @@ paths:
                 seasons:
                   oneOf:
                     - type: array
+                      minItems: 1
+                      uniqueItems: true
                       items:
-                        type: number
+                        type: integer
                         minimum: 0
                     - type: string
                       enum: [all]
@@ -6635,6 +9686,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaRequest'
+        '400':
+          description: Invalid media or Season identity, or a partial Series request while partial requests are disabled
   /request/count:
     get:
       summary: Gets request counts
@@ -6713,10 +9766,15 @@ paths:
                   type: string
                   enum: [movie, tv]
                 seasons:
-                  type: array
-                  items:
-                    type: number
-                    minimum: 0
+                  oneOf:
+                    - type: array
+                      minItems: 1
+                      uniqueItems: true
+                      items:
+                        type: integer
+                        minimum: 0
+                    - type: string
+                      enum: [all]
                 is4k:
                   type: boolean
                   example: false
@@ -6740,6 +9798,8 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaRequest'
+        '400':
+          description: Invalid Season identity, or a partial Series request while partial requests are disabled
         '409':
           description: Only pending requests can be modified
     delete:

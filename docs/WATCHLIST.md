@@ -1,0 +1,187 @@
+# Watchlist intent and Jellyfin completion
+
+The downstream Watchlist is an explicit, user-owned statement of future viewing
+intent. Requests, availability, acquisition, playback, completion, and future
+preference signals do not add or remove Watchlist membership.
+
+## Completion projection
+
+Seerr stores a narrow projection of the same user's current Jellyfin completion
+on `UserMediaState`, keyed by `(user, mediaType, tmdbId)`:
+
+- `watched`: Jellyfin authoritatively reports completion;
+- `not_watched`: Jellyfin authoritatively reports incomplete;
+- `unknown`: no safe current conclusion is available.
+
+The default Watchlist view is **Not Watched**, which includes both
+`not_watched` and `unknown`. **All**, **Not Watched**, and **Watched** are the
+explicit filter choices, and filtering happens before pagination. Ordinary
+cards render only the positive **Watched** signal; `not_watched` and `unknown`
+remain operationally distinct without adding negative badges to the card.
+Provider outages preserve the last known projection. Missing or ambiguous
+identity evidence produces `unknown`, never a guessed incomplete state.
+
+Movie completion comes from exact mapped normal and 4K Jellyfin item IDs; any
+exact version with `UserData.Played=true` establishes `watched`. TV v1 uses the
+exact Jellyfin Series item's `UserData.Played` as “caught up with all currently
+indexed content.” A Series must have `RecursiveItemCount > 0`, so an empty
+Series cannot be treated as watched. A newly indexed episode can therefore move
+a Series back to `not_watched` until the user catches up.
+
+Only `jellyfinPlayed`, `jellyfinLastPlayedAt`, the successful sync time, and an
+internal normalized Jellyfin-user binding are persisted. This is reusable
+current state, not immutable playback history. Removing Watchlist membership
+does not delete it; re-adding the same typed identity immediately reuses the
+last known state. Immutable normalized viewing evidence belongs to the Library
+foundation, not Watchlist.
+
+## Identity, privacy, and lifecycle
+
+Membership identity is `(requestedBy, mediaType, tmdbId)`. The optional derived
+Media relations on both Watchlist and `UserMediaState` use `SET NULL`, so
+deleting or rebuilding Media cannot delete explicit intent or current watched
+state. Reconciliation relinks a reconstructed exact typed Media identity.
+
+Completion is resolved only through exact `User.jellyfinUserId` mapping. No
+username, email, display-name, title, or TMDB fallback is permitted. Normalized
+Jellyfin IDs are unique when present; ambiguous legacy mappings fail closed. A
+changed Jellyfin account invalidates completion derived from the previous
+account until the newly linked account can be queried successfully.
+
+Owners can read their own enriched Watchlist. Administrators and users with the
+purpose-built `WATCHLIST_VIEW` permission can select **All**, **Me**, or a
+specific user. `MANAGE_REQUESTS` alone does not grant this playback-derived
+visibility. Cross-user responses expose only the minimal owner identity needed
+for presentation.
+
+Each account has an explicit **Include in user metrics** flag, defaulting to
+enabled. The flag is independent of authentication provider, sign-in
+capability, role, permissions, requests, and Jellyfin identity. Administrators
+manage it on the existing User Permissions page through the single checkbox
+**Include in user metrics**, or for selected accounts through the existing
+Bulk Edit dialog. Bulk Edit presents the same single boolean checkbox: checked
+includes every selected account and unchecked excludes every selected account.
+There is deliberately no third unchanged state. People-oriented
+Watchlist selectors and the **All** scope include only opted-in accounts; no
+username or email inference is used. Owner, media type, watch status, Library
+Status, and sort preferences are browser-local and safely fall back when stored
+values become invalid. Library Status defaults to **Absent**: no confirmed
+current or historical physical Library presence. **Active** means current
+physical presence, **Archived** means physical history without current physical
+presence, and **Any** removes only the Library Status restriction.
+
+An identically titled Jellyfin item is not completion evidence for another
+typed TMDB identity. For example, a Watchlist Movie with TMDB `1050035` remains
+`unknown` when the user's played Jellyfin Movie is TMDB `1203484`, even if both
+are titled “Monster.” This is an intentional fail-closed result, not a missing
+title fallback.
+
+The active `Watchlist` row remains the compatibility projection used by current
+pages and request flows. Durable `UserMediaIntentOccurrence` rows preserve each
+exact intent cycle independently:
+
+- `ACTIVE` is current retained consumption interest; and
+- `REMOVED` closes only the occurrence explicitly abandoned by the user.
+
+Confirmed viewing updates Watched state independently. It does not remove the
+active Watchlist row or transition its occurrence to `SATISFIED`. Historical
+`SATISFIED` occurrences and their evidence remain durable records from the
+earlier lifecycle, but no new automatic satisfaction occurs.
+
+Removing and later re-adding an item creates a new occurrence rather than
+reviving the old one. Movie and Series Watchlists remain `ACTIVE` after viewing
+until the user explicitly removes them. Exact Season/Episode viewing
+projections can still establish that the user's intent is satisfied for a
+particular physical Season without closing the Series occurrence. The history
+API exposes only the authenticated user's occurrences unless `WATCHLIST_VIEW`
+authorizes another user.
+
+## Reconciliation and reusable Jellyfin boundary
+
+`Watchlist Play State Sync` runs at startup, approximately every five minutes,
+and from the existing administrator Jobs page. It is singleton/non-overlapping,
+groups rows by exact Jellyfin user, batches at most 100 exact item IDs per
+request, limits user concurrency, performs network work outside the database
+transaction, and atomically updates durable state records. It emits aggregate
+completion counters without raw provider payloads, media identifiers, URLs, or
+credentials.
+
+The startup invocation is automatic when application jobs are registered; the
+cron schedule controls later runs but does not suppress startup catch-up. The
+first-production procedure uses `SEERR_SYNCHRONIZATION_MODE=contained` to block
+that catch-up, followed by the ordered commissioning mode documented in the
+[deployment runbook](FIRST_PRODUCTION_DEPLOYMENT.md). Editing the schedule is not
+a containment mechanism.
+
+`Watchlist Metadata Backfill` is separate and remains necessary: it fills
+missing TMDB genre metadata used by Watchlist category filters. The Jobs page
+describes both jobs and lists jobs alphabetically by display name; their native
+schedules and execution behavior are unchanged.
+
+The generic Jellyfin client supports bounded per-user `/Items` reads with
+`enableUserData=true`, a fixed timeout, typed `UserData`, and opt-in item fields.
+Watchlist consumes only completion evidence. User-scoped Media responses may
+include the authenticated user's current projection, while later Activity,
+progress, and preference work can reuse the client and projection without
+exposing another user's state or broadening Watchlist storage.
+
+Plex Watchlists remain upstream-owned remote projections. They report that
+Jellyfin completion and Library Status filtering are unsupported rather than
+pretending an externally paginated page was fully filtered locally.
+
+Watchlist Roulette reads only opted-in users' current local Watchlist entries
+whose shared physical Library Status is **Absent**, then keeps its existing
+typed-identity deduplication, shuffle, request eligibility, and submission
+workflow. Active and Archived items never enter its candidate pool. Movie
+Roulette resolves collection membership lazily after shuffling. A confirmed
+standalone Movie follows the ordinary path; a collection candidate resolves to
+the earliest release-dated member with no current or historical physical
+Library evidence. The resolved Movie still passes the normal request safeguards,
+and an ineligible earliest missing member consumes that collection's single
+attempt for the run rather than allowing a later sequel. Series Roulette is
+unchanged. Per-run candidate, TMDB-call, and metadata-time limits bound provider
+work; a limited run records `metadata-budget` or `metadata-deadline` and retries
+naturally on a later schedule. Roulette never changes Watchlist membership.
+
+Watchlist and Blocklist are compact secondary card actions with transparent
+circular hit targets, accessible names, and hover/focus tooltips. Request is
+the compact primary action and still opens the existing request flow only on
+activation. Requested, Partially Available, and Available remain non-clickable
+presentation states; destructive cleanup remains red and distinct. The
+positive **Watched** state uses the cyan Play indicator in the top-right state
+column, while Movie/Series remains top left and owner attribution remains
+bottom left in the all-users view.
+
+| Card element | Semantic class | Interaction / primitive |
+| --- | --- | --- |
+| Watchlist star, Blocklist prohibition icon | Secondary action | Hover-only native `Button` + `Tooltip`; activation mutates the explicit user state. |
+| Request download arrow | Primary action | Native primary `Button` + `Tooltip`; activation opens the existing request modal. |
+| Available, Requested, Partially Available, Processing, Blocklisted | Lifecycle state | Persistent, non-clickable `StatusBadgeMini`. |
+| Movie/Series | Classification | Persistent, non-clickable badge in the top-left region. |
+| Watched | Current user state | Persistent, non-clickable Play indicator in the top-right state column. |
+| Watchlist owner | Attribution | Persistent, non-clickable bottom-left badge in the all-users view. |
+| Error-card cleanup | Destructive action | Red native danger button; it is intentionally not normalized into a neutral state badge. |
+
+The apparent historical “two icon systems” comes from these distinct native
+primitives: outlined 24px Heroicons inside interactive buttons versus solid
+20/24px glyphs inside non-interactive status badges. Shared hit geometry,
+spacing, focus, and tooltip behavior align actions without making states
+clickable or erasing destructive color.
+
+## Product boundaries
+
+- This enrichment never creates Requests or drives acquisition. The existing,
+  separately configured Plex Watchlist auto-request behavior is unchanged.
+- Watched is current completion, not immutable history or sentiment.
+- Likes, dislikes, favorites, recommendations, Historical Library, and Activity
+  are separate future features.
+- Library's Jellyfin Activity projection owns the universally visible watched
+  aggregate for metrics-included users. Watchlist continues to consume its own
+  user-scoped current projection; the two projections do not infer membership
+  or overwrite one another.
+- Mosaic must eventually use user-scoped Seerr authorization and the canonical
+  Seerr Watchlist; it must not create a parallel Watchlist database or rely on a
+  broad service identity.
+- A future card-design pass may reconsider a single compact lower-right primary
+  lifecycle/action slot for Request, Requested, Acquiring, and Available. This
+  implementation only prevents collisions with existing controls.

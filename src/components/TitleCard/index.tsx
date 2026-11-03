@@ -2,11 +2,28 @@ import Spinner from '@app/assets/spinner.svg';
 import BlocklistModal from '@app/components/BlocklistModal';
 import Button from '@app/components/Common/Button';
 import CachedImage from '@app/components/Common/CachedImage';
+import RequestIconButton, {
+  requestIconButtonClassName,
+} from '@app/components/Common/RequestIconButton';
 import StatusBadgeMini from '@app/components/Common/StatusBadgeMini';
 import Tooltip from '@app/components/Common/Tooltip';
+import { UserAvatar } from '@app/components/Library/LibraryEngagement';
 import RequestModal from '@app/components/RequestModal';
+import ActionStateGrid from '@app/components/TitleCard/ActionStateGrid';
+import TitleCardCornerBadge from '@app/components/TitleCard/CornerBadge';
 import ErrorCard from '@app/components/TitleCard/ErrorCard';
 import Placeholder from '@app/components/TitleCard/Placeholder';
+import TitleCardRatingBadge from '@app/components/TitleCard/RatingBadge';
+import { resolveTitleCardRequestActionLabel } from '@app/components/TitleCard/requestActionLabel';
+import { buildTitleCardStateIndicators } from '@app/components/TitleCard/stateIndicators';
+import {
+  beginCardPointerGesture,
+  beginCardTouchFallbackGesture,
+  cancelCardNavigationGesture,
+  consumeCardNavigationClick,
+  createCardNavigationGesture,
+} from '@app/components/TitleCard/touchNavigation';
+import WatchlistIcon from '@app/components/TitleCard/WatchlistIcon';
 import { useIsTouch } from '@app/hooks/useIsTouch';
 import useToasts from '@app/hooks/useToasts';
 import { Permission, UserType, useUser } from '@app/hooks/useUser';
@@ -14,21 +31,22 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { withProperties } from '@app/utils/typeHelpers';
 import { Transition } from '@headlessui/react';
+import { EyeIcon, NoSymbolIcon } from '@heroicons/react/24/outline';
 import {
   ArrowDownTrayIcon,
-  EyeIcon,
-  EyeSlashIcon,
-  MinusCircleIcon,
-  StarIcon,
-} from '@heroicons/react/24/outline';
+  ServerIcon,
+  ServerStackIcon,
+} from '@heroicons/react/24/solid';
 import { MediaStatus } from '@server/constants/media';
 import type { Watchlist } from '@server/entity/Watchlist';
+import type { LibraryUser } from '@server/interfaces/api/libraryInterfaces';
 import type { MediaType } from '@server/models/Search';
 import axios from 'axios';
 import Link from 'next/link';
 import { Fragment, useCallback, useEffect, useRef, useState } from 'react';
 import { useIntl } from 'react-intl';
 import { mutate } from 'swr';
+import { twMerge } from 'tailwind-merge';
 
 interface TitleCardProps {
   id: number;
@@ -37,22 +55,38 @@ interface TitleCardProps {
   year?: string;
   title: string;
   userScore?: number;
+  showRating?: boolean;
   mediaType: MediaType;
   status?: MediaStatus;
   canExpand?: boolean;
   inProgress?: boolean;
   isAddedToWatchlist?: number | boolean;
   mutateParent?: () => void;
+  watchState?: 'watched' | 'not_watched' | 'unknown';
+  watchlistOwner?: LibraryUser;
+  persistentMetadata?: React.ReactNode;
+  classificationBadge?: React.ReactNode;
+  navigationHref?: string | null;
+  actionsDisabled?: boolean;
+  requestActionEnabled?: boolean;
+  requestActionAlwaysVisible?: boolean;
+  requestActionIcon?: React.ReactNode;
+  requestActionLabel?: string;
+  requestActionClassName?: string;
+  cornerAction?: React.ReactNode;
 }
 
 const messages = defineMessages('components.TitleCard', {
   addToWatchList: 'Add to watchlist',
+  removeFromWatchList: 'Remove from watchlist',
   watchlistSuccess:
     '<strong>{title}</strong> added to watchlist  successfully!',
   watchlistDeleted:
     '<strong>{title}</strong> Removed from watchlist  successfully!',
   watchlistCancel: 'watchlist for <strong>{title}</strong> canceled.',
   watchlistError: 'Something went wrong. Please try again.',
+  watched: 'Watched',
+  viewTitle: 'View {title}',
 });
 
 const TitleCard = ({
@@ -61,12 +95,26 @@ const TitleCard = ({
   summary,
   year,
   title,
+  userScore,
+  showRating = false,
   status,
   mediaType,
   isAddedToWatchlist = false,
   inProgress = false,
   canExpand = false,
   mutateParent,
+  watchState,
+  watchlistOwner,
+  persistentMetadata,
+  classificationBadge,
+  navigationHref,
+  actionsDisabled = false,
+  requestActionEnabled,
+  requestActionAlwaysVisible = false,
+  requestActionIcon,
+  requestActionLabel,
+  requestActionClassName,
+  cornerAction,
 }: TitleCardProps) => {
   const isTouch = useIsTouch();
   const intl = useIntl();
@@ -78,8 +126,16 @@ const TitleCard = ({
   const { addToast } = useToasts();
   const [toggleWatchlist, setToggleWatchlist] =
     useState<boolean>(!isAddedToWatchlist);
+  const watchlistIconClassName = `!h-[1.4375rem] !w-[1.4375rem] ${
+    toggleWatchlist ? 'text-[#C0C0C0]' : 'text-[#FFC107]'
+  }`;
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
+  const mountedRef = useRef(true);
+  const watchlistMutationRef = useRef(false);
+  const navigationGestureRef = useRef(createCardNavigationGesture());
+  const targetIdentityRef = useRef(`${mediaType}:${id}`);
+  const confirmedWatchlistStateRef = useRef<boolean | null>(null);
 
   // Just to get the year from the date
   if (year) {
@@ -89,6 +145,33 @@ const TitleCard = ({
   useEffect(() => {
     setCurrentStatus(status);
   }, [status]);
+
+  useEffect(() => {
+    const nextTargetIdentity = `${mediaType}:${id}`;
+    if (targetIdentityRef.current !== nextTargetIdentity) {
+      confirmedWatchlistStateRef.current = null;
+      watchlistMutationRef.current = false;
+      setIsUpdating(false);
+    }
+    targetIdentityRef.current = nextTargetIdentity;
+    const authoritativeMembership = Boolean(isAddedToWatchlist);
+    if (watchlistMutationRef.current) return;
+    if (confirmedWatchlistStateRef.current !== null) {
+      if (confirmedWatchlistStateRef.current !== authoritativeMembership) {
+        return;
+      }
+      confirmedWatchlistStateRef.current = null;
+    }
+    setToggleWatchlist(!authoritativeMembership);
+  }, [id, isAddedToWatchlist, mediaType]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      watchlistMutationRef.current = false;
+    };
+  }, []);
 
   const requestComplete = useCallback((newStatus: MediaStatus) => {
     setCurrentStatus(newStatus);
@@ -106,6 +189,9 @@ const TitleCard = ({
   );
 
   const onClickWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    const targetIdentity = `${mediaType}:${id}`;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
     try {
       const response = await axios.post<Watchlist>('/api/v1/watchlist', {
@@ -113,8 +199,13 @@ const TitleCard = ({
         mediaType,
         title,
       });
-      mutate('/api/v1/discover/watchlist');
-      if (response.data) {
+      if (
+        response.data &&
+        mountedRef.current &&
+        targetIdentityRef.current === targetIdentity
+      ) {
+        confirmedWatchlistStateRef.current = true;
+        setToggleWatchlist(false);
         addToast(
           <span>
             {intl.formatMessage(messages.watchlistSuccess, {
@@ -124,6 +215,8 @@ const TitleCard = ({
           </span>,
           { appearance: 'success', autoDismiss: true }
         );
+        void mutate('/api/v1/discover/watchlist');
+        mutateParent?.();
       }
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
@@ -131,12 +224,17 @@ const TitleCard = ({
         autoDismiss: true,
       });
     } finally {
-      setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
+      watchlistMutationRef.current = false;
+      if (mountedRef.current && targetIdentityRef.current === targetIdentity) {
+        setIsUpdating(false);
+      }
     }
   };
 
   const onClickDeleteWatchlistBtn = async (): Promise<void> => {
+    if (watchlistMutationRef.current) return;
+    const targetIdentity = `${mediaType}:${id}`;
+    watchlistMutationRef.current = true;
     setIsUpdating(true);
     try {
       const response = await axios.delete<Watchlist>(
@@ -144,6 +242,14 @@ const TitleCard = ({
       );
 
       if (response.status === 204) {
+        if (
+          !mountedRef.current ||
+          targetIdentityRef.current !== targetIdentity
+        ) {
+          return;
+        }
+        confirmedWatchlistStateRef.current = false;
+        setToggleWatchlist(true);
         addToast(
           <span>
             {intl.formatMessage(messages.watchlistDeleted, {
@@ -153,6 +259,8 @@ const TitleCard = ({
           </span>,
           { appearance: 'info', autoDismiss: true }
         );
+        void mutate('/api/v1/discover/watchlist');
+        mutateParent?.();
       }
     } catch {
       addToast(intl.formatMessage(messages.watchlistError), {
@@ -160,12 +268,10 @@ const TitleCard = ({
         autoDismiss: true,
       });
     } finally {
-      setIsUpdating(false);
-      mutate('/api/v1/discover/watchlist');
-      if (mutateParent) {
-        mutateParent();
+      watchlistMutationRef.current = false;
+      if (mountedRef.current && targetIdentityRef.current === targetIdentity) {
+        setIsUpdating(false);
       }
-      setToggleWatchlist((prevState) => !prevState);
     }
   };
 
@@ -314,6 +420,268 @@ const TitleCard = ({
     type: 'or',
   });
 
+  const stateIndicators = buildTitleCardStateIndicators({
+    currentStatus,
+    watchState,
+    inProgress,
+  });
+
+  const watchlistAction = toggleWatchlist
+    ? {
+        label: intl.formatMessage(messages.addToWatchList),
+        onClick: onClickWatchlistBtn,
+      }
+    : {
+        label: intl.formatMessage(messages.removeFromWatchList),
+        onClick: onClickDeleteWatchlistBtn,
+      };
+  const canAddToBlocklist =
+    currentStatus !== MediaStatus.PROCESSING &&
+    currentStatus !== MediaStatus.AVAILABLE &&
+    currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
+    currentStatus !== MediaStatus.PENDING;
+  const blocklistAction =
+    currentStatus === MediaStatus.BLOCKLISTED
+      ? {
+          label: intl.formatMessage(globalMessages.removefromBlocklist),
+          onClick: onClickShowBlocklistBtn,
+          icon: <EyeIcon className="h-4 w-4 sm:h-5 sm:w-5" />,
+        }
+      : canAddToBlocklist
+        ? {
+            label: intl.formatMessage(globalMessages.addToBlocklist),
+            onClick: () => setShowBlocklistModal(true),
+            icon: <NoSymbolIcon className="h-4 w-4 sm:h-5 sm:w-5" />,
+          }
+        : undefined;
+  const showWatchlistAction =
+    showDetail ||
+    (!toggleWatchlist &&
+      (mediaType === 'movie' || mediaType === 'tv') &&
+      !cornerAction &&
+      !persistentMetadata);
+  const hideBlocklistPresentation =
+    (mediaType === 'movie' || mediaType === 'tv') &&
+    !cornerAction &&
+    !persistentMetadata &&
+    !actionsDisabled;
+  const useLowerRightStatus =
+    (mediaType === 'movie' || mediaType === 'tv') &&
+    !cornerAction &&
+    !persistentMetadata;
+  const lowerRightStatus =
+    inProgress && stateIndicators.some((indicator) => indicator.inProgress)
+      ? {
+          Icon: ArrowDownTrayIcon,
+          className: 'animate-pulse text-blue-400',
+          label: globalMessages.processing,
+        }
+      : {
+          [MediaStatus.UNKNOWN]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-purple-400',
+            label: globalMessages.notrequested,
+          },
+          [MediaStatus.PENDING]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-orange-400',
+            label: globalMessages.requested,
+          },
+          [MediaStatus.PROCESSING]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-blue-400',
+            label: globalMessages.processing,
+          },
+          [MediaStatus.DELETED]: {
+            Icon: ArrowDownTrayIcon,
+            className: 'text-red-400',
+            label: globalMessages.deleted,
+          },
+          [MediaStatus.PARTIALLY_AVAILABLE]: {
+            Icon: ServerIcon,
+            className: 'text-green-400',
+            label: globalMessages.partiallyavailable,
+          },
+          [MediaStatus.AVAILABLE]: {
+            Icon: ServerStackIcon,
+            className: 'text-green-400',
+            label: globalMessages.available,
+          },
+          [MediaStatus.BLOCKLISTED]: undefined,
+        }[currentStatus ?? MediaStatus.UNKNOWN];
+  const lowerRightStatusIcon = lowerRightStatus && (
+    <lowerRightStatus.Icon
+      className={`h-4 w-4 ${lowerRightStatus.className}`}
+      aria-hidden="true"
+    />
+  );
+  const rightSideActions = [
+    ...(cornerAction
+      ? [
+          {
+            id: 'custom-corner-action',
+            content: cornerAction,
+          },
+        ]
+      : []),
+    ...(showWatchlistAction && !actionsDisabled
+      ? [
+          ...(currentStatus !== MediaStatus.BLOCKLISTED &&
+          user?.userType !== UserType.PLEX
+            ? [
+                {
+                  id: 'watchlist',
+                  content: (
+                    <Tooltip content={watchlistAction.label}>
+                      <Button
+                        buttonType="ghost"
+                        className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
+                        buttonSize="sm"
+                        aria-label={watchlistAction.label}
+                        onClick={watchlistAction.onClick}
+                        disabled={isUpdating}
+                      >
+                        <WatchlistIcon
+                          isWatchlisted={!toggleWatchlist}
+                          className={watchlistIconClassName}
+                        />
+                      </Button>
+                    </Tooltip>
+                  ),
+                },
+              ]
+            : []),
+          ...(!hideBlocklistPresentation &&
+          showDetail &&
+          showHideButton &&
+          blocklistAction
+            ? [
+                {
+                  id: 'blocklist',
+                  content: (
+                    <Tooltip content={blocklistAction.label}>
+                      <Button
+                        buttonType="ghost"
+                        className="z-40 !h-7 !w-7 !rounded-full !border-0 !bg-transparent !p-0 opacity-80 !shadow-none hover:!border-0 hover:!bg-transparent hover:opacity-100 hover:!shadow-none focus:!border-0 focus-visible:!ring-2 focus-visible:!ring-indigo-400"
+                        buttonSize="sm"
+                        aria-label={blocklistAction.label}
+                        onClick={blocklistAction.onClick}
+                      >
+                        {blocklistAction.icon}
+                      </Button>
+                    </Tooltip>
+                  ),
+                },
+              ]
+            : []),
+        ]
+      : []),
+  ];
+  const rightSideStates = stateIndicators
+    .filter(
+      (indicator) =>
+        !hideBlocklistPresentation ||
+        indicator.status !== MediaStatus.BLOCKLISTED ||
+        indicator.inProgress
+    )
+    .map((indicator, index) => ({
+      id: indicator.id,
+      row: index + 1,
+      content: (
+        <div
+          className={`z-40 flex ${
+            indicator.id === 'availability' ? 'pointer-events-none' : ''
+          }`}
+        >
+          <StatusBadgeMini
+            status={indicator.status}
+            inProgress={indicator.inProgress}
+            label={
+              indicator.id === 'watched'
+                ? intl.formatMessage(messages.watched)
+                : undefined
+            }
+            shrink
+          />
+        </div>
+      ),
+    }))
+    .filter(({ id }) => !useLowerRightStatus || id !== 'availability');
+  const canRequestTitle =
+    showRequestButton &&
+    (requestActionEnabled ??
+      (!actionsDisabled &&
+        (!currentStatus ||
+          currentStatus === MediaStatus.UNKNOWN ||
+          currentStatus === MediaStatus.DELETED ||
+          (useLowerRightStatus &&
+            currentStatus === MediaStatus.PARTIALLY_AVAILABLE))));
+  const resolvedRequestActionLabel = resolveTitleCardRequestActionLabel(
+    requestActionLabel,
+    intl.formatMessage(globalMessages.request)
+  );
+  const cardHref =
+    navigationHref === undefined
+      ? mediaType === 'movie'
+        ? `/movie/${id}`
+        : mediaType === 'collection'
+          ? `/collection/${id}`
+          : `/tv/${id}`
+      : navigationHref;
+  const renderDetails = () => (
+    <div
+      className={
+        persistentMetadata
+          ? 'grid h-full w-full grid-rows-[1fr_auto] p-2'
+          : 'flex h-full w-full items-end'
+      }
+    >
+      <div
+        className={`text-white ${
+          persistentMetadata
+            ? 'self-end'
+            : `px-2 ${canRequestTitle || (useLowerRightStatus && lowerRightStatus) ? 'pb-11' : 'pb-2'}`
+        }`}
+      >
+        {year && <div className="text-sm font-medium">{year}</div>}
+
+        <h1
+          className="whitespace-normal text-xl font-bold leading-tight"
+          style={{
+            WebkitLineClamp: 3,
+            display: '-webkit-box',
+            overflow: 'hidden',
+            WebkitBoxOrient: 'vertical',
+            wordBreak: 'break-word',
+          }}
+          data-testid="title-card-title"
+        >
+          {title}
+        </h1>
+        <div
+          className="whitespace-normal text-xs"
+          style={{
+            WebkitLineClamp: canRequestTitle ? 3 : 5,
+            display: '-webkit-box',
+            overflow: 'hidden',
+            WebkitBoxOrient: 'vertical',
+            wordBreak: 'break-word',
+          }}
+        >
+          {summary}
+        </div>
+      </div>
+      {persistentMetadata && (
+        <div
+          aria-hidden="true"
+          className="invisible mb-1 mt-2 max-w-full justify-self-center break-words rounded-md px-2 py-1 text-center text-xs font-medium"
+        >
+          {persistentMetadata}
+        </div>
+      )}
+    </div>
+  );
+
   return (
     <div
       className={canExpand ? 'w-full' : 'w-36 sm:w-36 md:w-44'}
@@ -362,15 +730,20 @@ const TitleCard = ({
             setShowDetail(true);
           }
         }}
-        onMouseLeave={() => setShowDetail(false)}
-        onClick={() => setShowDetail(true)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            setShowDetail(true);
+        onMouseLeave={() => {
+          if (!cardRef.current?.contains(document.activeElement)) {
+            setShowDetail(false);
           }
         }}
-        role="link"
-        tabIndex={0}
+        onTouchStart={() => {
+          if (!cardHref) setShowDetail(true);
+        }}
+        onFocusCapture={() => setShowDetail(true)}
+        onBlurCapture={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) {
+            setShowDetail(false);
+          }
+        }}
       >
         <div className="absolute inset-0 h-full w-full overflow-hidden">
           <CachedImage
@@ -385,88 +758,171 @@ const TitleCard = ({
             style={{ width: '100%', height: '100%', objectFit: 'cover' }}
             fill
           />
-          <div className="absolute left-0 right-0 flex items-center justify-between p-2">
-            <div
-              className={`pointer-events-none z-40 self-start rounded-full border shadow-md ${
-                mediaType === 'movie' || mediaType === 'collection'
-                  ? 'border-blue-500 bg-blue-600/80'
-                  : 'border-purple-600 bg-purple-600/80'
-              }`}
+          {cardHref && (
+            <Link
+              href={cardHref}
+              aria-label={intl.formatMessage(messages.viewTitle, { title })}
+              className="absolute inset-0 z-20 h-full w-full cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-400"
+              onPointerDown={(event) => {
+                navigationGestureRef.current = beginCardPointerGesture({
+                  pointerType: event.pointerType,
+                  isTouchEnvironment: isTouch,
+                  isDetailVisible: showDetail,
+                });
+
+                if (navigationGestureRef.current.suppressClick) {
+                  setShowDetail(true);
+                }
+              }}
+              onPointerCancel={() => {
+                navigationGestureRef.current = cancelCardNavigationGesture();
+              }}
+              onTouchStart={() => {
+                // Fallback for touch browsers that do not dispatch PointerEvents.
+                navigationGestureRef.current = beginCardTouchFallbackGesture({
+                  gesture: navigationGestureRef.current,
+                  isTouchEnvironment: isTouch,
+                  isDetailVisible: showDetail,
+                });
+
+                if (navigationGestureRef.current.suppressClick) {
+                  setShowDetail(true);
+                }
+              }}
+              onTouchCancel={() => {
+                navigationGestureRef.current = cancelCardNavigationGesture();
+              }}
+              onClick={(event) => {
+                const shouldReveal = consumeCardNavigationClick({
+                  gesture: navigationGestureRef.current,
+                  isTouchEnvironment: isTouch,
+                  isDetailVisible: showDetail,
+                  isKeyboardActivation: event.detail === 0,
+                });
+                navigationGestureRef.current = createCardNavigationGesture();
+
+                if (shouldReveal) {
+                  event.preventDefault();
+                  setShowDetail(true);
+                }
+              }}
             >
-              <div className="flex h-4 items-center px-2 py-2 text-center text-xs font-medium uppercase tracking-wider text-white sm:h-5">
-                {mediaType === 'movie'
-                  ? intl.formatMessage(globalMessages.movie)
-                  : mediaType === 'collection'
-                    ? intl.formatMessage(globalMessages.collection)
-                    : intl.formatMessage(globalMessages.tvshow)}
-              </div>
-            </div>
-            {showDetail && currentStatus !== MediaStatus.BLOCKLISTED && (
-              <div className="flex flex-col gap-1">
-                {user?.userType !== UserType.PLEX &&
-                  (toggleWatchlist ? (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickWatchlistBtn}
-                    >
-                      <StarIcon className={'h-3 text-amber-300'} />
-                    </Button>
-                  ) : (
-                    <Button
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={onClickDeleteWatchlistBtn}
-                    >
-                      <MinusCircleIcon className={'h-3'} />
-                    </Button>
-                  ))}
-                {showHideButton &&
-                  currentStatus !== MediaStatus.PROCESSING &&
-                  currentStatus !== MediaStatus.AVAILABLE &&
-                  currentStatus !== MediaStatus.PARTIALLY_AVAILABLE &&
-                  currentStatus !== MediaStatus.PENDING && (
-                    <Button
-                      buttonType={'ghost'}
-                      className="z-40"
-                      buttonSize={'sm'}
-                      onClick={() => setShowBlocklistModal(true)}
-                    >
-                      <EyeSlashIcon className={'h-3'} />
-                    </Button>
-                  )}
-              </div>
-            )}
-            {showDetail &&
-              showHideButton &&
-              currentStatus == MediaStatus.BLOCKLISTED && (
-                <Tooltip
-                  content={intl.formatMessage(
-                    globalMessages.removefromBlocklist
-                  )}
-                >
-                  <Button
-                    buttonType={'ghost'}
-                    className="z-40"
-                    buttonSize={'sm'}
-                    onClick={() => onClickShowBlocklistBtn()}
+              <span className="sr-only">{title}</span>
+            </Link>
+          )}
+          <div
+            className="pointer-events-none absolute inset-0 z-30 p-2"
+            data-testid="title-card-corner-frame"
+          >
+            <div className="grid h-full grid-cols-[minmax(0,1fr)_auto] grid-rows-[auto_1fr_auto] gap-x-2">
+              <div
+                className="col-start-1 row-start-1 flex min-w-0 self-start justify-self-start"
+                data-testid="title-card-classification-state"
+              >
+                {classificationBadge ?? (
+                  <TitleCardCornerBadge
+                    tone={
+                      mediaType === 'movie' || mediaType === 'collection'
+                        ? 'movie'
+                        : 'series'
+                    }
                   >
-                    <EyeIcon className={'h-3'} />
-                  </Button>
-                </Tooltip>
-              )}
-            {currentStatus && currentStatus !== MediaStatus.UNKNOWN && (
-              <div className="flex flex-col items-center gap-1">
-                <div className="pointer-events-none z-40 flex">
-                  <StatusBadgeMini
-                    status={currentStatus}
-                    inProgress={inProgress}
-                    shrink
-                  />
-                </div>
+                    {mediaType === 'movie'
+                      ? intl.formatMessage(globalMessages.movie)
+                      : mediaType === 'collection'
+                        ? intl.formatMessage(globalMessages.collection)
+                        : intl.formatMessage(globalMessages.tvshow)}
+                  </TitleCardCornerBadge>
+                )}
               </div>
-            )}
+              <div
+                className={`col-start-2 row-start-1 self-start justify-self-end ${showRating ? 'flex flex-col items-end gap-1' : ''}`}
+                data-testid="title-card-action-state-region"
+              >
+                {showRating && <TitleCardRatingBadge score={userScore} />}
+                <ActionStateGrid
+                  actions={rightSideActions}
+                  states={rightSideStates}
+                />
+              </div>
+              {watchlistOwner && (
+                <div
+                  className="pointer-events-auto col-start-1 row-start-3 flex min-w-0 items-center self-end justify-self-start leading-none"
+                  data-testid="title-card-owner-region"
+                >
+                  <UserAvatar user={watchlistOwner} />
+                </div>
+              )}
+              {persistentMetadata && (
+                <div
+                  className="col-span-2 col-start-1 row-start-3 mb-1 max-w-full self-end justify-self-center break-words rounded-md bg-gray-900/90 px-2 py-1 text-center text-xs font-medium text-yellow-200 shadow-md"
+                  data-testid="title-card-persistent-metadata"
+                >
+                  {persistentMetadata}
+                </div>
+              )}
+              {(canRequestTitle ||
+                (useLowerRightStatus && lowerRightStatus)) && (
+                <Transition
+                  as={Fragment}
+                  show={
+                    useLowerRightStatus ||
+                    requestActionAlwaysVisible ||
+                    !image ||
+                    showDetail ||
+                    showRequestModal
+                  }
+                  enter="transition-opacity"
+                  enterFrom="opacity-0"
+                  enterTo="opacity-100"
+                  leave="transition-opacity"
+                  leaveFrom="opacity-100"
+                  leaveTo="opacity-0"
+                >
+                  <div
+                    className={`${canRequestTitle ? 'pointer-events-auto' : 'pointer-events-none'} col-start-2 row-start-3 self-end justify-self-end`}
+                    data-testid="title-card-request-region"
+                  >
+                    {canRequestTitle ? (
+                      <Tooltip content={resolvedRequestActionLabel}>
+                        <RequestIconButton
+                          aria-label={resolvedRequestActionLabel}
+                          onClick={(e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setShowRequestModal(true);
+                          }}
+                          icon={
+                            useLowerRightStatus
+                              ? lowerRightStatusIcon
+                              : requestActionIcon
+                          }
+                          className={`z-40 !h-8 !w-8 !p-1.5 ${
+                            requestActionClassName ?? ''
+                          }`}
+                        />
+                      </Tooltip>
+                    ) : (
+                      lowerRightStatus && (
+                        <span
+                          role="img"
+                          aria-label={intl.formatMessage(
+                            lowerRightStatus.label
+                          )}
+                          className={twMerge(
+                            'inline-flex items-center justify-center border text-xs font-medium leading-5',
+                            requestIconButtonClassName,
+                            'pointer-events-none z-40 !h-8 !w-8 cursor-default !p-1.5'
+                          )}
+                        >
+                          {lowerRightStatusIcon}
+                        </span>
+                      )
+                    )}
+                  </div>
+                </Transition>
+              )}
+            </div>
           </div>
           <Transition
             as={Fragment}
@@ -493,87 +949,15 @@ const TitleCard = ({
             leaveFrom="opacity-100"
             leaveTo="opacity-0"
           >
-            <div className="absolute inset-0 overflow-hidden rounded-xl">
-              <Link
-                href={
-                  mediaType === 'movie'
-                    ? `/movie/${id}`
-                    : mediaType === 'collection'
-                      ? `/collection/${id}`
-                      : `/tv/${id}`
-                }
-                className="absolute inset-0 h-full w-full cursor-pointer overflow-hidden text-left"
+            <div className="pointer-events-none absolute inset-0 z-10 overflow-hidden rounded-xl">
+              <div
+                className="absolute inset-0 h-full w-full overflow-hidden text-left"
                 style={{
                   background:
                     'linear-gradient(180deg, rgba(45, 55, 72, 0.4) 0%, rgba(45, 55, 72, 0.9) 100%)',
                 }}
               >
-                <div className="flex h-full w-full items-end">
-                  <div
-                    className={`px-2 text-white ${
-                      !showRequestButton ||
-                      (currentStatus &&
-                        currentStatus !== MediaStatus.UNKNOWN &&
-                        currentStatus !== MediaStatus.DELETED)
-                        ? 'pb-2'
-                        : 'pb-11'
-                    }`}
-                  >
-                    {year && <div className="text-sm font-medium">{year}</div>}
-
-                    <h1
-                      className="whitespace-normal text-xl font-bold leading-tight"
-                      style={{
-                        WebkitLineClamp: 3,
-                        display: '-webkit-box',
-                        overflow: 'hidden',
-                        WebkitBoxOrient: 'vertical',
-                        wordBreak: 'break-word',
-                      }}
-                      data-testid="title-card-title"
-                    >
-                      {title}
-                    </h1>
-                    <div
-                      className="whitespace-normal text-xs"
-                      style={{
-                        WebkitLineClamp:
-                          !showRequestButton ||
-                          (currentStatus &&
-                            currentStatus !== MediaStatus.UNKNOWN &&
-                            currentStatus !== MediaStatus.DELETED)
-                            ? 5
-                            : 3,
-                        display: '-webkit-box',
-                        overflow: 'hidden',
-                        WebkitBoxOrient: 'vertical',
-                        wordBreak: 'break-word',
-                      }}
-                    >
-                      {summary}
-                    </div>
-                  </div>
-                </div>
-              </Link>
-
-              <div className="absolute bottom-0 left-0 right-0 flex justify-between px-2 py-2">
-                {showRequestButton &&
-                  (!currentStatus ||
-                    currentStatus === MediaStatus.UNKNOWN ||
-                    currentStatus === MediaStatus.DELETED) && (
-                    <Button
-                      buttonType="primary"
-                      buttonSize="sm"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setShowRequestModal(true);
-                      }}
-                      className="h-7 w-full"
-                    >
-                      <ArrowDownTrayIcon />
-                      <span>{intl.formatMessage(globalMessages.request)}</span>
-                    </Button>
-                  )}
+                {renderDetails()}
               </div>
             </div>
           </Transition>

@@ -1,5 +1,6 @@
 import ExternalAPI from '@server/api/externalapi';
 import type { TvShowProvider } from '@server/api/provider';
+import { BoundedRequestCoordinator } from '@server/lib/boundedRequestCoordinator';
 import type { CacheStore } from '@server/lib/cache';
 import cacheManager from '@server/lib/cache';
 import { getSettings } from '@server/lib/settings';
@@ -14,6 +15,7 @@ import type {
   TmdbKeywordSearchResponse,
   TmdbLanguage,
   TmdbMovieDetails,
+  TmdbMovieResult,
   TmdbNetwork,
   TmdbPersonCombinedCredits,
   TmdbPersonDetails,
@@ -39,6 +41,8 @@ interface SearchOptions {
 
 interface SingleSearchOptions extends SearchOptions {
   year?: number;
+  /** Broader Movie release-year evidence; does not change primary-year callers. */
+  releaseYear?: number;
 }
 
 const CommonSortOptionsIterable = [
@@ -139,6 +143,18 @@ interface DiscoverTvOptions {
 }
 
 const TV_DETAILS_TTL = 43200;
+const DEFAULT_TMDB_TIMEOUT_MS = 10_000;
+const TMDB_MAX_CONCURRENCY = 4;
+const TMDB_MAX_PENDING_REQUESTS = 200;
+const TMDB_MAX_REQUEST_STARTS_PER_SECOND = 50;
+
+const tmdbInFlight = new Map<string, Promise<unknown>>();
+export const tmdbRequestCoordinator = new BoundedRequestCoordinator({
+  maxConcurrency: TMDB_MAX_CONCURRENCY,
+  maxPending: TMDB_MAX_PENDING_REQUESTS,
+  maxStartsPerInterval: TMDB_MAX_REQUEST_STARTS_PER_SECOND,
+  intervalMs: 1000,
+});
 
 // Scan lookups read an entry once and never again.
 const SCAN_TTL = 900;
@@ -182,6 +198,11 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     discoverRegion,
     originalLanguage,
   }: { discoverRegion?: string; originalLanguage?: string } = {}) {
+    const configuredTimeout = getSettings().network.apiRequestTimeout;
+    const timeout =
+      Number.isFinite(configuredTimeout) && configuredTimeout > 0
+        ? configuredTimeout
+        : DEFAULT_TMDB_TIMEOUT_MS;
     super(
       'https://api.themoviedb.org/3',
       {
@@ -189,10 +210,13 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
       },
       {
         nodeCache: cacheManager.getCache('tmdb').data,
+        timeout,
         rateLimit: {
           maxRequests: 20,
           maxRPS: 50,
         },
+        inFlight: tmdbInFlight,
+        requestCoordinator: tmdbRequestCoordinator,
       }
     );
     this.locale = getSettings().main?.locale || 'en';
@@ -251,6 +275,27 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     }
   };
 
+  /** Fresh identity resolution must distinguish an empty result from an
+   * unavailable provider, so this intentionally preserves provider errors. */
+  public searchMoviesStrict = async ({
+    query,
+    page = 1,
+    includeAdult = false,
+    language = this.locale,
+    year,
+    releaseYear,
+  }: SingleSearchOptions): Promise<TmdbSearchMovieResponse> =>
+    this.get<TmdbSearchMovieResponse>('/search/movie', {
+      params: {
+        query,
+        page,
+        include_adult: includeAdult,
+        language,
+        primary_release_year: year,
+        year: releaseYear,
+      },
+    });
+
   public searchTvShows = async ({
     query,
     page = 1,
@@ -278,6 +323,44 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
         total_results: 0,
       };
     }
+  };
+
+  /** Error-preserving counterpart used by the durable Fresh resolver. */
+  public searchTvShowsStrict = async ({
+    query,
+    page = 1,
+    includeAdult = false,
+    language = this.locale,
+    year,
+  }: SingleSearchOptions): Promise<TmdbSearchTvResponse> =>
+    this.get<TmdbSearchTvResponse>('/search/tv', {
+      params: {
+        query,
+        page,
+        include_adult: includeAdult,
+        language,
+        first_air_date_year: year,
+      },
+    });
+
+  /** Cached, error-preserving alias evidence for automatic discovery. */
+  public getDiscoveryAliases = async (
+    mediaType: 'movie' | 'tv',
+    id: number
+  ): Promise<string[]> => {
+    const response = await this.get<{
+      id: number;
+      titles?: { title: string }[];
+      results?: { title: string }[];
+    }>(`/${mediaType}/${id}/alternative_titles`);
+    const titles = response.titles ?? response.results;
+    if (
+      response.id !== id ||
+      !Array.isArray(titles) ||
+      titles.some((value) => typeof value.title !== 'string')
+    )
+      throw new Error('Invalid TMDB alias response');
+    return titles.map((value) => value.title);
   };
 
   public getPerson = async ({
@@ -390,6 +473,50 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
       });
     }
   };
+
+  public getMovieForScan = async ({
+    movieId,
+    language = this.locale,
+  }: {
+    movieId: number;
+    language?: string;
+  }): Promise<TmdbMovieResult> => {
+    try {
+      return await this.get<TmdbMovieResult>(
+        `/movie/${movieId}`,
+        { params: { language } },
+        SCAN_TTL,
+        { cache: this.scanCache }
+      );
+    } catch (e) {
+      throw new Error(
+        `[TMDB] Failed to fetch movie scan details: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  // Collection recovery needs a new observation, not a re-timestamped display
+  // or scan cache hit. Keep the shared timeout/rate/concurrency controls, but
+  // neither read nor populate those caches, and request no appended metadata.
+  public async getMovieCollectionMembership(movieId: number): Promise<{
+    id: number;
+    belongs_to_collection?: unknown;
+  }> {
+    try {
+      const response = await tmdbRequestCoordinator.schedule(() =>
+        this.axios.get<{ id: number; belongs_to_collection?: unknown }>(
+          `/movie/${movieId}`,
+          { params: { language: 'en' } }
+        )
+      );
+      return response.data;
+    } catch (error) {
+      throw new Error('Failed to fetch fresh Movie collection membership', {
+        cause: error,
+      });
+    }
+  }
 
   // The append list is part of the cache key, so full and narrow entries differ.
   private getTvShowDetails = async <T>({

@@ -3,6 +3,9 @@ import Button from '@app/components/Common/Button';
 import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import SensitiveInput from '@app/components/Common/SensitiveInput';
 import LibraryItem from '@app/components/Settings/LibraryItem';
+import SubtitleReportingSettings, {
+  subtitleReportingMessages,
+} from '@app/components/Settings/SubtitleReportingSettings';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
 import globalMessages from '@app/i18n/globalMessages';
@@ -12,6 +15,7 @@ import { ArrowDownOnSquareIcon } from '@heroicons/react/24/outline';
 import { ApiErrorCode } from '@server/constants/error';
 import { MediaServerType } from '@server/constants/server';
 import type { JellyfinSettings } from '@server/lib/settings';
+import { getSubtitleReportingOrigin } from '@server/lib/settings/subtitleReporting';
 import axios from 'axios';
 import { Field, Formik } from 'formik';
 import { useState } from 'react';
@@ -139,6 +143,17 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
     jellyfinExternalUrl: Yup.string()
       .nullable()
       .test('valid-url', intl.formatMessage(messages.validationUrl), isValidURL)
+      .test(
+        'subtitle-reporting-origin',
+        intl.formatMessage(subtitleReportingMessages.invalidOrigin),
+        function (value) {
+          const parent = this.parent as { subtitleReportingEnabled?: boolean };
+          return (
+            !parent.subtitleReportingEnabled ||
+            getSubtitleReportingOrigin(value) !== null
+          );
+        }
+      )
       .test(
         'no-trailing-slash',
         intl.formatMessage(messages.validationUrlTrailingSlash),
@@ -436,6 +451,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
           urlBase: data?.urlBase || '',
           jellyfinExternalUrl: data?.externalHostname || '',
           jellyfinForgotPasswordUrl: data?.jellyfinForgotPasswordUrl || '',
+          subtitleReportingEnabled: data?.subtitleReportingEnabled ?? false,
           apiKey: data?.apiKey,
         }}
         validationSchema={JellyfinSettingsSchema}
@@ -448,6 +464,7 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
               urlBase: values.urlBase,
               externalHostname: values.jellyfinExternalUrl,
               jellyfinForgotPasswordUrl: values.jellyfinForgotPasswordUrl,
+              subtitleReportingEnabled: values.subtitleReportingEnabled,
               apiKey: values.apiKey,
             } as JellyfinSettings);
 
@@ -652,6 +669,18 @@ const SettingsJellyfin: React.FC<SettingsJellyfinProps> = ({
                     )}
                 </div>
               </div>
+              {!isSetupSettings &&
+                settings.currentSettings.mediaServerType ===
+                  MediaServerType.JELLYFIN && (
+                  <SubtitleReportingSettings
+                    enabled={values.subtitleReportingEnabled}
+                    externalUrl={values.jellyfinExternalUrl}
+                    disabled={isSubmitting}
+                    onChange={(enabled) =>
+                      setFieldValue('subtitleReportingEnabled', enabled)
+                    }
+                  />
+                )}
               <div
                 className={`actions ${isSetupSettings ? 'mt-0 border-0' : ''}`}
               >

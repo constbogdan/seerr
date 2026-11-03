@@ -22,6 +22,7 @@ const messages = defineMessages('components.UserList', {
   userssaved: 'User permissions saved successfully!',
   userfail: 'Something went wrong while saving user permissions.',
   edituser: 'Edit User Permissions',
+  includeInUserMetrics: 'Include in user metrics',
 });
 
 const BulkEditModal = ({
@@ -35,6 +36,7 @@ const BulkEditModal = ({
   const intl = useIntl();
   const { addToast } = useToasts();
   const [currentPermission, setCurrentPermission] = useState(0);
+  const [includeInUserMetrics, setIncludeInUserMetrics] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
@@ -49,6 +51,7 @@ const BulkEditModal = ({
       const { data: updated } = await axios.put<User[]>(`/api/v1/user`, {
         ids: selectedUserIds,
         permissions: currentPermission,
+        includeInUserMetrics,
       });
       if (onComplete) {
         onComplete(updated);
@@ -70,6 +73,9 @@ const BulkEditModal = ({
   useEffect(() => {
     if (users) {
       const selectedUsers = users.filter((u) => selectedUserIds.includes(u.id));
+      setIncludeInUserMetrics(
+        selectedUsers.every((user) => user.includeInUserMetrics)
+      );
       const { permissions: allPermissionsEqual } = selectedUsers.reduce(
         ({ permissions: aPerms }, { permissions: bPerms }) => {
           return {
@@ -103,6 +109,26 @@ const BulkEditModal = ({
           currentPermission={currentPermission}
           onUpdate={(newPermission) => setCurrentPermission(newPermission)}
         />
+        <div className="relative mt-4 flex items-start">
+          <div className="flex h-6 items-center">
+            <input
+              id="bulkIncludeInUserMetrics"
+              type="checkbox"
+              checked={includeInUserMetrics}
+              onChange={(event) =>
+                setIncludeInUserMetrics(event.target.checked)
+              }
+            />
+          </div>
+          <div className="ml-3 text-sm leading-6">
+            <label
+              htmlFor="bulkIncludeInUserMetrics"
+              className="block font-medium text-white"
+            >
+              {intl.formatMessage(messages.includeInUserMetrics)}
+            </label>
+          </div>
+        </div>
       </div>
     </Modal>
   );

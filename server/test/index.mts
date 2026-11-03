@@ -65,8 +65,7 @@ if (positionals.length > 0) {
   files.sort();
 }
 
-// @ts-ignore
-process.env.NODE_ENV = 'test';
+Object.assign(process.env, { NODE_ENV: 'test' });
 // configure ts
 process.env.TS_NODE_PROJECT = resolveImport('../tsconfig.json');
 process.env.TS_NODE_FILES = 'true';
@@ -88,6 +87,12 @@ const stream = run({
     join(BASE_DIR, 'server/migration/**'),
   ],
   testNamePatterns: opts.testNamePattern,
+});
+
+// Reporting failures does not set the exit status of the programmatic runner.
+// Keep reporters draining, but make pnpm/CI fail for genuine test failures.
+stream.on('test:fail', ({ todo, skip }) => {
+  if (!todo && !skip) process.exitCode = 1;
 });
 
 // In CI, write a JUnit report to a file for use by GitHub

@@ -24,6 +24,7 @@ import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
 import { useIntl } from 'react-intl';
 import useSWR from 'swr';
+import RequesterFilter from './RequesterFilter';
 
 const messages = defineMessages('components.RequestList', {
   requests: 'Requests',
@@ -165,7 +166,29 @@ const RequestList = () => {
         >
           {intl.formatMessage(messages.requests)}
         </Header>
-        <div className="mt-2 flex flex-grow flex-col sm:flex-row lg:flex-grow-0">
+        <div className="mt-2 flex flex-grow flex-col gap-y-2 sm:flex-row sm:flex-wrap lg:flex-grow-0">
+          {router.pathname === '/requests' &&
+            hasPermission(
+              [Permission.MANAGE_REQUESTS, Permission.REQUEST_VIEW],
+              { type: 'or' }
+            ) && (
+              <div className="sm:mr-2">
+                <RequesterFilter
+                  value={
+                    typeof router.query.userId === 'string'
+                      ? router.query.userId
+                      : undefined
+                  }
+                  onChange={(userId) => {
+                    const query = { ...router.query };
+                    delete query.page;
+                    if (userId) query.userId = userId;
+                    else delete query.userId;
+                    void router.push({ pathname: router.pathname, query });
+                  }}
+                />
+              </div>
+            )}
           <div className="mb-2 flex flex-grow sm:mb-0 sm:mr-2 lg:flex-grow-0">
             <span className="inline-flex cursor-default items-center rounded-l-md border border-r-0 border-gray-500 bg-gray-800 px-3 text-sm text-gray-100">
               <CircleStackIcon className="h-6 w-6" />

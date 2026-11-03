@@ -44,25 +44,87 @@ export interface RootFolder {
   }[];
 }
 
+export interface DiskSpace {
+  path: string;
+  label?: string;
+  freeSpace: number;
+  totalSpace: number;
+}
+
 export interface QualityProfile {
   id: number;
   name: string;
 }
 
-interface QueueItem {
+export const SERVARR_QUEUE_STATUSES = [
+  'unknown',
+  'queued',
+  'paused',
+  'downloading',
+  'completed',
+  'failed',
+  'warning',
+  'delay',
+  'downloadClientUnavailable',
+  'fallback',
+] as const;
+
+export const SERVARR_TRACKED_DOWNLOAD_STATUSES = [
+  'ok',
+  'warning',
+  'error',
+] as const;
+
+export const SERVARR_TRACKED_DOWNLOAD_STATES = [
+  'downloading',
+  'importBlocked',
+  'importPending',
+  'importing',
+  'imported',
+  'failedPending',
+  'failed',
+  'ignored',
+] as const;
+
+export type ServarrQueueStatus = (typeof SERVARR_QUEUE_STATUSES)[number];
+export type ServarrTrackedDownloadStatus =
+  (typeof SERVARR_TRACKED_DOWNLOAD_STATUSES)[number];
+export type ServarrTrackedDownloadState =
+  (typeof SERVARR_TRACKED_DOWNLOAD_STATES)[number];
+
+export interface ServarrStatusMessage {
+  title?: string;
+  messages: string[];
+}
+
+export interface QueueItem {
   size: number;
   title: string;
   sizeleft: number;
   timeleft: string;
   estimatedCompletionTime: string;
-  status: string;
-  trackedDownloadStatus: string;
-  trackedDownloadState: string;
+  status: ServarrQueueStatus;
+  trackedDownloadStatus: ServarrTrackedDownloadStatus;
+  trackedDownloadState: ServarrTrackedDownloadState;
   downloadId: string;
   protocol: string;
   downloadClient: string;
   indexer: string;
   id: number;
+  outputPath?: string;
+  errorMessage?: string;
+  statusMessages?: ServarrStatusMessage[];
+  episodeHasFile?: boolean;
+}
+
+export interface ServarrHistoryRecord {
+  id: number;
+  eventType: string;
+  date: string;
+  downloadId?: string;
+  movieId?: number;
+  seriesId?: number;
+  episodeId?: number;
 }
 
 export interface Tag {
@@ -77,6 +139,13 @@ interface QueueResponse<QueueItemAppendT> {
   sortDirection: string;
   totalRecords: number;
   records: (QueueItem & QueueItemAppendT)[];
+}
+
+interface HistoryResponse {
+  page: number;
+  pageSize: number;
+  totalRecords: number;
+  records: ServarrHistoryRecord[];
 }
 
 interface CommandResponse {
@@ -97,6 +166,7 @@ export const DEFAULT_DOWNLOAD_QUEUE_SIZE = 10;
 export const MIN_DOWNLOAD_QUEUE_SIZE = 10;
 export const MAX_DOWNLOAD_QUEUE_SIZE = 1000;
 const DOWNLOAD_QUEUE_PAGE_SIZE = 100;
+export const DOWNLOAD_HISTORY_PAGE_SIZE = 100;
 const COMMAND_POLL_INTERVAL_MS = 1000;
 const COMMAND_TIMEOUT_MS = 30000;
 
@@ -199,6 +269,40 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     }
   };
 
+  /**
+   * Retrieves a current provider capacity snapshot without the rolling cache.
+   * This method is read-only and is intended for administrator diagnostics and
+   * future capacity-sensitive decisions.
+   */
+  public getRootFoldersFresh = async (): Promise<RootFolder[]> => {
+    try {
+      const response = await this.axios.get<RootFolder[]>('/rootfolder');
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to retrieve current root folders: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
+  /**
+   * Retrieves a current provider disk-space snapshot without a rolling cache.
+   */
+  public getDiskSpaceFresh = async (): Promise<DiskSpace[]> => {
+    try {
+      const response = await this.axios.get<DiskSpace[]>('/diskspace');
+
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to retrieve current disk space: ${e.message}`,
+        { cause: e }
+      );
+    }
+  };
+
   public async getQueue(
     maxRecords = DEFAULT_DOWNLOAD_QUEUE_SIZE
   ): Promise<(QueueItem & QueueItemAppendT)[]> {
@@ -251,6 +355,36 @@ class ServarrBase<QueueItemAppendT> extends ExternalAPI {
     } catch (e) {
       throw new Error(
         `[${this.apiName}] Failed to retrieve queue: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async getRecentHistory(): Promise<ServarrHistoryRecord[]> {
+    try {
+      const response = await this.axios.get<HistoryResponse>('/history', {
+        params: {
+          page: 1,
+          pageSize: DOWNLOAD_HISTORY_PAGE_SIZE,
+          sortKey: 'date',
+          sortDirection: 'descending',
+        },
+      });
+      const history = response.data;
+      if (
+        history.page !== 1 ||
+        history.pageSize < 1 ||
+        history.pageSize > DOWNLOAD_HISTORY_PAGE_SIZE ||
+        !Number.isSafeInteger(history.totalRecords) ||
+        history.totalRecords < 0 ||
+        history.records.length > DOWNLOAD_HISTORY_PAGE_SIZE
+      ) {
+        throw new Error('History response was malformed or unbounded');
+      }
+      return history.records;
+    } catch (e) {
+      throw new Error(
+        `[${this.apiName}] Failed to retrieve recent history: ${e.message}`,
         { cause: e }
       );
     }

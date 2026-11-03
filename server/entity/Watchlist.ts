@@ -1,8 +1,15 @@
 import TheMovieDb from '@server/api/themoviedb';
 import { MediaType } from '@server/constants/media';
-import { getRepository } from '@server/datasource';
+import {
+  UserMediaIntentEndReason,
+  UserMediaIntentState,
+  UserMediaIntentType,
+} from '@server/constants/watchlist';
+import dataSource, { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
+import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import type { WatchlistItem } from '@server/interfaces/api/discoverInterfaces';
 import logger from '@server/logger';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
@@ -25,8 +32,19 @@ export class NotFoundError extends Error {
   }
 }
 
+const nullableNumberArray = {
+  to: (value?: number[] | null) =>
+    value === null || value === undefined ? null : JSON.stringify(value),
+  from: (value?: string | null) =>
+    value === null || value === undefined
+      ? null
+      : (JSON.parse(value) as number[]),
+};
+
 @Entity()
 @Unique('UNIQUE_USER_DB', ['tmdbId', 'mediaType', 'requestedBy'])
+@Index('IDX_watchlist_user_created', ['requestedBy', 'createdAt'])
+@Index('IDX_watchlist_user_type_title', ['requestedBy', 'mediaType', 'title'])
 export class Watchlist implements WatchlistItem {
   @PrimaryGeneratedColumn()
   id: number;
@@ -39,6 +57,9 @@ export class Watchlist implements WatchlistItem {
 
   @Column({ type: 'varchar' })
   title = '';
+
+  @Column({ type: 'text', nullable: true, transformer: nullableNumberArray })
+  public genreIds: number[] | null = null;
 
   @Column()
   @Index()
@@ -53,10 +74,13 @@ export class Watchlist implements WatchlistItem {
 
   @ManyToOne(() => Media, (media) => media.watchlists, {
     eager: true,
-    onDelete: 'CASCADE',
+    nullable: true,
+    onDelete: 'SET NULL',
   })
   @Index()
-  public media: Media;
+  public media?: Media | null;
+
+  public userMediaState?: UserMediaState | null;
 
   @DbAwareColumn({ type: 'datetime', default: () => 'CURRENT_TIMESTAMP' })
   public createdAt: Date;
@@ -74,6 +98,7 @@ export class Watchlist implements WatchlistItem {
   public static async createWatchlist({
     watchlistRequest,
     user,
+    tmdb = new TheMovieDb(),
   }: {
     watchlistRequest: {
       mediaType: MediaType;
@@ -82,10 +107,9 @@ export class Watchlist implements WatchlistItem {
       tmdbId: ZodNumber['_output'];
     };
     user: User;
+    tmdb?: Pick<TheMovieDb, 'getMovie' | 'getTvShow'>;
   }): Promise<Watchlist> {
     const watchlistRepository = getRepository(this);
-    const mediaRepository = getRepository(Media);
-    const tmdb = new TheMovieDb();
 
     const tmdbMedia =
       watchlistRequest.mediaType === MediaType.MOVIE
@@ -114,30 +138,71 @@ export class Watchlist implements WatchlistItem {
       throw new DuplicateWatchlistRequestError();
     }
 
-    let media = await mediaRepository.findOne({
-      where: {
-        tmdbId: watchlistRequest.tmdbId,
-        mediaType: watchlistRequest.mediaType,
-      },
-    });
-
-    if (!media) {
-      media = new Media({
-        tmdbId: tmdbMedia.id,
-        tvdbId: tmdbMedia.external_ids.tvdb_id,
-        mediaType: watchlistRequest.mediaType,
+    return dataSource.transaction(async (manager) => {
+      const transactionalWatchlistRepository = manager.getRepository(this);
+      const mediaRepository = manager.getRepository(Media);
+      const mediaStateRepository = manager.getRepository(UserMediaState);
+      let media = await mediaRepository.findOne({
+        where: {
+          tmdbId: watchlistRequest.tmdbId,
+          mediaType: watchlistRequest.mediaType,
+        },
       });
-    }
 
-    const watchlist = new this({
-      ...watchlistRequest,
-      requestedBy: user,
-      media,
+      if (!media) {
+        media = new Media({
+          tmdbId: tmdbMedia.id,
+          tvdbId: tmdbMedia.external_ids.tvdb_id,
+          mediaType: watchlistRequest.mediaType,
+        });
+      }
+
+      const startedAt = new Date();
+      const occurrence = await manager
+        .getRepository(UserMediaIntentOccurrence)
+        .save(
+          new UserMediaIntentOccurrence({
+            userId: user.id,
+            user,
+            intentType: UserMediaIntentType.WATCHLIST,
+            mediaType: watchlistRequest.mediaType,
+            tmdbId: watchlistRequest.tmdbId,
+            state: UserMediaIntentState.ACTIVE,
+            startedAt,
+          })
+        );
+      const watchlist = new this({
+        ...watchlistRequest,
+        genreIds: tmdbMedia.genres.map((genre) => genre.id),
+        requestedBy: user,
+        media,
+        createdAt: occurrence.startedAt,
+      });
+
+      await mediaRepository.save(media);
+      await transactionalWatchlistRepository.save(watchlist);
+      const existingState = await mediaStateRepository.findOne({
+        where: {
+          user: { id: user.id },
+          mediaType: watchlistRequest.mediaType,
+          tmdbId: watchlistRequest.tmdbId,
+        },
+      });
+      if (!existingState) {
+        await mediaStateRepository.save(
+          new UserMediaState({
+            user,
+            mediaType: watchlistRequest.mediaType,
+            tmdbId: watchlistRequest.tmdbId,
+            media,
+          })
+        );
+      } else if (!existingState.media) {
+        existingState.media = media;
+        await mediaStateRepository.save(existingState);
+      }
+      return watchlist;
     });
-
-    await mediaRepository.save(media);
-    await watchlistRepository.save(watchlist);
-    return watchlist;
   }
 
   public static async deleteWatchlist(
@@ -145,20 +210,36 @@ export class Watchlist implements WatchlistItem {
     mediaType: MediaType,
     user: User
   ): Promise<Watchlist | null> {
-    const watchlistRepository = getRepository(this);
-    const watchlist = await watchlistRepository.findOneBy({
-      tmdbId,
-      mediaType,
-      requestedBy: { id: user.id },
-    });
-    if (!watchlist) {
-      throw new NotFoundError('not Found');
-    }
+    return dataSource.transaction(async (manager) => {
+      const watchlistRepository = manager.getRepository(this);
+      const watchlist = await watchlistRepository.findOneBy({
+        tmdbId,
+        mediaType,
+        requestedBy: { id: user.id },
+      });
+      if (!watchlist) {
+        throw new NotFoundError('not Found');
+      }
 
-    if (watchlist) {
+      const occurrenceRepository = manager.getRepository(
+        UserMediaIntentOccurrence
+      );
+      const occurrence = await occurrenceRepository.findOneBy({
+        userId: user.id,
+        intentType: UserMediaIntentType.WATCHLIST,
+        mediaType,
+        tmdbId,
+        state: UserMediaIntentState.ACTIVE,
+      });
+      if (!occurrence) {
+        throw new Error('Active Watchlist intent occurrence is missing.');
+      }
+      occurrence.state = UserMediaIntentState.REMOVED;
+      occurrence.endedAt = new Date();
+      occurrence.endReason = UserMediaIntentEndReason.USER_REMOVED;
+      await occurrenceRepository.save(occurrence);
       await watchlistRepository.delete(watchlist.id);
-    }
-
-    return watchlist;
+      return watchlist;
+    });
   }
 }

@@ -16,16 +16,20 @@ const messages = defineMessages('components.Settings', {
 const SettingsBadge = ({
   badgeType,
   className,
+  tooltip,
 }: {
   badgeType: 'advanced' | 'experimental' | 'restartRequired';
   className?: string;
+  tooltip?: string;
 }) => {
   const intl = useIntl();
 
   switch (badgeType) {
     case 'advanced':
       return (
-        <Tooltip content={intl.formatMessage(messages.advancedTooltip)}>
+        <Tooltip
+          content={tooltip ?? intl.formatMessage(messages.advancedTooltip)}
+        >
           <Badge badgeType="danger" className={className}>
             {intl.formatMessage(globalMessages.advanced)}
           </Badge>

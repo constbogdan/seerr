@@ -4,7 +4,7 @@ import CachedImage from '@app/components/Common/CachedImage';
 import ConfirmButton from '@app/components/Common/ConfirmButton';
 import SlideOver from '@app/components/Common/SlideOver';
 import Tooltip from '@app/components/Common/Tooltip';
-import DownloadBlock from '@app/components/DownloadBlock';
+import DownloadBlock, { useDownloadTitle } from '@app/components/DownloadBlock';
 import IssueBlock from '@app/components/IssueBlock';
 import RequestBlock from '@app/components/RequestBlock';
 import useSettings from '@app/hooks/useSettings';
@@ -114,6 +114,8 @@ const ManageSlideOver = ({
   const intl = useIntl();
   const { addToast } = useToasts();
   const settings = useSettings();
+  const downloadTitle = useDownloadTitle();
+  const mediaTitle = isMovie(data) ? data.title : data.name;
   const { data: watchData } = useSWR<MediaWatchDataResponse>(
     settings.currentSettings.mediaServerType === MediaServerType.PLEX &&
       data.mediaInfo &&
@@ -269,10 +271,13 @@ const ManageSlideOver = ({
                   (status, index) => (
                     <Tooltip
                       key={`dl-status-${status.externalId}-${index}`}
-                      content={status.title}
+                      content={downloadTitle(status, mediaTitle)}
                     >
                       <li className="border-b border-gray-700 last:border-b-0">
-                        <DownloadBlock downloadItem={status} />
+                        <DownloadBlock
+                          downloadItem={status}
+                          title={mediaTitle}
+                        />
                       </li>
                     </Tooltip>
                   )
@@ -281,10 +286,14 @@ const ManageSlideOver = ({
                   (status, index) => (
                     <Tooltip
                       key={`dl-status-4k-${status.externalId}-${index}`}
-                      content={status.title}
+                      content={downloadTitle(status, mediaTitle)}
                     >
                       <li className="border-b border-gray-700 last:border-b-0">
-                        <DownloadBlock downloadItem={status} is4k />
+                        <DownloadBlock
+                          downloadItem={status}
+                          title={mediaTitle}
+                          is4k
+                        />
                       </li>
                     </Tooltip>
                   )

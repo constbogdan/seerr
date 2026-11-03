@@ -64,6 +64,11 @@ class ClassificationTests(unittest.TestCase):
                 classification.HIGH,
                 False,
             ),
+            "scripts/seerr_downstream_release.py": (
+                classification.TOOLING_ONLY,
+                classification.HIGH,
+                False,
+            ),
             "config/.gitkeep": (
                 classification.TOOLING_ONLY,
                 classification.LOW,
@@ -171,6 +176,8 @@ class ClassificationTests(unittest.TestCase):
             "scripts/prepare-pr.config.psd1",
             "scripts/seerr_output.ps1",
             "scripts/hosted_upstream.py",
+            "scripts/seerr_downstream_release.py",
+            "scripts/test_seerr_downstream_release.py",
             "docs/UPSTREAM_SYNC.md",
         ):
             with self.subTest(path=path):

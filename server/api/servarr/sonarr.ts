@@ -1,6 +1,6 @@
 import logger from '@server/logger';
 import type { AxiosResponse } from 'axios';
-import ServarrBase from './base';
+import ServarrBase, { type QueueItem, type ServarrHistoryRecord } from './base';
 
 export interface SonarrSeason {
   seasonNumber: number;
@@ -14,7 +14,7 @@ export interface SonarrSeason {
     percentOfEpisodes: number;
   };
 }
-interface EpisodeResult {
+export interface SonarrEpisode {
   seriesId: number;
   episodeFileId: number;
   seasonNumber: number;
@@ -26,9 +26,76 @@ interface EpisodeResult {
   hasFile: boolean;
   monitored: boolean;
   absoluteEpisodeNumber: number;
+  tvdbId?: number;
   unverifiedSceneNumbering: boolean;
   id: number;
 }
+
+export interface SonarrEpisodeFile {
+  id: number;
+  seriesId: number;
+  seasonNumber: number;
+  relativePath?: string;
+  path?: string;
+  size: number;
+  dateAdded: string;
+  quality?: {
+    quality?: {
+      resolution?: number | null;
+    } | null;
+  } | null;
+}
+
+export interface SonarrQueueItem extends QueueItem {
+  seriesId: number;
+  episodeId?: number;
+}
+
+export interface SonarrHistoryRecord extends ServarrHistoryRecord {
+  seriesId: number;
+  episodeId: number;
+  sourceTitle: string;
+  data: Record<string, string | undefined>;
+}
+
+export interface SonarrSeriesMove {
+  destinationPath: string;
+}
+
+export interface SonarrSeriesMoveCommand {
+  id: number;
+  name?: string;
+  commandName?: string;
+  status:
+    | 'queued'
+    | 'started'
+    | 'completed'
+    | 'failed'
+    | 'aborted'
+    | 'cancelled'
+    | 'orphaned';
+  result?: 'unknown' | 'successful' | 'unsuccessful';
+  body?: {
+    seriesId?: number | string;
+    sourcePath?: string;
+    destinationPath?: string;
+    [key: string]: unknown;
+  };
+}
+
+export const seriesDestinationPath = (
+  sourcePath: string,
+  destinationRootPath: string
+): string => {
+  const normalizedRoot = destinationRootPath.replace(/[\\/]+$/, '');
+  const normalizedSource = sourcePath.replace(/[\\/]+$/, '');
+  const leaf = normalizedSource.split(/[\\/]/).pop();
+  if (!normalizedRoot || !leaf) {
+    throw new Error('Cannot resolve the destination Series path');
+  }
+  const separator = destinationRootPath.includes('\\') ? '\\' : '/';
+  return `${normalizedRoot}${separator}${leaf}`;
+};
 
 export interface SonarrSeries {
   title: string;
@@ -46,6 +113,7 @@ export interface SonarrSeries {
   seasons: SonarrSeason[];
   year: number;
   path: string;
+  pendingPath?: string | null;
   profileId: number;
   languageProfileId: number;
   seasonFolder: boolean;
@@ -112,7 +180,7 @@ export interface LanguageProfile {
 class SonarrAPI extends ServarrBase<{
   seriesId: number;
   episodeId: number;
-  episode: EpisodeResult;
+  episode: SonarrEpisode;
 }> {
   constructor({ url, apiKey }: { url: string; apiKey: string }) {
     super({ url, apiKey, apiName: 'Sonarr', cacheName: 'sonarr' });
@@ -133,18 +201,10 @@ class SonarrAPI extends ServarrBase<{
   public async getLibrarySeriesByTvdbId(
     tvdbId: number
   ): Promise<SonarrSeries[]> {
-    try {
-      const response = await this.axios.get<SonarrSeries[]>('/series', {
-        params: { tvdbId },
-      });
-
-      return response.data;
-    } catch (e) {
-      throw new Error(
-        `[Sonarr] Failed to retrieve series by TVDB ID: ${e.message}`,
-        { cause: e }
-      );
-    }
+    const response = await this.axios.get<SonarrSeries[]>('/series', {
+      params: { tvdbId },
+    });
+    return response.data;
   }
 
   public async getSeriesById(id: number): Promise<SonarrSeries> {
@@ -207,9 +267,13 @@ class SonarrAPI extends ServarrBase<{
     return response.data[0];
   }
 
-  public async addSeries(options: AddSeriesOptions): Promise<SonarrSeries> {
+  public async addSeries(
+    options: AddSeriesOptions,
+    existingSeries?: SonarrSeries
+  ): Promise<SonarrSeries> {
     try {
-      const series = await this.getSeriesByTvdbId(options.tvdbid);
+      const series =
+        existingSeries ?? (await this.getSeriesByTvdbId(options.tvdbid));
 
       // If the series already exists, we will simply just update it
       if (series.id) {
@@ -373,9 +437,9 @@ class SonarrAPI extends ServarrBase<{
     }
   }
 
-  public async getEpisodes(seriesId: number): Promise<EpisodeResult[]> {
+  public async getEpisodes(seriesId: number): Promise<SonarrEpisode[]> {
     try {
-      const response = await this.axios.get<EpisodeResult[]>('/episode', {
+      const response = await this.axios.get<SonarrEpisode[]>('/episode', {
         params: { seriesId },
       });
       return response.data;
@@ -386,6 +450,119 @@ class SonarrAPI extends ServarrBase<{
         seriesId,
       });
       throw new Error('Failed to get episodes', { cause: e });
+    }
+  }
+
+  public async getEpisodeFiles(seriesId: number): Promise<SonarrEpisodeFile[]> {
+    try {
+      const response = await this.axios.get<SonarrEpisodeFile[]>(
+        '/episodefile',
+        { params: { seriesId } }
+      );
+      return response.data;
+    } catch (e) {
+      logger.error('Failed to retrieve episode files', {
+        label: 'Sonarr API',
+        errorMessage: e.message,
+        seriesId,
+      });
+      throw new Error('Failed to get episode files', { cause: e });
+    }
+  }
+
+  public async getSeriesQueue(seriesId: number): Promise<SonarrQueueItem[]> {
+    try {
+      const response = await this.axios.get<SonarrQueueItem[]>(
+        '/queue/details',
+        {
+          params: { seriesId, includeEpisode: true },
+        }
+      );
+      if (!Array.isArray(response.data)) {
+        throw new Error('Queue details response was not an array');
+      }
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve Series queue: ${e.message}`,
+        {
+          cause: e,
+        }
+      );
+    }
+  }
+
+  public async getSeriesHistory(
+    seriesId: number
+  ): Promise<SonarrHistoryRecord[]> {
+    try {
+      const response = await this.axios.get<SonarrHistoryRecord[]>(
+        '/history/series',
+        { params: { seriesId } }
+      );
+      if (!Array.isArray(response.data) || response.data.length > 20_000) {
+        throw new Error('Series history response was malformed or unbounded');
+      }
+      return response.data;
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve complete Series history: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async getSeriesMoveCommands(
+    seriesId: number
+  ): Promise<SonarrSeriesMoveCommand[]> {
+    try {
+      const response =
+        await this.axios.get<SonarrSeriesMoveCommand[]>('/command');
+      if (!Array.isArray(response.data) || response.data.length > 10_000) {
+        throw new Error('Command response was malformed or unbounded');
+      }
+      return response.data.filter((command) => {
+        const name = (command.commandName ?? command.name ?? '').toLowerCase();
+        return (
+          name === 'moveseries' && Number(command.body?.seriesId) === seriesId
+        );
+      });
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to retrieve Series move commands: ${e.message}`,
+        { cause: e }
+      );
+    }
+  }
+
+  public async moveSeries(
+    series: SonarrSeries,
+    destinationRootPath: string
+  ): Promise<SonarrSeriesMove> {
+    if (!series.id) throw new Error('Cannot move a Series without an ID');
+    const normalizedRoot = destinationRootPath.replace(/[\\/]+$/, '');
+    const destinationPath = seriesDestinationPath(
+      series.path,
+      destinationRootPath
+    );
+    try {
+      await this.axios.put(
+        `/series/${series.id}`,
+        {
+          ...series,
+          path: destinationPath,
+          rootFolderPath: normalizedRoot,
+        },
+        { params: { moveFiles: true } }
+      );
+      return { destinationPath };
+    } catch (e) {
+      throw new Error(
+        `[Sonarr] Failed to request whole-Series move: ${e.message}`,
+        {
+          cause: e,
+        }
+      );
     }
   }
 
@@ -402,6 +579,44 @@ class SonarrAPI extends ServarrBase<{
         episodeIds,
       });
       throw new Error('Failed to monitor episodes', { cause: e });
+    }
+  }
+
+  public async setEpisodesMonitored(
+    episodeIds: number[],
+    monitored: boolean
+  ): Promise<void> {
+    if (!episodeIds.length) return;
+    await this.axios.put('/episode/monitor', { episodeIds, monitored });
+  }
+
+  public async setSeasonMonitored(
+    series: SonarrSeries,
+    seasonNumber: number,
+    monitored: boolean
+  ): Promise<SonarrSeries> {
+    const season = series.seasons.find(
+      (candidate) => candidate.seasonNumber === seasonNumber
+    );
+    if (!season) throw new Error('Season not found in Sonarr series');
+    const response = await this.axios.put<SonarrSeries>('/series', {
+      ...series,
+      seasons: series.seasons.map((candidate) =>
+        candidate.seasonNumber === seasonNumber
+          ? { ...candidate, monitored }
+          : candidate
+      ),
+    });
+    return response.data;
+  }
+
+  public async deleteEpisodeFiles(fileIds: number[]): Promise<void> {
+    for (const fileId of [...new Set(fileIds)]) {
+      try {
+        await this.axios.delete(`/episodefile/${fileId}`);
+      } catch (e) {
+        if (e?.response?.status !== 404) throw e;
+      }
     }
   }
 
@@ -429,30 +644,40 @@ class SonarrAPI extends ServarrBase<{
 
     return newSeasons;
   }
-  public removeSeries = async (tvdbId: number): Promise<void> => {
-    const { id, title } = await this.getSeriesByTvdbId(tvdbId);
-
-    if (!id) {
+  public removeSeries = async (
+    tvdbId: number,
+    beforeDelete?: () => Promise<void>
+  ): Promise<'removed' | 'absent'> => {
+    const matches = (await this.getLibrarySeriesByTvdbId(tvdbId)).filter(
+      (series) => series.tvdbId === tvdbId
+    );
+    if (matches.length > 1) {
+      throw new Error('Multiple exact Sonarr series matched the TVDB ID');
+    }
+    const series = matches[0];
+    if (!series?.id) {
       logger.info(`[Sonarr] Series not in library, nothing to remove`, {
         tvdbId,
       });
-      return;
+      return 'absent';
     }
 
     try {
-      await this.axios.delete(`/series/${id}`, {
+      await beforeDelete?.();
+      await this.axios.delete(`/series/${series.id}`, {
         params: {
           deleteFiles: true,
-          addImportExclusion: false,
+          addImportListExclusion: false,
         },
       });
-      logger.info(`[Sonarr] Removed series ${title}`);
+      logger.info(`[Sonarr] Removed series ${series.title}`);
+      return 'removed';
     } catch (e) {
       if (e?.response?.status === 404) {
         logger.info(`[Sonarr] Series already removed from Sonarr`, {
           tvdbId,
         });
-        return;
+        return 'absent';
       }
       throw e;
     }

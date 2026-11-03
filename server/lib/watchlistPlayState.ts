@@ -1,0 +1,522 @@
+import JellyfinAPI, {
+  type JellyfinLibraryItemExtended,
+} from '@server/api/jellyfin';
+import { MediaType } from '@server/constants/media';
+import { MediaServerType } from '@server/constants/server';
+import dataSource, { getRepository } from '@server/datasource';
+import Media from '@server/entity/Media';
+import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
+import { Watchlist } from '@server/entity/Watchlist';
+import backgroundDatabaseWriteCoordinator from '@server/lib/backgroundDatabaseWriteCoordinator';
+import {
+  jellyfinPreferenceScope,
+  persistJellyfinPreference,
+  preferenceItemIds,
+  type JellyfinPreferenceTarget,
+} from '@server/lib/jellyfinPreferences';
+import {
+  JELLYFIN_VIEWING_USER_CONCURRENCY,
+  chunkValues,
+  getBatchedUserItems,
+  normalizeExactJellyfinId,
+  runBounded,
+  type JellyfinViewingClient,
+} from '@server/lib/jellyfinViewingSource';
+import { getSettings } from '@server/lib/settings';
+import logger from '@server/logger';
+import { getHostname } from '@server/utils/getHostname';
+import { In } from 'typeorm';
+
+const STARTUP_RETRY_DELAY_MS = 5_000;
+const STARTUP_RETRY_LIMIT = 12;
+
+export const isRetryableWatchlistStartupError = (error: unknown): boolean =>
+  error instanceof Error &&
+  /transaction is not started|cannot start a transaction within a transaction|SQLITE_BUSY/i.test(
+    error.message
+  );
+
+export interface WatchlistPlayStateProjection {
+  played: boolean | null;
+  lastPlayedAt: Date | null;
+}
+
+export { normalizeExactJellyfinId } from '@server/lib/jellyfinViewingSource';
+
+export const deriveWatchlistPlayState = ({
+  mediaType,
+  items,
+}: {
+  mediaType: MediaType;
+  items: JellyfinLibraryItemExtended[];
+}): WatchlistPlayStateProjection => {
+  const withUserData = items.filter((item) => item.UserData);
+  if (withUserData.length === 0) {
+    return { played: null, lastPlayedAt: null };
+  }
+
+  const eligible =
+    mediaType === MediaType.TV
+      ? withUserData.filter(
+          (item) => item.Type === 'Series' && (item.RecursiveItemCount ?? 0) > 0
+        )
+      : withUserData.filter((item) => item.Type === 'Movie');
+  if (eligible.length === 0) {
+    return { played: null, lastPlayedAt: null };
+  }
+
+  const playedItems = eligible.filter((item) => item.UserData?.Played === true);
+  const played = playedItems.length > 0;
+  const lastPlayedAt = played
+    ? (playedItems
+        .map((item) => item.UserData?.LastPlayedDate)
+        .filter((date): date is string => Boolean(date))
+        .map((date) => new Date(date))
+        .filter((date) => !Number.isNaN(date.getTime()))
+        .sort((left, right) => right.getTime() - left.getTime())[0] ?? null)
+    : null;
+
+  return { played, lastPlayedAt };
+};
+
+type WatchlistPlayStateClient = JellyfinViewingClient;
+
+interface PendingUpdate extends WatchlistPlayStateProjection {
+  id: number;
+  syncedAt: Date | null;
+  userId: string | null;
+}
+
+const identityKey = (value: {
+  user: Pick<User, 'id'>;
+  mediaType: MediaType;
+  tmdbId: number;
+}) => `${value.user.id}:${value.mediaType}:${value.tmdbId}`;
+
+export class WatchlistPlayStateSync {
+  private inFlight?: Promise<number>;
+  private cancelled = false;
+
+  constructor(
+    private readonly clientFactory: () => Promise<WatchlistPlayStateClient> = async () => {
+      const settings = getSettings();
+      const admin = await getRepository(User).findOne({
+        where: { id: 1 },
+        select: ['id', 'jellyfinDeviceId'],
+      });
+      return new JellyfinAPI(
+        getHostname(),
+        settings.jellyfin.apiKey,
+        admin?.jellyfinDeviceId ?? ''
+      );
+    }
+  ) {}
+
+  public running(): boolean {
+    return Boolean(this.inFlight);
+  }
+
+  public cancel(): void {
+    this.cancelled = true;
+  }
+
+  public async run(requireComplete = false): Promise<number> {
+    if (this.inFlight) {
+      return this.inFlight;
+    }
+    this.cancelled = false;
+    this.inFlight = backgroundDatabaseWriteCoordinator
+      .runExclusive(() => this.reconcile(requireComplete))
+      .finally(() => {
+        this.inFlight = undefined;
+        this.cancelled = false;
+      });
+    return this.inFlight;
+  }
+
+  public startCatchUp(): void {
+    const mediaServerType = getSettings().main.mediaServerType;
+    if (
+      mediaServerType !== MediaServerType.JELLYFIN &&
+      mediaServerType !== MediaServerType.EMBY
+    ) {
+      return;
+    }
+    const attempt = (remainingRetries: number) => {
+      void this.run().catch((error) => {
+        if (remainingRetries > 0 && isRetryableWatchlistStartupError(error)) {
+          logger.warn(
+            'Watchlist play-state startup sync was deferred by database activity',
+            {
+              label: 'Watchlist Play State',
+              retryDelayMs: STARTUP_RETRY_DELAY_MS,
+              remainingRetries,
+            }
+          );
+          setTimeout(
+            () => attempt(remainingRetries - 1),
+            STARTUP_RETRY_DELAY_MS
+          );
+          return;
+        }
+        logger.error('Watchlist play-state startup sync failed', {
+          label: 'Watchlist Play State',
+          errorType: error instanceof Error ? error.name : 'UnknownSyncError',
+        });
+      });
+    };
+    setImmediate(() => attempt(STARTUP_RETRY_LIMIT));
+  }
+
+  private async ensureStateRecords(): Promise<UserMediaState[]> {
+    const watchlistRows = await getRepository(Watchlist).find({
+      relations: { requestedBy: true, media: true },
+    });
+
+    if (watchlistRows.length > 0) {
+      await dataSource.transaction(async (manager) => {
+        for (const batch of chunkValues(watchlistRows, 200)) {
+          await manager
+            .createQueryBuilder()
+            .insert()
+            .into(UserMediaState)
+            .values(
+              batch.map((row) => ({
+                user: row.requestedBy,
+                mediaType: row.mediaType,
+                tmdbId: row.tmdbId,
+                media: row.media,
+              }))
+            )
+            .updateEntity(false)
+            .orIgnore()
+            .execute();
+          // Only explicit Watchlist intent enrolls a new preference-only row in
+          // the pre-existing play-state population. Existing rows default true.
+          await manager
+            .createQueryBuilder()
+            .update(UserMediaState)
+            .set({ jellyfinPlayStateTracked: true })
+            .where(
+              batch
+                .map(
+                  (_, index) =>
+                    `("userId" = :user${index} AND "mediaType" = :type${index} AND "tmdbId" = :tmdb${index})`
+                )
+                .join(' OR '),
+              Object.fromEntries(
+                batch.flatMap((row, index) => [
+                  [`user${index}`, row.requestedBy.id],
+                  [`type${index}`, row.mediaType],
+                  [`tmdb${index}`, row.tmdbId],
+                ])
+              )
+            )
+            .execute();
+        }
+      });
+    }
+
+    const states = await getRepository(UserMediaState)
+      .createQueryBuilder('state')
+      .leftJoinAndSelect('state.user', 'user')
+      .leftJoinAndSelect('state.media', 'media')
+      .addSelect('state.jellyfinPlayStateUserId')
+      .where('state.jellyfinPlayStateTracked = :tracked', { tracked: true })
+      .orderBy('user.id', 'ASC')
+      .addOrderBy('state.id', 'ASC')
+      .getMany();
+
+    const watchlistMedia = new Map(
+      watchlistRows
+        .filter((row) => row.media)
+        .map((row) => [
+          identityKey({ ...row, user: row.requestedBy }),
+          row.media!,
+        ])
+    );
+    const missingStates = states.filter((state) => !state.media);
+    const matchingMedia =
+      missingStates.length > 0
+        ? await getRepository(Media).find({
+            where: {
+              tmdbId: In([
+                ...new Set(missingStates.map((state) => state.tmdbId)),
+              ]),
+            },
+          })
+        : [];
+    const mediaByIdentity = new Map(
+      matchingMedia.map((media) => [
+        `${media.mediaType}:${media.tmdbId}`,
+        media,
+      ])
+    );
+    const relinked: UserMediaState[] = [];
+    for (const state of states) {
+      const media =
+        watchlistMedia.get(identityKey(state)) ??
+        mediaByIdentity.get(`${state.mediaType}:${state.tmdbId}`);
+      if (!state.media && media) {
+        state.media = media;
+        relinked.push(state);
+      }
+    }
+    if (relinked.length > 0) {
+      await getRepository(UserMediaState).save(relinked);
+    }
+    return states;
+  }
+
+  private async reconcile(requireComplete: boolean): Promise<number> {
+    const startedAt = Date.now();
+    const preferenceScope = jellyfinPreferenceScope();
+    const preferenceUpdates: {
+      target: JellyfinPreferenceTarget;
+      items: Map<string, JellyfinLibraryItemExtended>;
+      userId: number;
+      sourceUserId: string;
+    }[] = [];
+    const rows = await this.ensureStateRecords();
+    const summary = {
+      usersConsidered: new Set(rows.map((row) => row.user.id)).size,
+      stateRecords: rows.length,
+      mappedMedia: 0,
+      idsQueried: 0,
+      watched: 0,
+      notWatched: 0,
+      unknown: 0,
+      unmappedUsers: 0,
+      unmappedMedia: 0,
+      failures: 0,
+      updated: 0,
+    };
+    if (rows.length === 0) {
+      logger.info('Watchlist play-state sync completed', {
+        label: 'Watchlist Play State',
+        ...summary,
+        durationMs: Date.now() - startedAt,
+      });
+      return 0;
+    }
+
+    const byUser = new Map<
+      string,
+      { userIds: Set<number>; rows: UserMediaState[] }
+    >();
+    const unknownUpdates: PendingUpdate[] = [];
+    for (const row of rows) {
+      const jellyfinUserId = normalizeExactJellyfinId(row.user.jellyfinUserId);
+      if (!jellyfinUserId) {
+        summary.unmappedUsers += 1;
+        unknownUpdates.push({
+          id: row.id,
+          played: null,
+          lastPlayedAt: null,
+          syncedAt: null,
+          userId: null,
+        });
+        continue;
+      }
+      const group = byUser.get(jellyfinUserId) ?? {
+        userIds: new Set<number>(),
+        rows: [],
+      };
+      group.userIds.add(row.user.id);
+      group.rows.push(row);
+      byUser.set(jellyfinUserId, group);
+    }
+
+    const updates = [...unknownUpdates];
+    const groups = [...byUser.entries()];
+    const client = groups.length > 0 ? await this.clientFactory() : undefined;
+    await runBounded(
+      groups,
+      JELLYFIN_VIEWING_USER_CONCURRENCY,
+      async ([userId, group]) => {
+        if (this.cancelled) return;
+        if (group.userIds.size !== 1) {
+          summary.failures += 1;
+          logger.error(
+            'Ambiguous Jellyfin user mapping blocks Watchlist sync',
+            {
+              label: 'Watchlist Play State',
+              mappedSeerrUsers: group.userIds.size,
+            }
+          );
+          updates.push(
+            ...group.rows.map((row) => ({
+              id: row.id,
+              played: null,
+              lastPlayedAt: null,
+              syncedAt: null,
+              userId: null,
+            }))
+          );
+          return;
+        }
+
+        const rowsWithIds = group.rows.map((row) => ({
+          row,
+          ids: [
+            ...new Set(
+              [row.media?.jellyfinMediaId, row.media?.jellyfinMediaId4k]
+                .map(normalizeExactJellyfinId)
+                .filter((id): id is string => Boolean(id))
+            ),
+          ],
+        }));
+        summary.mappedMedia += rowsWithIds.filter(
+          ({ ids }) => ids.length > 0
+        ).length;
+        summary.unmappedMedia += rowsWithIds.filter(
+          ({ ids }) => ids.length === 0
+        ).length;
+        const allIds = [...new Set(rowsWithIds.flatMap(({ ids }) => ids))];
+        summary.idsQueried += allIds.length;
+        const itemsById = new Map<string, JellyfinLibraryItemExtended>();
+        try {
+          const fetched = await getBatchedUserItems({
+            client: client!,
+            ids: allIds,
+            userId,
+            fields: ['ProviderIds', 'RecursiveItemCount'],
+          });
+          for (const [id, item] of fetched) itemsById.set(id, item);
+        } catch (error) {
+          summary.failures += 1;
+          logger.warn('Unable to reconcile Watchlist play state for a user', {
+            label: 'Watchlist Play State',
+            errorType:
+              error instanceof Error ? error.name : 'UnknownProviderError',
+          });
+          updates.push(
+            ...group.rows
+              .filter(
+                (row) =>
+                  row.jellyfinPlayStateUserId !== null &&
+                  row.jellyfinPlayStateUserId !== undefined &&
+                  row.jellyfinPlayStateUserId !== userId
+              )
+              .map((row) => ({
+                id: row.id,
+                played: null,
+                lastPlayedAt: null,
+                syncedAt: null,
+                userId: null,
+              }))
+          );
+          return;
+        }
+
+        const syncedAt = new Date();
+        for (const { row, ids } of rowsWithIds) {
+          if (ids.length)
+            preferenceUpdates.push({
+              target: {
+                mediaType: row.mediaType,
+                tmdbId: row.tmdbId,
+                ids: preferenceItemIds(ids),
+                mediaId: row.media?.id,
+                stateId: row.id,
+              },
+              items: itemsById,
+              userId: row.user.id,
+              sourceUserId: userId,
+            });
+          if (ids.length === 0) {
+            updates.push({
+              id: row.id,
+              played: null,
+              lastPlayedAt: null,
+              syncedAt,
+              userId,
+            });
+            continue;
+          }
+          const matched = ids
+            .map((id) => itemsById.get(id))
+            .filter((item): item is JellyfinLibraryItemExtended =>
+              Boolean(item)
+            );
+          const projection = deriveWatchlistPlayState({
+            mediaType: row.mediaType,
+            items: matched,
+          });
+          if (
+            matched.some((item) => item.UserData?.Played === true) &&
+            matched.some((item) => item.UserData?.Played === false)
+          ) {
+            logger.info('Jellyfin versions disagree on Watchlist play state', {
+              label: 'Watchlist Play State',
+              mediaType: row.mediaType,
+              tmdbId: row.tmdbId,
+            });
+          }
+          updates.push({ id: row.id, ...projection, syncedAt, userId });
+        }
+      }
+    );
+
+    if (this.cancelled) {
+      if (requireComplete) {
+        throw new Error('watchlist_play_state_cancelled');
+      }
+      return 0;
+    }
+    if (updates.length > 0) {
+      await dataSource.transaction(async (manager) => {
+        for (const update of updates) {
+          await manager.update(
+            UserMediaState,
+            { id: update.id },
+            {
+              jellyfinPlayed: update.played,
+              jellyfinLastPlayedAt: update.lastPlayedAt,
+              jellyfinPlayStateSyncedAt: update.syncedAt,
+              jellyfinPlayStateUserId: update.userId,
+            }
+          );
+        }
+        for (const update of preferenceUpdates) {
+          await persistJellyfinPreference({
+            ...update,
+            manager,
+            sourceScope: preferenceScope,
+            observedAt: new Date(startedAt),
+          });
+        }
+      });
+    }
+    summary.updated = updates.length;
+    const finalState = new Map(
+      rows.map((row) => [row.id, row.jellyfinPlayed ?? null])
+    );
+    for (const update of updates) {
+      finalState.set(update.id, update.played);
+    }
+    summary.watched = [...finalState.values()].filter(
+      (played) => played === true
+    ).length;
+    summary.notWatched = [...finalState.values()].filter(
+      (played) => played === false
+    ).length;
+    summary.unknown = [...finalState.values()].filter(
+      (played) => played === null
+    ).length;
+    logger.info('Watchlist play-state sync completed', {
+      label: 'Watchlist Play State',
+      ...summary,
+      durationMs: Date.now() - startedAt,
+    });
+    if (requireComplete && summary.failures > 0) {
+      throw new Error('watchlist_play_state_incomplete');
+    }
+    return updates.length;
+  }
+}
+
+const watchlistPlayStateSync = new WatchlistPlayStateSync();
+
+export default watchlistPlayStateSync;

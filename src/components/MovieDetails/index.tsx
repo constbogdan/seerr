@@ -22,7 +22,17 @@ import PersonCard from '@app/components/PersonCard';
 import RequestButton from '@app/components/RequestButton';
 import Slider from '@app/components/Slider';
 import StatusBadge from '@app/components/StatusBadge';
+import WatchlistIcon from '@app/components/TitleCard/WatchlistIcon';
 import useDeepLinks from '@app/hooks/useDeepLinks';
+import {
+  createDetailsWatchlistTarget,
+  getDetailsWatchlistCacheKey,
+  getDetailsWatchlistIdentity,
+  parseDetailsRouteId,
+  resolveDetailsWatchlistMembership,
+  updateDetailsWatchlistMembership,
+  useDetailsWatchlistMutation,
+} from '@app/hooks/useDetailsWatchlist';
 import useLocale from '@app/hooks/useLocale';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -31,7 +41,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import ErrorPage from '@app/pages/_error';
 import { sortCrewPriority } from '@app/utils/creditHelpers';
 import defineMessages from '@app/utils/defineMessages';
-import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
+import { getMediaRefreshInterval } from '@app/utils/refreshIntervalHelper';
 import {
   ArrowRightCircleIcon,
   CloudIcon,
@@ -39,9 +49,7 @@ import {
   ExclamationTriangleIcon,
   EyeSlashIcon,
   FilmIcon,
-  MinusCircleIcon,
   PlayIcon,
-  StarIcon,
   TicketIcon,
 } from '@heroicons/react/24/outline';
 import {
@@ -61,7 +69,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 
 const messages = defineMessages('components.MovieDetails', {
   originaltitle: 'Original Title',
@@ -122,29 +130,42 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
   const minStudios = 3;
   const [showMoreStudios, setShowMoreStudios] = useState(false);
   const [showIssueModal, setShowIssueModal] = useState(false);
-  const [isUpdating, setIsUpdating] = useState<boolean>(false);
-  const [toggleWatchlist, setToggleWatchlist] = useState<boolean>(
-    !movie?.onUserWatchlist
-  );
   const [isBlocklistUpdating, setIsBlocklistUpdating] =
     useState<boolean>(false);
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
   const { addToast } = useToasts();
+  const { mutate: mutateCache } = useSWRConfig();
+  const routeMovieId = parseDetailsRouteId(router.query.movieId) ?? movie?.id;
+  const detailsCacheKey = getDetailsWatchlistCacheKey({
+    mediaType: MediaType.MOVIE,
+    tmdbId: routeMovieId,
+    userId: user?.id,
+  });
+  const watchlistIdentity = getDetailsWatchlistIdentity({
+    mediaType: MediaType.MOVIE,
+    tmdbId: routeMovieId,
+    userId: user?.id,
+  });
+  const watchlistMutation = useDetailsWatchlistMutation(watchlistIdentity);
 
   const {
     data,
     error,
     mutate: revalidate,
-  } = useSWR<MovieDetailsType>(`/api/v1/movie/${router.query.movieId}`, {
-    fallbackData: movie,
-    refreshInterval: refreshIntervalHelper(
-      {
-        downloadStatus: movie?.mediaInfo?.downloadStatus,
-        downloadStatus4k: movie?.mediaInfo?.downloadStatus4k,
-      },
-      15000
-    ),
-  });
+  } = useSWR<MovieDetailsType>(
+    detailsCacheKey,
+    ([url]: readonly [string, string]) =>
+      axios.get<MovieDetailsType>(url).then((response) => response.data),
+    {
+      fallbackData: movie?.id === routeMovieId ? movie : undefined,
+      refreshInterval: (latest) =>
+        getMediaRefreshInterval(
+          (latest ?? (movie?.id === routeMovieId ? movie : undefined))
+            ?.mediaInfo,
+          15000
+        ),
+    }
+  );
 
   const { data: ratingData } = useSWR<RatingResponse>(
     `/api/v1/movie/${router.query.movieId}/ratingscombined`
@@ -177,13 +198,19 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
     iOSPlexUrl4k: data?.mediaInfo?.iOSPlexUrl4k,
   });
 
-  if (!data && !error) {
+  if ((!data || data.id !== routeMovieId) && !error) {
     return <LoadingSpinner />;
   }
 
-  if (!data) {
+  if (!data || data.id !== routeMovieId) {
     return <ErrorPage statusCode={404} />;
   }
+
+  const onUserWatchlist = resolveDetailsWatchlistMembership({
+    authoritativeMembership: data.onUserWatchlist,
+    authoritativeTmdbId: data.id,
+    routeTmdbId: routeMovieId,
+  });
 
   const showAllStudios = data.productionCompanies.length <= minStudios + 1;
   const mediaLinks: PlayButtonLink[] = [];
@@ -328,61 +355,96 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
   }
 
   const onClickWatchlistBtn = async (): Promise<void> => {
-    setIsUpdating(true);
+    const target = createDetailsWatchlistTarget({
+      mediaType: MediaType.MOVIE,
+      title: data.title,
+      tmdbId: data.id,
+      userId: user?.id,
+    });
+    if (!target || target.identity !== watchlistIdentity) return;
+    const mutationToken = watchlistMutation.beginMutation(target.identity);
+    if (!mutationToken) return;
 
     try {
       const response = await axios.post('/api/v1/watchlist', {
-        tmdbId: movie?.id,
-        mediaType: MediaType.MOVIE,
-        title: movie?.title,
+        tmdbId: target.tmdbId,
+        mediaType: target.mediaType,
+        title: target.title,
       });
 
       if (response.data) {
-        addToast(
-          <span>
-            {intl.formatMessage(messages.watchlistSuccess, {
-              title: movie?.title,
-              strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-            })}
-          </span>,
-          { appearance: 'success', autoDismiss: true }
+        await mutateCache<MovieDetailsType>(
+          target.cacheKey,
+          (current) => updateDetailsWatchlistMembership(current, target, true),
+          { revalidate: false }
         );
+        void mutateCache(target.cacheKey);
+        if (
+          watchlistMutation.isCurrentMutation(target.identity, mutationToken)
+        ) {
+          addToast(
+            <span>
+              {intl.formatMessage(messages.watchlistSuccess, {
+                title: target.title,
+                strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+              })}
+            </span>,
+            { appearance: 'success', autoDismiss: true }
+          );
+        }
       }
     } catch {
-      addToast(intl.formatMessage(messages.watchlistError), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+      if (watchlistMutation.isCurrentMutation(target.identity, mutationToken)) {
+        addToast(intl.formatMessage(messages.watchlistError), {
+          appearance: 'error',
+          autoDismiss: true,
+        });
+      }
+    } finally {
+      watchlistMutation.finishMutation(target.identity, mutationToken);
     }
-
-    setIsUpdating(false);
-    setToggleWatchlist((prevState) => !prevState);
   };
 
   const onClickDeleteWatchlistBtn = async (): Promise<void> => {
-    setIsUpdating(true);
-    try {
-      await axios.delete(
-        `/api/v1/watchlist/${movie?.id}?mediaType=${MediaType.MOVIE}`
-      );
+    const target = createDetailsWatchlistTarget({
+      mediaType: MediaType.MOVIE,
+      title: data.title,
+      tmdbId: data.id,
+      userId: user?.id,
+    });
+    if (!target || target.identity !== watchlistIdentity) return;
+    const mutationToken = watchlistMutation.beginMutation(target.identity);
+    if (!mutationToken) return;
 
-      addToast(
-        <span>
-          {intl.formatMessage(messages.watchlistDeleted, {
-            title: movie?.title,
-            strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-          })}
-        </span>,
-        { appearance: 'info', autoDismiss: true }
+    try {
+      await axios.delete(target.deleteUrl);
+      await mutateCache<MovieDetailsType>(
+        target.cacheKey,
+        (current) => updateDetailsWatchlistMembership(current, target, false),
+        { revalidate: false }
       );
+      void mutateCache(target.cacheKey);
+
+      if (watchlistMutation.isCurrentMutation(target.identity, mutationToken)) {
+        addToast(
+          <span>
+            {intl.formatMessage(messages.watchlistDeleted, {
+              title: target.title,
+              strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+            })}
+          </span>,
+          { appearance: 'info', autoDismiss: true }
+        );
+      }
     } catch {
-      addToast(intl.formatMessage(messages.watchlistError), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
+      if (watchlistMutation.isCurrentMutation(target.identity, mutationToken)) {
+        addToast(intl.formatMessage(messages.watchlistError), {
+          appearance: 'error',
+          autoDismiss: true,
+        });
+      }
     } finally {
-      setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
+      watchlistMutation.finishMutation(target.identity, mutationToken);
     }
   };
 
@@ -586,9 +648,10 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
               </Tooltip>
             )}
           {data?.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
-            user?.userType !== UserType.PLEX && (
+            user?.userType !== UserType.PLEX &&
+            onUserWatchlist !== undefined && (
               <>
-                {toggleWatchlist ? (
+                {onUserWatchlist === false ? (
                   <Tooltip
                     content={intl.formatMessage(messages.addtowatchlist)}
                   >
@@ -596,12 +659,17 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                       buttonType={'ghost'}
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(messages.addtowatchlist)}
                       onClick={onClickWatchlistBtn}
+                      disabled={watchlistMutation.isUpdating}
                     >
-                      {isUpdating ? (
+                      {watchlistMutation.isUpdating ? (
                         <Spinner />
                       ) : (
-                        <StarIcon className={'text-amber-300'} />
+                        <WatchlistIcon
+                          isWatchlisted={false}
+                          className="text-[#C0C0C0]"
+                        />
                       )}
                     </Button>
                   </Tooltip>
@@ -612,9 +680,20 @@ const MovieDetails = ({ movie }: MovieDetailsProps) => {
                     <Button
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(
+                        messages.removefromwatchlist
+                      )}
                       onClick={onClickDeleteWatchlistBtn}
+                      disabled={watchlistMutation.isUpdating}
                     >
-                      {isUpdating ? <Spinner /> : <MinusCircleIcon />}
+                      {watchlistMutation.isUpdating ? (
+                        <Spinner />
+                      ) : (
+                        <WatchlistIcon
+                          isWatchlisted
+                          className="text-[#FFC107]"
+                        />
+                      )}
                     </Button>
                   </Tooltip>
                 )}

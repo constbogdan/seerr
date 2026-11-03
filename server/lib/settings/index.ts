@@ -1,4 +1,19 @@
+import {
+  DEFAULT_OVERFLOW_SETTINGS,
+  normalizeOverflowSettings,
+  type OverflowSettings,
+} from '@server/constants/overflow';
+import {
+  DEFAULT_REMOVAL_SETTINGS,
+  normalizeRemovalSettings,
+  type RemovalSettings,
+} from '@server/constants/removal';
 import { MediaServerType } from '@server/constants/server';
+import {
+  DEFAULT_WATCHLIST_ROULETTE_SETTINGS,
+  normalizeWatchlistRouletteSettings,
+  type WatchlistRouletteSettings,
+} from '@server/constants/watchlistRoulette';
 import { Permission } from '@server/lib/permissions';
 import { runMigrations } from '@server/lib/settings/migrator';
 import type { AvailableLocale } from '@server/types/languages';
@@ -52,6 +67,7 @@ export interface JellyfinSettings {
   urlBase?: string;
   externalHostname?: string;
   jellyfinForgotPasswordUrl?: string;
+  subtitleReportingEnabled?: boolean;
   libraries: Library[];
   serverId: string;
   apiKey: string;
@@ -187,6 +203,32 @@ export interface NetworkSettings {
   apiRequestTimeout: number;
 }
 
+export interface FreshSettings {
+  enabled: boolean;
+  baseUrl: string;
+  apiToken: string;
+  filterId: number;
+  cachedFilterName: string;
+  freshVisibilityDays: number;
+  excludeGenreIds?: number[];
+  excludeOriginalLanguages?: string[];
+  minimumTmdbScore?: number;
+  minimumTmdbVotes?: number;
+}
+
+const finalFreshSettings = (value?: Partial<FreshSettings>): FreshSettings => ({
+  enabled: value?.enabled ?? false,
+  baseUrl: value?.baseUrl ?? '',
+  apiToken: value?.apiToken ?? '',
+  filterId: value?.filterId ?? 0,
+  cachedFilterName: value?.cachedFilterName ?? '',
+  freshVisibilityDays: value?.freshVisibilityDays ?? 7,
+  excludeGenreIds: value?.excludeGenreIds ?? [],
+  excludeOriginalLanguages: value?.excludeOriginalLanguages ?? [],
+  minimumTmdbScore: value?.minimumTmdbScore ?? 0,
+  minimumTmdbVotes: value?.minimumTmdbVotes ?? 0,
+});
+
 interface PublicSettings {
   initialized: boolean;
 }
@@ -220,6 +262,7 @@ interface FullPublicSettings extends PublicSettings {
   youtubeUrl: string;
   versionCheck: boolean;
   plexClientIdentifier: string;
+  freshEnabled: boolean;
 }
 
 export interface NotificationAgentConfig {
@@ -356,8 +399,9 @@ interface NotificationSettings {
   agents: NotificationAgents;
 }
 
-interface JobSettings {
+export interface JobSettings {
   schedule: string;
+  enabled?: boolean;
 }
 
 export type JobId =
@@ -373,7 +417,78 @@ export type JobId =
   | 'jellyfin-full-scan'
   | 'image-cache-cleanup'
   | 'availability-sync'
-  | 'process-blocklisted-tags';
+  | 'process-blocklisted-tags'
+  | 'watchlist-metadata-backfill'
+  | 'watchlist-play-state-sync'
+  | 'current-jellyfin-viewing-sync'
+  | 'library-history-hydration'
+  | 'fresh-sync'
+  | 'removal-candidate-selection'
+  | 'scheduled-removal-processing'
+  | 'series-relocation'
+  | 'next-season'
+  | 'watchlist-roulette-movies'
+  | 'watchlist-roulette-series';
+
+const OBSOLETE_REMOVAL_JOB_SCHEDULES: Partial<
+  Record<JobId, { obsolete: string; replacement: string }>
+> = {
+  'removal-candidate-selection': {
+    obsolete: '0 * * * * *',
+    replacement: '0 0 1 */14 * *',
+  },
+  'scheduled-removal-processing': {
+    obsolete: '30 * * * * *',
+    replacement: '0 30 1 * * *',
+  },
+};
+
+export const normalizeRemovalJobSchedules = (
+  jobs: Record<JobId, JobSettings>
+): Record<JobId, JobSettings> => {
+  const normalized = { ...jobs };
+  for (const [id, migration] of Object.entries(
+    OBSOLETE_REMOVAL_JOB_SCHEDULES
+  ) as [JobId, { obsolete: string; replacement: string }][]) {
+    if (normalized[id]?.schedule === migration.obsolete) {
+      normalized[id] = {
+        ...normalized[id],
+        schedule: migration.replacement,
+      };
+    }
+  }
+  return normalized;
+};
+
+const OBSOLETE_WATCHLIST_ROULETTE_JOB_SCHEDULES: Partial<
+  Record<JobId, { obsolete: string; replacement: string }>
+> = {
+  'watchlist-roulette-movies': {
+    obsolete: '0 0 2 * * 0',
+    replacement: '0 0 1 */7 * *',
+  },
+  'watchlist-roulette-series': {
+    obsolete: '0 0 2 1 * *',
+    replacement: '0 0 1 */30 * *',
+  },
+};
+
+export const normalizeWatchlistRouletteJobSchedules = (
+  jobs: Record<JobId, JobSettings>
+): Record<JobId, JobSettings> => {
+  const normalized = { ...jobs };
+  for (const [id, migration] of Object.entries(
+    OBSOLETE_WATCHLIST_ROULETTE_JOB_SCHEDULES
+  ) as [JobId, { obsolete: string; replacement: string }][]) {
+    if (normalized[id]?.schedule === migration.obsolete) {
+      normalized[id] = {
+        ...normalized[id],
+        schedule: migration.replacement,
+      };
+    }
+  }
+  return normalized;
+};
 
 export interface AllSettings {
   clientId: string;
@@ -390,6 +505,10 @@ export interface AllSettings {
   notifications: NotificationSettings;
   jobs: Record<JobId, JobSettings>;
   network: NetworkSettings;
+  fresh: FreshSettings;
+  removal: RemovalSettings;
+  overflow: OverflowSettings;
+  watchlistRoulette: WatchlistRouletteSettings;
   metadataSettings: MetadataSettings;
   migrations: string[];
 }
@@ -453,6 +572,7 @@ class Settings {
         urlBase: '',
         externalHostname: '',
         jellyfinForgotPasswordUrl: '',
+        subtitleReportingEnabled: false,
         libraries: [],
         serverId: '',
         apiKey: '',
@@ -615,6 +735,43 @@ class Settings {
         'process-blocklisted-tags': {
           schedule: '0 30 1 */7 * *',
         },
+        'watchlist-metadata-backfill': {
+          schedule: '0 */5 * * * *',
+        },
+        'watchlist-play-state-sync': {
+          schedule: '30 */5 * * * *',
+        },
+        'current-jellyfin-viewing-sync': {
+          schedule: '45 */5 * * * *',
+        },
+        'library-history-hydration': {
+          schedule: '0 30 5 * * *',
+        },
+        'fresh-sync': {
+          schedule: '0 */5 * * * *',
+        },
+        'removal-candidate-selection': {
+          schedule: '0 0 1 */14 * *',
+        },
+        'scheduled-removal-processing': {
+          schedule: '0 30 1 * * *',
+        },
+        'series-relocation': {
+          schedule: '0 0 2 * * *',
+          enabled: false,
+        },
+        'next-season': {
+          schedule: '15 */5 * * * *',
+          enabled: false,
+        },
+        'watchlist-roulette-movies': {
+          schedule: '0 0 1 */7 * *',
+          enabled: false,
+        },
+        'watchlist-roulette-series': {
+          schedule: '0 0 1 */30 * *',
+          enabled: false,
+        },
       },
       network: {
         csrfProtection: false,
@@ -637,11 +794,27 @@ class Settings {
         },
         apiRequestTimeout: 10000,
       },
+      fresh: finalFreshSettings(),
+      removal: DEFAULT_REMOVAL_SETTINGS,
+      overflow: DEFAULT_OVERFLOW_SETTINGS,
+      watchlistRoulette: DEFAULT_WATCHLIST_ROULETTE_SETTINGS,
       migrations: [],
     };
+    const persistedOverflow = initialSettings?.overflow;
     if (initialSettings) {
       this.data = mergeSettings(this.data, initialSettings);
     }
+    this.data.fresh = finalFreshSettings(this.data.fresh);
+    this.data.removal = normalizeRemovalSettings(this.data.removal);
+    this.data.overflow = normalizeOverflowSettings(
+      persistedOverflow ?? this.data.overflow
+    );
+    this.data.watchlistRoulette = normalizeWatchlistRouletteSettings(
+      this.data.watchlistRoulette
+    );
+    this.data.jobs = normalizeWatchlistRouletteJobSchedules(
+      normalizeRemovalJobSchedules(this.data.jobs)
+    );
   }
 
   get main(): MainSettings {
@@ -746,6 +919,7 @@ class Settings {
       youtubeUrl: this.data.main.youtubeUrl,
       versionCheck: this.data.main.versionCheck,
       plexClientIdentifier: this.data.clientId,
+      freshEnabled: this.data.fresh.enabled,
     };
   }
 
@@ -771,6 +945,38 @@ class Settings {
 
   set network(data: NetworkSettings) {
     this.data.network = mergeSettings(this.data.network, data);
+  }
+
+  get fresh(): FreshSettings {
+    return this.data.fresh;
+  }
+
+  set fresh(data: FreshSettings) {
+    this.data.fresh = finalFreshSettings(data);
+  }
+
+  get removal(): RemovalSettings {
+    return this.data.removal;
+  }
+
+  set removal(data: RemovalSettings) {
+    this.data.removal = normalizeRemovalSettings(data);
+  }
+
+  get overflow(): OverflowSettings {
+    return this.data.overflow;
+  }
+
+  set overflow(data: OverflowSettings) {
+    this.data.overflow = normalizeOverflowSettings(data);
+  }
+
+  get watchlistRoulette(): WatchlistRouletteSettings {
+    return this.data.watchlistRoulette;
+  }
+
+  set watchlistRoulette(data: WatchlistRouletteSettings) {
+    this.data.watchlistRoulette = normalizeWatchlistRouletteSettings(data);
   }
 
   get migrations(): string[] {
@@ -840,7 +1046,14 @@ class Settings {
     if (data && !raw) {
       const parsedJson = JSON.parse(data);
       const migratedData = await runMigrations(parsedJson, SETTINGS_PATH);
-      const merged = mergeSettings(this.data, migratedData);
+      const loadedSettings = migratedData as AllSettings & {
+        retention?: unknown;
+      };
+      if (Object.prototype.hasOwnProperty.call(loadedSettings, 'retention')) {
+        delete loadedSettings.retention;
+        change = true;
+      }
+      const merged = mergeSettings(this.data, loadedSettings);
 
       if (JSON.stringify(merged) !== JSON.stringify(migratedData)) {
         change = true;
@@ -851,6 +1064,42 @@ class Settings {
       this.data = JSON.parse(data);
     }
 
+    const sanitizedFresh = finalFreshSettings(this.data.fresh);
+    if (JSON.stringify(sanitizedFresh) !== JSON.stringify(this.data.fresh)) {
+      this.data.fresh = sanitizedFresh;
+      change = true;
+    }
+    const sanitizedRemoval = normalizeRemovalSettings(this.data.removal);
+    if (
+      JSON.stringify(sanitizedRemoval) !== JSON.stringify(this.data.removal)
+    ) {
+      this.data.removal = sanitizedRemoval;
+      change = true;
+    }
+    const sanitizedOverflow = normalizeOverflowSettings(this.data.overflow);
+    if (
+      JSON.stringify(sanitizedOverflow) !== JSON.stringify(this.data.overflow)
+    ) {
+      this.data.overflow = sanitizedOverflow;
+      change = true;
+    }
+    const sanitizedWatchlistRoulette = normalizeWatchlistRouletteSettings(
+      this.data.watchlistRoulette
+    );
+    if (
+      JSON.stringify(sanitizedWatchlistRoulette) !==
+      JSON.stringify(this.data.watchlistRoulette)
+    ) {
+      this.data.watchlistRoulette = sanitizedWatchlistRoulette;
+      change = true;
+    }
+    const sanitizedJobs = normalizeWatchlistRouletteJobSchedules(
+      normalizeRemovalJobSchedules(this.data.jobs)
+    );
+    if (JSON.stringify(sanitizedJobs) !== JSON.stringify(this.data.jobs)) {
+      this.data.jobs = sanitizedJobs;
+      change = true;
+    }
     // generate keys and ids if it's missing
     if (!this.data.main.apiKey) {
       this.data.main.apiKey = this.generateApiKey();

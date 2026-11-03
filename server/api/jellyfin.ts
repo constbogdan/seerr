@@ -95,6 +95,47 @@ export interface JellyfinLibraryItem {
   MediaType: string;
 }
 
+export interface JellyfinUserData {
+  Rating?: number | null;
+  PlayedPercentage?: number | null;
+  UnplayedItemCount?: number | null;
+  PlaybackPositionTicks: number;
+  PlayCount: number;
+  IsFavorite: boolean;
+  Likes?: boolean | null;
+  LastPlayedDate?: string | null;
+  Played: boolean;
+  Key: string;
+  ItemId: string;
+}
+
+export type JellyfinItemField =
+  | 'ChildCount'
+  | 'CommunityRating'
+  | 'CriticRating'
+  | 'CumulativeRunTimeTicks'
+  | 'DateCreated'
+  | 'DateLastMediaAdded'
+  | 'GenreItems'
+  | 'Genres'
+  | 'MediaSources'
+  | 'MediaStreams'
+  | 'OfficialRating'
+  | 'OriginalLanguage'
+  | 'OriginalTitle'
+  | 'Overview'
+  | 'ParentId'
+  | 'Path'
+  | 'People'
+  | 'PremiereDate'
+  | 'ProductionLocations'
+  | 'ProductionYear'
+  | 'ProviderIds'
+  | 'RecursiveItemCount'
+  | 'RunTimeTicks'
+  | 'Studios'
+  | 'Taglines';
+
 export interface JellyfinMediaStream {
   Codec: string;
   Type: 'Video' | 'Audio' | 'Subtitle';
@@ -128,6 +169,29 @@ export interface JellyfinLibraryItemExtended extends JellyfinLibraryItem {
   Height?: number;
   IsHD?: boolean;
   DateCreated?: string;
+  DateLastMediaAdded?: string;
+  OriginalTitle?: string;
+  ParentId?: string;
+  ProductionYear?: number;
+  PremiereDate?: string;
+  RunTimeTicks?: number;
+  CumulativeRunTimeTicks?: number;
+  RecursiveItemCount?: number;
+  ChildCount?: number;
+  UserData?: JellyfinUserData;
+  Genres?: string[];
+  GenreItems?: { Name: string; Id: string }[];
+  People?: { Name: string; Id: string; Type: string; Role?: string }[];
+  Studios?: { Name: string; Id: string }[];
+  ProductionLocations?: string[];
+  OriginalLanguage?: string;
+  CommunityRating?: number;
+  CriticRating?: number;
+  OfficialRating?: string;
+  Overview?: string;
+  Taglines?: string[];
+  Path?: string;
+  Container?: string;
 }
 
 type EpisodeReturn<T> = T extends { includeMediaInfo: true }
@@ -140,6 +204,29 @@ export interface JellyfinItemsReponse {
   StartIndex: number;
 }
 
+export interface JellyfinItemsOptions {
+  ids?: string[];
+  searchTerm?: string;
+  parentId?: string;
+  recursive?: boolean;
+  includeItemTypes?: ('Movie' | 'Series' | 'Episode')[];
+  startIndex?: number;
+  limit?: number;
+  userId?: string;
+  enableUserData?: boolean;
+  fields?: JellyfinItemField[];
+  timeoutMs?: number;
+  allowEmptyOnAvailabilitySyncError?: boolean;
+}
+
+export interface JellyfinRequestOptions {
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
+export const MAX_JELLYFIN_ITEM_IDS = 100;
+const JELLYFIN_USER_DATA_TIMEOUT_MS = 15_000;
+
 class JellyfinAPI extends ExternalAPI {
   private userId?: string;
   private mediaServerType: MediaServerType;
@@ -147,7 +234,8 @@ class JellyfinAPI extends ExternalAPI {
   constructor(
     jellyfinHost: string,
     authToken?: string | null,
-    deviceId?: string | null
+    deviceId?: string | null,
+    requestOptions: JellyfinRequestOptions = {}
   ) {
     const settings = getSettings();
     const safeDeviceId =
@@ -169,6 +257,8 @@ class JellyfinAPI extends ExternalAPI {
       jellyfinHost,
       {},
       {
+        timeout: requestOptions.timeoutMs,
+        signal: requestOptions.signal,
         headers: {
           Authorization: authHeaderVal,
           'Content-Type': 'application/json',
@@ -499,21 +589,69 @@ class JellyfinAPI extends ExternalAPI {
   }
 
   public async getItemData(
-    id: string
+    id: string,
+    options: Pick<
+      JellyfinItemsOptions,
+      'allowEmptyOnAvailabilitySyncError'
+    > = {}
   ): Promise<JellyfinLibraryItemExtended | undefined> {
+    const items = await this.getItems({ ids: [id], limit: 1, ...options });
+    return items[0];
+  }
+
+  public async getItems(
+    options: JellyfinItemsOptions
+  ): Promise<JellyfinLibraryItemExtended[]> {
+    return (await this.getItemsPage(options)).Items.filter(
+      (item) => item.LocationType !== 'Virtual'
+    );
+  }
+
+  public async getItemsPage(
+    options: JellyfinItemsOptions
+  ): Promise<JellyfinItemsReponse> {
     try {
       const itemResponse = await this.get<JellyfinItemsReponse>(`/Items`, {
         params: {
-          ids: id,
-          fields: 'ProviderIds,MediaSources,Width,Height,IsHD,DateCreated',
+          ...(options.ids?.length && { ids: options.ids.join(',') }),
+          ...(options.searchTerm && { searchTerm: options.searchTerm }),
+          ...(options.parentId && { parentId: options.parentId }),
+          ...(options.recursive !== undefined && {
+            recursive: options.recursive,
+          }),
+          ...(options.includeItemTypes?.length && {
+            includeItemTypes: options.includeItemTypes.join(','),
+          }),
+          ...(options.startIndex !== undefined && {
+            startIndex: options.startIndex,
+          }),
+          ...(options.limit !== undefined && { limit: options.limit }),
+          ...(options.userId && { userId: options.userId }),
+          ...(options.enableUserData !== undefined && {
+            enableUserData: options.enableUserData,
+          }),
+          fields: (
+            options.fields ?? [
+              'ProviderIds',
+              'MediaSources',
+              'Width',
+              'Height',
+              'IsHD',
+              'DateCreated',
+            ]
+          ).join(','),
         },
+        ...(options.timeoutMs !== undefined && { timeout: options.timeoutMs }),
       });
 
-      return itemResponse.Items?.[0];
+      return { ...itemResponse, Items: itemResponse.Items ?? [] };
     } catch (e) {
-      if (availabilitySync.running) {
+      if (
+        options.allowEmptyOnAvailabilitySyncError !== false &&
+        availabilitySync.running
+      ) {
         if (e.response?.status === 500) {
-          return undefined;
+          return { Items: [], StartIndex: 0, TotalRecordCount: 0 };
         }
       }
 
@@ -527,6 +665,108 @@ class JellyfinAPI extends ExternalAPI {
 
       throw new ApiError(e.response.status, ApiErrorCode.InvalidAuthToken);
     }
+  }
+
+  public async getAllItems(
+    options: Omit<JellyfinItemsOptions, 'startIndex' | 'limit'>,
+    pageSize = 200,
+    onPage?: () => void
+  ): Promise<JellyfinLibraryItemExtended[]> {
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 1000) {
+      throw new Error('Jellyfin page size must be between 1 and 1000.');
+    }
+
+    const items: JellyfinLibraryItemExtended[] = [];
+    let total: number | undefined;
+    for (let startIndex = 0; ; startIndex += pageSize) {
+      const page = await this.getItemsPage({
+        ...options,
+        startIndex,
+        limit: pageSize,
+        allowEmptyOnAvailabilitySyncError: false,
+      });
+      onPage?.();
+      if (
+        page.StartIndex !== startIndex ||
+        !Number.isSafeInteger(page.TotalRecordCount) ||
+        page.TotalRecordCount < 0 ||
+        (total !== undefined && total !== page.TotalRecordCount)
+      ) {
+        throw new Error('Jellyfin pagination changed during retrieval.');
+      }
+      total = page.TotalRecordCount;
+      const expected = Math.min(pageSize, Math.max(0, total - startIndex));
+      if (
+        page.Items.length < expected &&
+        startIndex + page.Items.length < total
+      ) {
+        throw new Error('Jellyfin returned an incomplete item page.');
+      }
+      items.push(
+        ...page.Items.filter((item) => item.LocationType !== 'Virtual')
+      );
+      if (startIndex + pageSize >= total) break;
+    }
+    return items;
+  }
+
+  public async getUserItems({
+    ids,
+    userId,
+    fields = ['ProviderIds', 'RecursiveItemCount'],
+  }: {
+    ids: string[];
+    userId: string;
+    fields?: JellyfinItemField[];
+  }): Promise<JellyfinLibraryItemExtended[]> {
+    const normalizeId = (id: string) =>
+      id.replaceAll('-', '').trim().toLowerCase();
+    const exactIds = [...new Set(ids.map(normalizeId))];
+    const exactUserId = normalizeId(userId);
+    const validId = /^[0-9a-f]{32}$/i;
+
+    if (!validId.test(exactUserId)) {
+      throw new Error('A valid exact Jellyfin user ID is required.');
+    }
+    if (
+      exactIds.length === 0 ||
+      exactIds.length > MAX_JELLYFIN_ITEM_IDS ||
+      exactIds.some((id) => !validId.test(id))
+    ) {
+      throw new Error(
+        `Jellyfin item lookup requires 1-${MAX_JELLYFIN_ITEM_IDS} exact item IDs.`
+      );
+    }
+
+    return this.getItems({
+      ids: exactIds,
+      userId: exactUserId,
+      enableUserData: true,
+      fields,
+      limit: exactIds.length,
+      timeoutMs: JELLYFIN_USER_DATA_TIMEOUT_MS,
+      allowEmptyOnAvailabilitySyncError: false,
+    });
+  }
+
+  public async searchItems({
+    parentId,
+    searchTerm,
+    includeItemTypes,
+    limit = 25,
+  }: {
+    parentId: string;
+    searchTerm: string;
+    includeItemTypes: ('Movie' | 'Series')[];
+    limit?: number;
+  }): Promise<JellyfinLibraryItemExtended[]> {
+    return this.getItems({
+      parentId,
+      searchTerm,
+      includeItemTypes,
+      recursive: true,
+      limit,
+    });
   }
 
   public async getSeasons(seriesID: string): Promise<JellyfinLibraryItem[]> {

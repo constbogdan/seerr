@@ -7,7 +7,7 @@ import { useLockBodyScroll } from '@app/hooks/useLockBodyScroll';
 import globalMessages from '@app/i18n/globalMessages';
 import { Transition, TransitionChild } from '@headlessui/react';
 import type { MouseEvent } from 'react';
-import React, { Fragment, useEffect, useRef } from 'react';
+import React, { Fragment, useEffect, useId, useRef } from 'react';
 import ReactDOM from 'react-dom';
 import { useIntl } from 'react-intl';
 
@@ -40,6 +40,29 @@ interface ModalProps {
   children?: React.ReactNode;
   dialogClass?: string;
 }
+
+const modalStack: symbol[] = [];
+const focusableSelector = [
+  'a[href]',
+  'button:not([disabled])',
+  'input:not([disabled])',
+  'select:not([disabled])',
+  'textarea:not([disabled])',
+  '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+const visibleFocusableElements = (container: HTMLElement): HTMLElement[] =>
+  Array.from(container.querySelectorAll<HTMLElement>(focusableSelector)).filter(
+    (element) => {
+      const style = window.getComputedStyle(element);
+      return (
+        element.getAttribute('aria-hidden') !== 'true' &&
+        !element.closest('[hidden]') &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden'
+      );
+    }
+  );
 
 const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
   (
@@ -76,6 +99,22 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
   ) => {
     const intl = useIntl();
     const modalRef = useRef<HTMLDivElement>(null);
+    const cancelButtonRef = useRef<HTMLButtonElement>(null);
+    const originatingElementRef = useRef<HTMLElement | null>(null);
+    const modalTokenRef = useRef(Symbol('modal'));
+    const onCancelRef = useRef(onCancel);
+    const cancelDisabledRef = useRef(cancelButtonProps?.disabled ?? false);
+    const generatedId = useId().replaceAll(':', '');
+    const titleId = `modal-title-${generatedId}`;
+    const descriptionId = `modal-description-${generatedId}`;
+    const focusConfiguration = [
+      Boolean(onCancel && !cancelButtonProps?.disabled),
+      Boolean(onOk && !okDisabled && !okButtonProps?.disabled),
+      Boolean(onSecondary && !secondaryDisabled),
+      Boolean(onTertiary && !tertiaryDisabled),
+    ].join(':');
+    onCancelRef.current = onCancel;
+    cancelDisabledRef.current = cancelButtonProps?.disabled ?? false;
     const backgroundClickableRef = useRef(backgroundClickable); // This ref is used to detect state change inside the useClickOutside hook
     useEffect(() => {
       backgroundClickableRef.current = backgroundClickable;
@@ -86,6 +125,85 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
       }
     });
     useLockBodyScroll(true, disableScrollLock);
+
+    useEffect(() => {
+      const token = modalTokenRef.current;
+      const activeElement =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      originatingElementRef.current = activeElement;
+      modalStack.push(token);
+
+      const handleKeyDown = (event: KeyboardEvent) => {
+        if (modalStack.at(-1) !== token || event.defaultPrevented) return;
+
+        if (event.key === 'Escape') {
+          if (onCancelRef.current && !cancelDisabledRef.current) {
+            event.preventDefault();
+            event.stopPropagation();
+            onCancelRef.current();
+          }
+          return;
+        }
+
+        if (event.key !== 'Tab' || !modalRef.current) return;
+        const focusable = visibleFocusableElements(modalRef.current);
+        if (focusable.length === 0) {
+          event.preventDefault();
+          modalRef.current.focus();
+          return;
+        }
+
+        const first = focusable[0];
+        const last = focusable.at(-1) as HTMLElement;
+        if (!modalRef.current.contains(document.activeElement)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      };
+
+      document.addEventListener('keydown', handleKeyDown, true);
+      return () => {
+        document.removeEventListener('keydown', handleKeyDown, true);
+        const stackIndex = modalStack.lastIndexOf(token);
+        if (stackIndex >= 0) modalStack.splice(stackIndex, 1);
+        const originatingElement = originatingElementRef.current;
+        if (originatingElement?.isConnected) {
+          originatingElement.focus({ preventScroll: true });
+        }
+      };
+    }, []);
+
+    useEffect(() => {
+      if (loading) return;
+      const frame = window.requestAnimationFrame(() => {
+        if (modalStack.at(-1) !== modalTokenRef.current || !modalRef.current)
+          return;
+        const activeElement = document.activeElement;
+        if (
+          activeElement instanceof HTMLElement &&
+          modalRef.current.contains(activeElement) &&
+          !(
+            activeElement instanceof HTMLButtonElement && activeElement.disabled
+          )
+        ) {
+          return;
+        }
+        const preferred =
+          cancelButtonRef.current && !cancelButtonRef.current.disabled
+            ? cancelButtonRef.current
+            : visibleFocusableElements(modalRef.current)[0];
+        (preferred ?? modalRef.current).focus({ preventScroll: true });
+      });
+      return () => window.cancelAnimationFrame(frame);
+    }, [focusConfiguration, loading]);
 
     return ReactDOM.createPortal(
       <TransitionChild
@@ -118,7 +236,10 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
           className={`hide-scrollbar relative inline-block w-full overflow-auto bg-gray-800 px-4 pb-4 pt-4 text-left align-bottom shadow-xl ring-1 ring-gray-700 transition-all sm:my-8 sm:max-w-3xl sm:rounded-lg sm:align-middle ${dialogClass}`}
           role="dialog"
           aria-modal="true"
-          aria-labelledby="modal-headline"
+          aria-labelledby={title || subTitle ? titleId : undefined}
+          aria-describedby={title && subTitle ? descriptionId : undefined}
+          aria-busy={loading}
+          tabIndex={-1}
           style={{
             maxHeight: 'calc(100% - env(safe-area-inset-top) * 2)',
           }}
@@ -161,7 +282,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                   {title && (
                     <span
                       className="text-overseerr truncate pb-0.5 text-2xl font-bold leading-6"
-                      id="modal-headline"
+                      id={titleId}
                       data-testid="modal-title"
                     >
                       {title}
@@ -170,8 +291,8 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
                   {subTitle && (
                     <span
                       className="truncate text-lg font-semibold leading-6 text-gray-200"
-                      id="modal-headline"
-                      data-testid="modal-title"
+                      id={title ? descriptionId : titleId}
+                      data-testid="modal-subtitle"
                     >
                       {subTitle}
                     </span>
@@ -228,6 +349,7 @@ const Modal = React.forwardRef<HTMLDivElement, ModalProps>(
               )}
               {typeof onCancel === 'function' && (
                 <Button
+                  ref={cancelButtonRef}
                   buttonType={cancelButtonType}
                   onClick={onCancel}
                   className="ml-3 sm:ml-0"

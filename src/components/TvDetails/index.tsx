@@ -24,8 +24,18 @@ import RequestButton from '@app/components/RequestButton';
 import RequestModal from '@app/components/RequestModal';
 import Slider from '@app/components/Slider';
 import StatusBadge from '@app/components/StatusBadge';
+import WatchlistIcon from '@app/components/TitleCard/WatchlistIcon';
 import Season from '@app/components/TvDetails/Season';
 import useDeepLinks from '@app/hooks/useDeepLinks';
+import {
+  createDetailsWatchlistTarget,
+  getDetailsWatchlistCacheKey,
+  getDetailsWatchlistIdentity,
+  parseDetailsRouteId,
+  resolveDetailsWatchlistMembership,
+  updateDetailsWatchlistMembership,
+  useDetailsWatchlistMutation,
+} from '@app/hooks/useDetailsWatchlist';
 import useLocale from '@app/hooks/useLocale';
 import useSettings from '@app/hooks/useSettings';
 import useToasts from '@app/hooks/useToasts';
@@ -34,7 +44,7 @@ import globalMessages from '@app/i18n/globalMessages';
 import ErrorPage from '@app/pages/_error';
 import { sortCrewPriority } from '@app/utils/creditHelpers';
 import defineMessages from '@app/utils/defineMessages';
-import { refreshIntervalHelper } from '@app/utils/refreshIntervalHelper';
+import { getMediaRefreshInterval } from '@app/utils/refreshIntervalHelper';
 import {
   Disclosure,
   DisclosureButton,
@@ -48,9 +58,7 @@ import {
   ExclamationTriangleIcon,
   EyeSlashIcon,
   FilmIcon,
-  MinusCircleIcon,
   PlayIcon,
-  StarIcon,
 } from '@heroicons/react/24/solid';
 import type { RTRating } from '@server/api/rating/rottentomatoes';
 import { ANIME_KEYWORD_ID } from '@server/api/themoviedb/constants';
@@ -70,7 +78,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
 import { useIntl } from 'react-intl';
-import useSWR from 'swr';
+import useSWR, { useSWRConfig } from 'swr';
 
 const messages = defineMessages('components.TvDetails', {
   firstAirDate: 'First Air Date',
@@ -125,29 +133,44 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
   const [showRequestModal, setShowRequestModal] = useState(false);
   const [showManager, setShowManager] = useState(false);
   const [showIssueModal, setShowIssueModal] = useState(false);
-  const [isUpdating, setIsUpdating] = useState<boolean>(false);
-  const [toggleWatchlist, setToggleWatchlist] = useState<boolean>(
-    !tv?.onUserWatchlist
-  );
   const [isBlocklistUpdating, setIsBlocklistUpdating] =
     useState<boolean>(false);
   const [showBlocklistModal, setShowBlocklistModal] = useState(false);
   const { addToast } = useToasts();
+  const { mutate: mutateCache } = useSWRConfig();
+  const routeTvId = parseDetailsRouteId(router.query.tvId) ?? tv?.id;
+  const detailsCacheKey = getDetailsWatchlistCacheKey({
+    mediaType: MediaType.TV,
+    tmdbId: routeTvId,
+    userId: user?.id,
+  });
+  const watchlistIdentity = getDetailsWatchlistIdentity({
+    mediaType: MediaType.TV,
+    tmdbId: routeTvId,
+    userId: user?.id,
+  });
+  const watchlistMutation = useDetailsWatchlistMutation(watchlistIdentity);
 
   const {
     data,
     error,
     mutate: revalidate,
-  } = useSWR<TvDetailsType>(`/api/v1/tv/${router.query.tvId}`, {
-    fallbackData: tv,
-    refreshInterval: refreshIntervalHelper(
-      {
-        downloadStatus: tv?.mediaInfo?.downloadStatus,
-        downloadStatus4k: tv?.mediaInfo?.downloadStatus4k,
-      },
-      15000
-    ),
-  });
+    isValidating,
+  } = useSWR<TvDetailsType>(
+    detailsCacheKey,
+    ([url]: readonly [string, string]) =>
+      axios.get<TvDetailsType>(url).then((response) => response.data),
+    {
+      fallbackData: tv?.id === routeTvId ? tv : undefined,
+      // An unchanged fresh response is still a new byte-activity observation.
+      compare: Object.is,
+      refreshInterval: (latest) =>
+        getMediaRefreshInterval(
+          (latest ?? (tv?.id === routeTvId ? tv : undefined))?.mediaInfo,
+          15000
+        ),
+    }
+  );
 
   const { data: ratingData } = useSWR<RTRating>(
     `/api/v1/tv/${router.query.tvId}/ratings`
@@ -180,13 +203,19 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
     iOSPlexUrl4k: data?.mediaInfo?.iOSPlexUrl4k,
   });
 
-  if (!data && !error) {
+  if ((!data || data.id !== routeTvId) && !error) {
     return <LoadingSpinner />;
   }
 
-  if (!data) {
+  if (!data || data.id !== routeTvId) {
     return <ErrorPage statusCode={404} />;
   }
+
+  const onUserWatchlist = resolveDetailsWatchlistMembership({
+    authoritativeMembership: data.onUserWatchlist,
+    authoritativeTmdbId: data.id,
+    routeTmdbId: routeTvId,
+  });
 
   const mediaLinks: PlayButtonLink[] = [];
 
@@ -370,63 +399,92 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
   }
 
   const onClickWatchlistBtn = async (): Promise<void> => {
-    setIsUpdating(true);
+    const target = createDetailsWatchlistTarget({
+      mediaType: MediaType.TV,
+      title: data.name,
+      tmdbId: data.id,
+      userId: user?.id,
+    });
+    if (!target || target.identity !== watchlistIdentity) return;
+    const mutationToken = watchlistMutation.beginMutation(target.identity);
+    if (!mutationToken) return;
 
     try {
       await axios.post('/api/v1/watchlist', {
-        tmdbId: tv?.id,
-        mediaType: MediaType.TV,
-        title: tv?.name,
+        tmdbId: target.tmdbId,
+        mediaType: target.mediaType,
+        title: target.title,
       });
-      addToast(
-        <span>
-          {intl.formatMessage(messages.watchlistSuccess, {
-            title: tv?.name,
-            strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-          })}
-        </span>,
-        { appearance: 'success', autoDismiss: true }
+      await mutateCache<TvDetailsType>(
+        target.cacheKey,
+        (current) => updateDetailsWatchlistMembership(current, target, true),
+        { revalidate: false }
       );
+      void mutateCache(target.cacheKey);
 
-      setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
+      if (watchlistMutation.isCurrentMutation(target.identity, mutationToken)) {
+        addToast(
+          <span>
+            {intl.formatMessage(messages.watchlistSuccess, {
+              title: target.title,
+              strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+            })}
+          </span>,
+          { appearance: 'success', autoDismiss: true }
+        );
+      }
     } catch {
-      addToast(intl.formatMessage(messages.watchlistError), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
-
-      setIsUpdating(false);
+      if (watchlistMutation.isCurrentMutation(target.identity, mutationToken)) {
+        addToast(intl.formatMessage(messages.watchlistError), {
+          appearance: 'error',
+          autoDismiss: true,
+        });
+      }
+    } finally {
+      watchlistMutation.finishMutation(target.identity, mutationToken);
     }
   };
 
   const onClickDeleteWatchlistBtn = async (): Promise<void> => {
-    setIsUpdating(true);
+    const target = createDetailsWatchlistTarget({
+      mediaType: MediaType.TV,
+      title: data.name,
+      tmdbId: data.id,
+      userId: user?.id,
+    });
+    if (!target || target.identity !== watchlistIdentity) return;
+    const mutationToken = watchlistMutation.beginMutation(target.identity);
+    if (!mutationToken) return;
 
     try {
-      await axios.delete(
-        `/api/v1/watchlist/${tv?.id}?mediaType=${MediaType.TV}`
+      await axios.delete(target.deleteUrl);
+      await mutateCache<TvDetailsType>(
+        target.cacheKey,
+        (current) => updateDetailsWatchlistMembership(current, target, false),
+        { revalidate: false }
       );
+      void mutateCache(target.cacheKey);
 
-      addToast(
-        <span>
-          {intl.formatMessage(messages.watchlistDeleted, {
-            title: tv?.name,
-            strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
-          })}
-        </span>,
-        { appearance: 'info', autoDismiss: true }
-      );
-
-      setIsUpdating(false);
-      setToggleWatchlist((prevState) => !prevState);
+      if (watchlistMutation.isCurrentMutation(target.identity, mutationToken)) {
+        addToast(
+          <span>
+            {intl.formatMessage(messages.watchlistDeleted, {
+              title: target.title,
+              strong: (msg: React.ReactNode) => <strong>{msg}</strong>,
+            })}
+          </span>,
+          { appearance: 'info', autoDismiss: true }
+        );
+      }
     } catch {
-      addToast(intl.formatMessage(messages.watchlistError), {
-        appearance: 'error',
-        autoDismiss: true,
-      });
-
-      setIsUpdating(false);
+      if (watchlistMutation.isCurrentMutation(target.identity, mutationToken)) {
+        addToast(intl.formatMessage(messages.watchlistError), {
+          appearance: 'error',
+          autoDismiss: true,
+        });
+      }
+    } finally {
+      watchlistMutation.finishMutation(target.identity, mutationToken);
     }
   };
 
@@ -567,6 +625,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
             <StatusBadge
               status={data.mediaInfo?.status}
               downloadItem={data.mediaInfo?.downloadStatus}
+              acquisitionObservation={data.mediaInfo?.downloadStatus}
+              acquisitionValidating={isValidating}
               title={data.name}
               inProgress={(data.mediaInfo?.downloadStatus ?? []).length > 0}
               tmdbId={data.mediaInfo?.tmdbId}
@@ -588,6 +648,8 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                 <StatusBadge
                   status={data.mediaInfo?.status4k}
                   downloadItem={data.mediaInfo?.downloadStatus4k}
+                  acquisitionObservation={data.mediaInfo?.downloadStatus4k}
+                  acquisitionValidating={isValidating}
                   title={data.name}
                   is4k
                   inProgress={
@@ -642,9 +704,10 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
               </Tooltip>
             )}
           {data?.mediaInfo?.status !== MediaStatus.BLOCKLISTED &&
-            user?.userType !== UserType.PLEX && (
+            user?.userType !== UserType.PLEX &&
+            onUserWatchlist !== undefined && (
               <>
-                {toggleWatchlist ? (
+                {onUserWatchlist === false ? (
                   <Tooltip
                     content={intl.formatMessage(messages.addtowatchlist)}
                   >
@@ -652,12 +715,17 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                       buttonType={'ghost'}
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(messages.addtowatchlist)}
                       onClick={onClickWatchlistBtn}
+                      disabled={watchlistMutation.isUpdating}
                     >
-                      {isUpdating ? (
+                      {watchlistMutation.isUpdating ? (
                         <Spinner />
                       ) : (
-                        <StarIcon className={'text-amber-300'} />
+                        <WatchlistIcon
+                          isWatchlisted={false}
+                          className="text-[#C0C0C0]"
+                        />
                       )}
                     </Button>
                   </Tooltip>
@@ -668,9 +736,20 @@ const TvDetails = ({ tv }: TvDetailsProps) => {
                     <Button
                       className="z-40 mr-2"
                       buttonSize={'md'}
+                      aria-label={intl.formatMessage(
+                        messages.removefromwatchlist
+                      )}
                       onClick={onClickDeleteWatchlistBtn}
+                      disabled={watchlistMutation.isUpdating}
                     >
-                      {isUpdating ? <Spinner /> : <MinusCircleIcon />}
+                      {watchlistMutation.isUpdating ? (
+                        <Spinner />
+                      ) : (
+                        <WatchlistIcon
+                          isWatchlisted
+                          className="text-[#FFC107]"
+                        />
+                      )}
                     </Button>
                   </Tooltip>
                 )}

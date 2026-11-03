@@ -1,5 +1,4 @@
-import type { DiscoverSliderType } from '@server/constants/discover';
-import { defaultSliders } from '@server/constants/discover';
+import { defaultSliders, DiscoverSliderType } from '@server/constants/discover';
 import { getRepository } from '@server/datasource';
 import logger from '@server/logger';
 import { DbAwareColumn, resolveDbType } from '@server/utils/DbColumnHelper';
@@ -14,6 +13,15 @@ import {
 class DiscoverSlider {
   public static async bootstrapSliders(): Promise<void> {
     const sliderRepository = getRepository(DiscoverSlider);
+
+    const existingFresh = await sliderRepository.findOne({
+      where: { type: DiscoverSliderType.FRESH },
+    });
+    if (!existingFresh && (await sliderRepository.count()) > 0) {
+      const existingSliders = await sliderRepository.find();
+      existingSliders.forEach((slider) => (slider.order += 1));
+      await sliderRepository.save(existingSliders);
+    }
 
     for (const slider of defaultSliders) {
       const existingSlider = await sliderRepository.findOne({

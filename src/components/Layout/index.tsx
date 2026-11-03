@@ -10,7 +10,7 @@ import { useUser } from '@app/hooks/useUser';
 import { ArrowLeftIcon, Bars3BottomLeftIcon } from '@heroicons/react/24/solid';
 import type { AvailableLocale } from '@server/types/languages';
 import { useRouter } from 'next/router';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import useSWR from 'swr';
 
 type LayoutProps = {
@@ -19,6 +19,8 @@ type LayoutProps = {
 
 const Layout = ({ children }: LayoutProps) => {
   const [isSidebarOpen, setSidebarOpen] = useState(false);
+  const sidebarToggleRef = useRef<HTMLButtonElement>(null);
+  const wasSidebarOpenRef = useRef(false);
   const [isScrolled, setIsScrolled] = useState(false);
   const { user } = useUser();
   const router = useRouter();
@@ -36,6 +38,7 @@ const Layout = ({ children }: LayoutProps) => {
       revalidateOnMount: true,
     }
   );
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useEffect(() => {
     if (setLocale && user) {
@@ -63,6 +66,14 @@ const Layout = ({ children }: LayoutProps) => {
     };
   }, []);
 
+  useEffect(() => {
+    if (!isSidebarOpen && wasSidebarOpenRef.current) {
+      sidebarToggleRef.current?.focus();
+    }
+
+    wasSidebarOpenRef.current = isSidebarOpen;
+  }, [isSidebarOpen]);
+
   return (
     <div className="flex h-full min-h-full min-w-0 bg-gray-900">
       <div className="pwa-only fixed inset-0 z-20 h-1 w-full border-gray-700 md:border-t" />
@@ -71,7 +82,7 @@ const Layout = ({ children }: LayoutProps) => {
       </div>
       <Sidebar
         open={isSidebarOpen}
-        setClosed={() => setSidebarOpen(false)}
+        setClosed={closeSidebar}
         pendingRequestsCount={requestResponse?.pending ?? 0}
         openIssuesCount={issueResponse?.open ?? 0}
         revalidateIssueCount={() => revalidateIssueCount()}
@@ -99,10 +110,13 @@ const Layout = ({ children }: LayoutProps) => {
         >
           <div className="flex flex-1 items-center justify-between px-4 md:pl-4 md:pr-4">
             <button
+              ref={sidebarToggleRef}
               className={`mr-2 hidden text-white sm:block ${
                 isScrolled ? 'opacity-90' : 'opacity-70'
               } transition duration-300 focus:outline-none lg:hidden`}
               aria-label="Open sidebar"
+              aria-expanded={isSidebarOpen}
+              aria-controls="tablet-navigation-drawer"
               onClick={() => setSidebarOpen(true)}
               data-testid="sidebar-toggle"
             >
@@ -124,7 +138,7 @@ const Layout = ({ children }: LayoutProps) => {
         </div>
 
         <main className="relative top-16 z-0 focus:outline-none" tabIndex={0}>
-          <div className="mb-6">
+          <div className={router.pathname === '/library' ? undefined : 'mb-6'}>
             <div className="max-w-8xl mx-auto px-4">
               <UserWarnings />
               {children}

@@ -10,6 +10,15 @@ export interface WatchlistItem {
   tmdbId: number;
   mediaType: 'movie' | 'tv';
   title: string;
+  genreIds?: number[] | null;
+  watchState?: 'watched' | 'not_watched' | 'unknown';
+  lastPlayedAt?: string;
+  watchStateSyncedAt?: string;
+  requestedBy?: {
+    id: number;
+    displayName: string;
+    avatar: string;
+  };
 }
 
 export interface WatchlistResponse {
@@ -17,4 +26,9 @@ export interface WatchlistResponse {
   totalPages: number;
   totalResults: number;
   results: WatchlistItem[];
+  source: 'local' | 'plex';
+  supportsPresentation: boolean;
+  supportsWatchState: boolean;
+  supportsLibraryStatus: boolean;
+  hasUnclassifiedItems: boolean;
 }

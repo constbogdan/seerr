@@ -54,6 +54,7 @@ export interface PublicSettingsResponse {
   youtubeUrl: string;
   versionCheck: boolean;
   plexClientIdentifier: string;
+  freshEnabled: boolean;
 }
 
 export interface CacheItem {
@@ -75,6 +76,24 @@ export interface CacheResponse {
     stats: DnsStats | undefined;
     entries: DnsEntries | undefined;
   };
+}
+
+export type SynchronizationMode = 'normal' | 'contained' | 'commissioning';
+
+export interface SynchronizationContainmentStatus {
+  mode: SynchronizationMode;
+  startupCatchUpsAllowed: boolean;
+  scheduledExecutionAllowed: boolean;
+  manualSynchronizationAllowed: boolean;
+  manualExecutionPolicy: 'all' | 'blocked' | 'commissioning-sequence';
+  restartRequired: true;
+  commissioning: {
+    activeJobId: string | null;
+    nextRequiredJobId: string | null;
+    completedJobIds: string[];
+    lastFailedJobId: string | null;
+    freshSyncEnabled: boolean;
+  } | null;
 }
 
 export interface StatusResponse {

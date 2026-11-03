@@ -3,6 +3,7 @@ import Modal from '@app/components/Common/Modal';
 import type { RequestOverrides } from '@app/components/RequestModal/AdvancedRequester';
 import AdvancedRequester from '@app/components/RequestModal/AdvancedRequester';
 import QuotaDisplay from '@app/components/RequestModal/QuotaDisplay';
+import RequestModalLoadError from '@app/components/RequestModal/RequestModalLoadError';
 import useToasts from '@app/hooks/useToasts';
 import { useUser } from '@app/hooks/useUser';
 import globalMessages from '@app/i18n/globalMessages';
@@ -55,15 +56,24 @@ const MovieRequestModal = ({
   is4k = false,
 }: RequestModalProps) => {
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isRetryingLoad, setIsRetryingLoad] = useState(false);
   const [requestOverrides, setRequestOverrides] =
     useState<RequestOverrides | null>(null);
   const { addToast } = useToasts();
-  const { data, error } = useSWR<MovieDetails>(`/api/v1/movie/${tmdbId}`, {
+  const {
+    data,
+    error,
+    mutate: retryMovie,
+  } = useSWR<MovieDetails>(`/api/v1/movie/${tmdbId}`, {
     revalidateOnMount: true,
   });
   const intl = useIntl();
   const { user, hasPermission } = useUser();
-  const { data: quota } = useSWR<QuotaResponse>(
+  const {
+    data: quota,
+    error: quotaError,
+    mutate: retryQuota,
+  } = useSWR<QuotaResponse>(
     user &&
       (!requestOverrides?.user?.id || hasPermission(Permission.MANAGE_USERS))
       ? `/api/v1/user/${requestOverrides?.user?.id ?? user.id}/quota`
@@ -75,6 +85,12 @@ const MovieRequestModal = ({
       onUpdating(isUpdating);
     }
   }, [isUpdating, onUpdating]);
+
+  const retryLoad = useCallback(async () => {
+    setIsRetryingLoad(true);
+    await Promise.allSettled([retryMovie(), retryQuota()]);
+    setIsRetryingLoad(false);
+  }, [retryMovie, retryQuota]);
 
   const sendRequest = useCallback(async () => {
     setIsUpdating(true);
@@ -222,6 +238,31 @@ const MovieRequestModal = ({
       setIsUpdating(false);
     }
   };
+
+  if (error || quotaError) {
+    return (
+      <RequestModalLoadError
+        title={intl.formatMessage(
+          editRequest
+            ? is4k
+              ? messages.pending4krequest
+              : messages.pendingrequest
+            : is4k
+              ? messages.requestmovie4ktitle
+              : messages.requestmovietitle
+        )}
+        subTitle={data?.title}
+        onCancel={onCancel}
+        onRetry={() => void retryLoad()}
+        retrying={isRetryingLoad}
+        backdrop={
+          data?.backdropPath
+            ? `https://image.tmdb.org/t/p/w1920_and_h800_multi_faces/${data.backdropPath}`
+            : undefined
+        }
+      />
+    );
+  }
 
   if (editRequest) {
     const isOwner = editRequest.requestedBy.id === user?.id;

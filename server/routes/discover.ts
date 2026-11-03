@@ -1,19 +1,26 @@
-import PlexTvAPI from '@server/api/plextv';
-import TheMovieDb, {
-  MovieSortOptionsIterable,
-  TvSortOptionsIterable,
-} from '@server/api/themoviedb';
+import TheMovieDb from '@server/api/themoviedb';
 import type { TmdbKeyword } from '@server/api/themoviedb/interfaces';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { User } from '@server/entity/User';
-import { Watchlist } from '@server/entity/Watchlist';
 import type {
   GenreSliderItem,
   WatchlistResponse,
 } from '@server/interfaces/api/discoverInterfaces';
+import {
+  MovieDiscoverCriteriaSchema,
+  TvDiscoverCriteriaSchema,
+  movieDiscoverOptions,
+  tvDiscoverOptions,
+} from '@server/lib/discoverCriteria';
+import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
+import {
+  getLocalWatchlist,
+  getWatchlistForUser,
+  parseWatchlistQuery,
+} from '@server/lib/watchlist';
 import logger from '@server/logger';
 import { mapProductionCompany } from '@server/models/Movie';
 import {
@@ -26,7 +33,6 @@ import { mapNetwork } from '@server/models/Tv';
 import { isCollection, isMovie, isPerson } from '@server/utils/typeHelpers';
 import { Router } from 'express';
 import { sortBy } from 'lodash';
-import { z } from 'zod';
 
 export const createTmdbWithRegionLanguage = (user?: User): TheMovieDb => {
   const settings = getSettings();
@@ -62,82 +68,16 @@ export const createTmdbWithBlocklistSettings = (): TheMovieDb => {
 
 const discoverRoutes = Router();
 
-const QueryFilterOptions = z.object({
-  page: z.coerce.string().optional(),
-  primaryReleaseDateGte: z.coerce.string().optional(),
-  primaryReleaseDateLte: z.coerce.string().optional(),
-  firstAirDateGte: z.coerce.string().optional(),
-  firstAirDateLte: z.coerce.string().optional(),
-  studio: z.coerce.string().optional(),
-  genre: z.coerce.string().optional(),
-  keywords: z.coerce.string().optional(),
-  excludeKeywords: z.coerce.string().optional(),
-  language: z.coerce.string().optional(),
-  withRuntimeGte: z.coerce.string().optional(),
-  withRuntimeLte: z.coerce.string().optional(),
-  voteAverageGte: z.coerce.string().optional(),
-  voteAverageLte: z.coerce.string().optional(),
-  voteCountGte: z.coerce.string().optional(),
-  voteCountLte: z.coerce.string().optional(),
-  network: z.coerce.string().optional(),
-  watchProviders: z.coerce.string().optional(),
-  watchRegion: z.coerce.string().optional(),
-  status: z.coerce.string().optional(),
-  certification: z.coerce.string().optional(),
-  certificationGte: z.coerce.string().optional(),
-  certificationLte: z.coerce.string().optional(),
-  certificationCountry: z.coerce.string().optional(),
-  certificationMode: z.enum(['exact', 'range']).optional(),
-});
-
-export type FilterOptions = z.infer<typeof QueryFilterOptions>;
-const MovieApiQuerySchema = QueryFilterOptions.omit({
-  certificationMode: true,
-}).extend({
-  sortBy: z.enum(MovieSortOptionsIterable).optional().catch(undefined),
-});
-const TvApiQuerySchema = QueryFilterOptions.omit({
-  certificationMode: true,
-}).extend({
-  sortBy: z.enum(TvSortOptionsIterable).optional().catch(undefined),
-});
-
 discoverRoutes.get('/movies', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
   try {
-    const query = MovieApiQuerySchema.parse(req.query);
+    const query = MovieDiscoverCriteriaSchema.parse(req.query);
     const keywords = query.keywords;
-    const excludeKeywords = query.excludeKeywords;
 
-    const data = await tmdb.getDiscoverMovies({
-      page: Number(query.page),
-      sortBy: query.sortBy,
-      language: req.locale ?? query.language,
-      originalLanguage: query.language,
-      genre: query.genre,
-      studio: query.studio,
-      primaryReleaseDateLte: query.primaryReleaseDateLte
-        ? new Date(query.primaryReleaseDateLte).toISOString().split('T')[0]
-        : undefined,
-      primaryReleaseDateGte: query.primaryReleaseDateGte
-        ? new Date(query.primaryReleaseDateGte).toISOString().split('T')[0]
-        : undefined,
-      keywords,
-      excludeKeywords,
-      withRuntimeGte: query.withRuntimeGte,
-      withRuntimeLte: query.withRuntimeLte,
-      voteAverageGte: query.voteAverageGte,
-      voteAverageLte: query.voteAverageLte,
-      voteCountGte: query.voteCountGte,
-      voteCountLte: query.voteCountLte,
-      watchProviders: query.watchProviders,
-      watchRegion: query.watchRegion,
-      certification: query.certification,
-      certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
-    });
+    const data = await tmdb.getDiscoverMovies(
+      movieDiscoverOptions(query, req.locale ?? query.language)
+    );
 
     const media = await Media.getRelatedMedia(
       req.user,
@@ -419,38 +359,11 @@ discoverRoutes.get('/tv', async (req, res, next) => {
   const tmdb = createTmdbWithRegionLanguage(req.user);
 
   try {
-    const query = TvApiQuerySchema.parse(req.query);
+    const query = TvDiscoverCriteriaSchema.parse(req.query);
     const keywords = query.keywords;
-    const excludeKeywords = query.excludeKeywords;
-    const data = await tmdb.getDiscoverTv({
-      page: Number(query.page),
-      sortBy: query.sortBy,
-      language: req.locale ?? query.language,
-      genre: query.genre,
-      network: query.network ? Number(query.network) : undefined,
-      firstAirDateLte: query.firstAirDateLte
-        ? new Date(query.firstAirDateLte).toISOString().split('T')[0]
-        : undefined,
-      firstAirDateGte: query.firstAirDateGte
-        ? new Date(query.firstAirDateGte).toISOString().split('T')[0]
-        : undefined,
-      originalLanguage: query.language,
-      keywords,
-      excludeKeywords,
-      withRuntimeGte: query.withRuntimeGte,
-      withRuntimeLte: query.withRuntimeLte,
-      voteAverageGte: query.voteAverageGte,
-      voteAverageLte: query.voteAverageLte,
-      voteCountGte: query.voteCountGte,
-      voteCountLte: query.voteCountLte,
-      watchProviders: query.watchProviders,
-      watchRegion: query.watchRegion,
-      withStatus: query.status,
-      certification: query.certification,
-      certificationGte: query.certificationGte,
-      certificationLte: query.certificationLte,
-      certificationCountry: query.certificationCountry,
-    });
+    const data = await tmdb.getDiscoverTv(
+      tvDiscoverOptions(query, req.locale ?? query.language)
+    );
 
     const media = await Media.getRelatedMedia(
       req.user,
@@ -941,64 +854,74 @@ discoverRoutes.get<{ language: string }, GenreSliderItem[]>(
 
 discoverRoutes.get<Record<string, unknown>, WatchlistResponse>(
   '/watchlist',
-  async (req, res) => {
+  async (req, res, next) => {
     const userRepository = getRepository(User);
-    const itemsPerPage = 20;
-    const page = req.query.page ? Number(req.query.page) : 1;
-    const offset = (page - 1) * itemsPerPage;
+    const owner = typeof req.query.owner === 'string' ? req.query.owner : 'me';
+    const canViewOthers =
+      req.user?.hasPermission(Permission.WATCHLIST_VIEW) ?? false;
 
-    const activeUser = await userRepository.findOne({
-      where: { id: req.user?.id },
-      select: ['id', 'plexToken'],
-    });
-
-    if (activeUser && !activeUser?.plexToken) {
-      // Non-Plex users can only see their own watchlist
-      const [result, total] = await getRepository(Watchlist).findAndCount({
-        where: { requestedBy: { id: activeUser?.id } },
-        relations: {
-          /*requestedBy: true,media:true*/
-        },
-        // loadRelationIds: true,
-        take: itemsPerPage,
-        skip: offset,
-      });
-      if (total) {
-        return res.json({
-          page: page,
-          totalPages: Math.ceil(total / itemsPerPage),
-          totalResults: total,
-          results: result,
+    if (owner === 'all') {
+      if (!canViewOthers) {
+        return next({
+          status: 403,
+          message: 'You do not have permission to view other Watchlists.',
         });
       }
+      return res.json(
+        await getLocalWatchlist({
+          allUsers: true,
+          query: parseWatchlistQuery(req.query),
+        })
+      );
     }
-    if (!activeUser?.plexToken) {
-      // We will just return an empty array if the user has no Plex token
+
+    const requestedOwnerId = owner === 'me' ? req.user?.id : Number(owner);
+    if (
+      !requestedOwnerId ||
+      !Number.isSafeInteger(requestedOwnerId) ||
+      requestedOwnerId < 1
+    ) {
+      return next({ status: 400, message: 'Invalid Watchlist owner.' });
+    }
+    if (requestedOwnerId !== req.user?.id && !canViewOthers) {
+      return next({
+        status: 403,
+        message: 'You do not have permission to view this Watchlist.',
+      });
+    }
+
+    const activeUser = await userRepository.findOne({
+      where: { id: requestedOwnerId },
+      select: ['id', 'plexToken', 'includeInUserMetrics'],
+    });
+
+    if (!activeUser) {
       return res.json({
         page: 1,
         totalPages: 1,
         totalResults: 0,
         results: [],
+        source: 'local',
+        supportsPresentation: true,
+        supportsWatchState: true,
+        supportsLibraryStatus: true,
+        hasUnclassifiedItems: false,
       });
     }
 
-    // List watchlist from Plex
-    const plexTV = new PlexTvAPI(activeUser.plexToken);
+    if (!activeUser.includeInUserMetrics && activeUser.id !== req.user?.id) {
+      return next({
+        status: 400,
+        message: 'This account is not included in user metrics.',
+      });
+    }
 
-    const watchlist = await plexTV.getWatchlist({ offset });
-
-    return res.json({
-      page,
-      totalPages: Math.ceil(watchlist.totalSize / itemsPerPage),
-      totalResults: watchlist.totalSize,
-      results: watchlist.items.map((item) => ({
-        id: item.tmdbId,
-        ratingKey: item.ratingKey,
-        title: item.title,
-        mediaType: item.type === 'show' ? 'tv' : 'movie',
-        tmdbId: item.tmdbId,
-      })),
-    });
+    return res.json(
+      await getWatchlistForUser({
+        user: activeUser,
+        query: parseWatchlistQuery(req.query),
+      })
+    );
   }
 );
 

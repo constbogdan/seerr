@@ -1,4 +1,5 @@
 import { MediaType } from '@server/constants/media';
+import { AcquisitionPhase } from '@server/lib/acquisitionPhase';
 import type { DownloadingItem } from '@server/lib/downloadtracker';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -84,6 +85,28 @@ describe('getRequestDownloadStatus', () => {
     const status = getRequestStatus(downloads, [3]);
 
     assert.deepEqual(status.downloadItem, [seasonThree]);
+    assert.equal(status.inProgress, true);
+  });
+
+  it('keeps a matching Finalizing item in the request presentation', () => {
+    const finalizing = createDownloadItem({
+      downloadId: 'confirmed-import',
+      status: 'completed',
+      sizeLeft: 0,
+      timeLeft: '',
+      acquisitionPhase: AcquisitionPhase.FINALIZING,
+      acquisitionPhaseStartedAt: '2026-09-28T07:27:01.744Z',
+      episode: {
+        id: 7,
+        seasonNumber: 2,
+        episodeNumber: 1,
+        absoluteEpisodeNumber: 7,
+      },
+    });
+
+    const status = getRequestStatus([finalizing], [2]);
+
+    assert.deepEqual(status.downloadItem, [finalizing]);
     assert.equal(status.inProgress, true);
   });
 

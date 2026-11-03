@@ -140,7 +140,10 @@ const OverrideRuleTiles = ({
   return (
     <>
       {rules.map((rule) => (
-        <li className="flex h-full flex-col rounded-lg bg-gray-800 text-left shadow ring-1 ring-gray-500">
+        <li
+          key={`override-rule-${rule.id}`}
+          className="flex h-full flex-col rounded-lg bg-gray-800 text-left shadow ring-1 ring-gray-500"
+        >
           <div className="flex w-full flex-1 items-center justify-between space-x-6 p-6">
             <div className="flex-1 truncate">
               <span className="text-lg">
@@ -151,10 +154,10 @@ const OverrideRuleTiles = ({
                   <span className="mr-2 font-bold">
                     {intl.formatMessage(messages.users)}
                   </span>
-                  <div className="inline-flex gap-2">
+                  <span className="inline-flex gap-2">
                     {rule.users.split(',').map((userId) => {
                       return (
-                        <span>
+                        <span key={`override-rule-${rule.id}-user-${userId}`}>
                           {
                             users?.find((user) => user.id === Number(userId))
                               ?.displayName
@@ -162,7 +165,7 @@ const OverrideRuleTiles = ({
                         </span>
                       );
                     })}
-                  </div>
+                  </span>
                 </p>
               )}
               {rule.genre && (
@@ -170,13 +173,13 @@ const OverrideRuleTiles = ({
                   <span className="mr-2 font-bold">
                     {intl.formatMessage(messages.genre)}
                   </span>
-                  <div className="inline-flex gap-2">
+                  <span className="inline-flex gap-2">
                     {rule.genre.split(',').map((genreId) => (
-                      <span>
+                      <span key={`override-rule-${rule.id}-genre-${genreId}`}>
                         {genres?.find((g) => g.id === Number(genreId))?.name}
                       </span>
                     ))}
-                  </div>
+                  </span>
                 </p>
               )}
               {rule.language && (
@@ -184,7 +187,7 @@ const OverrideRuleTiles = ({
                   <span className="mr-2 font-bold">
                     {intl.formatMessage(messages.language)}
                   </span>
-                  <div className="inline-flex gap-2">
+                  <span className="inline-flex gap-2">
                     {rule.language
                       .split('|')
                       .filter((languageId) => languageId !== 'server')
@@ -198,9 +201,15 @@ const OverrideRuleTiles = ({
                             type: 'language',
                             fallback: 'none',
                           }) ?? language.english_name;
-                        return <span>{languageName}</span>;
+                        return (
+                          <span
+                            key={`override-rule-${rule.id}-language-${languageId}`}
+                          >
+                            {languageName}
+                          </span>
+                        );
                       })}
-                  </div>
+                  </span>
                 </p>
               )}
               {rule.keywords && (
@@ -208,10 +217,12 @@ const OverrideRuleTiles = ({
                   <span className="mr-2 font-bold">
                     {intl.formatMessage(messages.keywords)}
                   </span>
-                  <div className="inline-flex gap-2">
+                  <span className="inline-flex gap-2">
                     {rule.keywords.split(',').map((keywordId) => {
                       return (
-                        <span>
+                        <span
+                          key={`override-rule-${rule.id}-keyword-${keywordId}`}
+                        >
                           {
                             keywords?.find(
                               (keyword) => keyword.id === Number(keywordId)
@@ -220,14 +231,14 @@ const OverrideRuleTiles = ({
                         </span>
                       );
                     })}
-                  </div>
+                  </span>
                 </p>
               )}
               <span className="text-lg">
                 {intl.formatMessage(messages.settings)}
               </span>
               {rule.profileId && (
-                <p className="runcate text-sm leading-5 text-gray-300">
+                <p className="truncate text-sm leading-5 text-gray-300">
                   <span className="mr-2 font-bold">
                     {intl.formatMessage(messages.qualityprofile)}
                   </span>
@@ -255,9 +266,9 @@ const OverrideRuleTiles = ({
                   <span className="mr-2 font-bold">
                     {intl.formatMessage(messages.tags)}
                   </span>
-                  <div className="inline-flex gap-2">
+                  <span className="inline-flex gap-2">
                     {rule.tags.split(',').map((tag) => (
-                      <span>
+                      <span key={`override-rule-${rule.id}-tag-${tag}`}>
                         {testResponses
                           .find(
                             (r) =>
@@ -270,7 +281,7 @@ const OverrideRuleTiles = ({
                           tag}
                       </span>
                     ))}
-                  </div>
+                  </span>
                 </p>
               )}
             </div>

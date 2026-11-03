@@ -1,0 +1,275 @@
+{
+  "schemaVersion": 1,
+  "authority": "historical-unsupported-webpack",
+  "capturedAt": "2026-10-12T15:33:29.702Z",
+  "environment": {
+    "node": "v22.19.0",
+    "chrome": "154.0.8037.98",
+    "platform": "win32-x64",
+    "database": "SQLite in-memory",
+    "browserMode": "Next production Webpack build, headless Chrome, local API mocks",
+    "cpuThrottling": "none"
+  },
+  "bulkEligibility": [
+    {
+      "targetCount": 10,
+      "queryCount": 35,
+      "queryCategories": {
+        "canonical-media": 8,
+        "canonical-season": 3,
+        "removal-schedule": 1,
+        "seerr-media": 14,
+        "library-presence": 7,
+        "season-file-membership": 2
+      },
+      "latencyMilliseconds": {
+        "samples": [27.592, 22.208, 19.895, 25.003, 23.741, 20.371, 20.573],
+        "median": 22.208,
+        "p95": 27.592
+      },
+      "outcomeCounts": {
+        "unscheduled": 4,
+        "scheduled": 1,
+        "processing_lease": 1,
+        "whole_series_scheduled": 1,
+        "not_current": 1,
+        "ambiguous_source": 1,
+        "configuration": 1
+      }
+    },
+    {
+      "targetCount": 50,
+      "queryCount": 163,
+      "queryCategories": {
+        "canonical-media": 36,
+        "canonical-season": 11,
+        "removal-schedule": 1,
+        "seerr-media": 70,
+        "library-presence": 35,
+        "season-file-membership": 10
+      },
+      "latencyMilliseconds": {
+        "samples": [109.785, 94.867, 99.178, 99.413, 100.989, 98.181, 100.719],
+        "median": 99.413,
+        "p95": 109.785
+      },
+      "outcomeCounts": {
+        "unscheduled": 20,
+        "scheduled": 5,
+        "processing_lease": 5,
+        "whole_series_scheduled": 5,
+        "not_current": 5,
+        "ambiguous_source": 5,
+        "configuration": 5
+      }
+    },
+    {
+      "targetCount": 100,
+      "queryCount": 323,
+      "queryCategories": {
+        "canonical-media": 71,
+        "canonical-season": 21,
+        "removal-schedule": 1,
+        "seerr-media": 140,
+        "library-presence": 70,
+        "season-file-membership": 20
+      },
+      "latencyMilliseconds": {
+        "samples": [
+          189.318, 187.51, 185.245, 170.242, 177.352, 262.802, 167.291
+        ],
+        "median": 185.245,
+        "p95": 262.802
+      },
+      "outcomeCounts": {
+        "unscheduled": 40,
+        "scheduled": 10,
+        "processing_lease": 10,
+        "whole_series_scheduled": 10,
+        "not_current": 10,
+        "ambiguous_source": 10,
+        "configuration": 10
+      }
+    }
+  ],
+  "tmdb": {
+    "configuredAxiosTimeoutMilliseconds": 0,
+    "cold": { "requests": 1, "milliseconds": 40.76 },
+    "warm": { "additionalRequests": 0, "milliseconds": 0.206 },
+    "concurrentDuplicate": {
+      "callers": 10,
+      "requests": 10,
+      "milliseconds": 36.704
+    },
+    "delayedResponse": {
+      "serverDelayMilliseconds": 75,
+      "requests": 1,
+      "completedWithoutTimeout": true,
+      "milliseconds": 81.995
+    },
+    "boundedTimeoutControl": {
+      "configuredTimeoutMilliseconds": 25,
+      "serverDelayMilliseconds": 75,
+      "requests": 1,
+      "timedOut": true,
+      "errorCode": "unknown",
+      "milliseconds": 56.495
+    }
+  },
+  "libraryBrowser": [
+    {
+      "cardCount": 10,
+      "domElements": 2077,
+      "nodeCount": 2485,
+      "nodesPerCard": { "minimum": 160, "maximum": 182, "mean": 170.2 },
+      "focusableElements": 406,
+      "tooltipTriggers": 334,
+      "documentMousedownListeners": 334,
+      "samples": [
+        {
+          "eventListeners": 2312,
+          "heapBytes": 14123124,
+          "longTaskTotalMilliseconds": 398,
+          "longTaskMaximumMilliseconds": 121,
+          "taskDurationSeconds": 1.212187
+        },
+        {
+          "eventListeners": 2312,
+          "heapBytes": 14148920,
+          "longTaskTotalMilliseconds": 253,
+          "longTaskMaximumMilliseconds": 118,
+          "taskDurationSeconds": 1.056563
+        },
+        {
+          "eventListeners": 2312,
+          "heapBytes": 14143768,
+          "longTaskTotalMilliseconds": 130,
+          "longTaskMaximumMilliseconds": 73,
+          "taskDurationSeconds": 0.741123
+        }
+      ]
+    },
+    {
+      "cardCount": 25,
+      "domElements": 4621,
+      "nodeCount": 5319,
+      "nodesPerCard": { "minimum": 160, "maximum": 182, "mean": 169.84 },
+      "focusableElements": 953,
+      "tooltipTriggers": 831,
+      "documentMousedownListeners": 831,
+      "samples": [
+        {
+          "eventListeners": 4763,
+          "heapBytes": 19800240,
+          "longTaskTotalMilliseconds": 286,
+          "longTaskMaximumMilliseconds": 146,
+          "taskDurationSeconds": 0.987261
+        },
+        {
+          "eventListeners": 4763,
+          "heapBytes": 19803728,
+          "longTaskTotalMilliseconds": 301,
+          "longTaskMaximumMilliseconds": 154,
+          "taskDurationSeconds": 1.046059
+        },
+        {
+          "eventListeners": 4762,
+          "heapBytes": 19817500,
+          "longTaskTotalMilliseconds": 418,
+          "longTaskMaximumMilliseconds": 152,
+          "taskDurationSeconds": 1.135358
+        }
+      ]
+    },
+    {
+      "cardCount": 50,
+      "domElements": 8887,
+      "nodeCount": 10081,
+      "nodesPerCard": { "minimum": 160, "maximum": 182, "mean": 170.24 },
+      "focusableElements": 1874,
+      "tooltipTriggers": 1668,
+      "documentMousedownListeners": 1668,
+      "samples": [
+        {
+          "eventListeners": 8887,
+          "heapBytes": 30928664,
+          "longTaskTotalMilliseconds": 817,
+          "longTaskMaximumMilliseconds": 421,
+          "taskDurationSeconds": 1.773868
+        },
+        {
+          "eventListeners": 8888,
+          "heapBytes": 30877504,
+          "longTaskTotalMilliseconds": 636,
+          "longTaskMaximumMilliseconds": 274,
+          "taskDurationSeconds": 1.437928
+        },
+        {
+          "eventListeners": 8888,
+          "heapBytes": 29269836,
+          "longTaskTotalMilliseconds": 697,
+          "longTaskMaximumMilliseconds": 319,
+          "taskDurationSeconds": 1.526876
+        }
+      ]
+    },
+    {
+      "cardCount": 100,
+      "domElements": 17399,
+      "nodeCount": 19575,
+      "nodesPerCard": { "minimum": 160, "maximum": 183, "mean": 170.24 },
+      "focusableElements": 3709,
+      "tooltipTriggers": 3335,
+      "documentMousedownListeners": 3335,
+      "samples": [
+        {
+          "eventListeners": 17106,
+          "heapBytes": 49088880,
+          "longTaskTotalMilliseconds": 1122,
+          "longTaskMaximumMilliseconds": 508,
+          "taskDurationSeconds": 2.262784
+        },
+        {
+          "eventListeners": 17105,
+          "heapBytes": 49071248,
+          "longTaskTotalMilliseconds": 1545,
+          "longTaskMaximumMilliseconds": 732,
+          "taskDurationSeconds": 2.633018
+        },
+        {
+          "eventListeners": 17106,
+          "heapBytes": 49075764,
+          "longTaskTotalMilliseconds": 1138,
+          "longTaskMaximumMilliseconds": 508,
+          "taskDurationSeconds": 2.202683
+        }
+      ]
+    }
+  ],
+  "responsive": [
+    { "width": 390, "scrollWidth": 390, "overflowPixels": 0 },
+    { "width": 640, "scrollWidth": 656, "overflowPixels": 16 },
+    { "width": 900, "scrollWidth": 916, "overflowPixels": 16 },
+    { "width": 1440, "scrollWidth": 1456, "overflowPixels": 16 }
+  ],
+  "scrollHook": {
+    "before": {
+      "add": { "scroll": 7, "resize": 6 },
+      "remove": { "scroll": 5, "resize": 5 }
+    },
+    "afterFiveScrollEvents": {
+      "add": { "scroll": 9, "resize": 8 },
+      "remove": { "scroll": 7, "resize": 7 }
+    },
+    "afterNavigation": {
+      "add": { "scroll": 9, "resize": 8 },
+      "remove": { "scroll": 8, "resize": 8 },
+      "native": { "scroll": 1, "resize": 0 }
+    }
+  },
+  "measurementGaps": [
+    "PostgreSQL was not part of this SQLite/browser fixture checkpoint.",
+    "The synthetic card fixture excludes external Radarr/Sonarr SVG action links because the current production Webpack build resolves those SVG imports as objects and React rejects that branch; core Library measurements remain valid, but the action-link branch needs separate correction and rerun.",
+    "Timing and heap values are host-sensitive; structural counts are the stable regression signals."
+  ]
+}

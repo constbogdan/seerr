@@ -5,6 +5,7 @@ import LoadingSpinner from '@app/components/Common/LoadingSpinner';
 import Modal from '@app/components/Common/Modal';
 import PageTitle from '@app/components/Common/PageTitle';
 import Table from '@app/components/Common/Table';
+import SynchronizationContainmentStatus from '@app/components/Settings/SynchronizationContainmentStatus';
 import useLocale from '@app/hooks/useLocale';
 import useSettings from '@app/hooks/useSettings';
 
@@ -13,7 +14,12 @@ import globalMessages from '@app/i18n/globalMessages';
 import defineMessages from '@app/utils/defineMessages';
 import { formatBytes } from '@app/utils/numberHelpers';
 import { Transition } from '@headlessui/react';
-import { PlayIcon, StopIcon, TrashIcon } from '@heroicons/react/24/outline';
+import {
+  BeakerIcon,
+  PlayIcon,
+  StopIcon,
+  TrashIcon,
+} from '@heroicons/react/24/outline';
 import { PencilIcon } from '@heroicons/react/24/solid';
 import { MediaServerType } from '@server/constants/server';
 import type {
@@ -40,9 +46,20 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     jobtype: 'Type',
     nextexecution: 'Next Execution',
     runnow: 'Run Now',
+    disabled: 'Disabled',
+    suppressed: 'Suppressed by synchronization mode',
     canceljob: 'Cancel Job',
     jobstarted: '{jobname} started.',
     jobcancelled: '{jobname} canceled.',
+    jobUpdateFailed: 'Unable to update {jobname}.',
+    dryRun: 'Dry Run',
+    dryRunComplete:
+      'Dry run complete: {qualifying} qualifying; {candidates} requestable.',
+    jobresult:
+      'Moved {moved}; blocked {blocked}; reconciliation required {reconciliation}',
+    rouletteJobResult:
+      'Requested {requested}; skipped {skipped}; failed {failed}',
+    lastExecution: 'Last run {date}',
     process: 'Process',
     command: 'Command',
     cache: 'Cache',
@@ -90,6 +107,39 @@ const messages: { [messageName: string]: MessageDescriptor } = defineMessages(
     'download-sync-reset': 'Download Sync Reset',
     'image-cache-cleanup': 'Image Cache Cleanup',
     'process-blocklisted-tags': 'Process Blocklisted Tags',
+    'watchlist-metadata-backfill': 'Watchlist Metadata Backfill',
+    'watchlist-metadata-backfill-description':
+      'Adds missing genre information to Watchlist items.',
+    'watchlist-play-state-sync': 'Watchlist Play State Sync',
+    'current-jellyfin-viewing-sync': 'Jellyfin Activity Sync',
+    'library-history-hydration': 'Library Sync',
+    'removal-candidate-selection': 'Removal Scan',
+    'removal-candidate-selection-description':
+      'Finds media eligible for scheduled removal.',
+    'scheduled-removal-processing': 'Removal Processing',
+    'scheduled-removal-processing-description':
+      'Processes scheduled removals when their deadlines arrive.',
+    'series-relocation': 'Series Relocation',
+    'series-relocation-description':
+      'Automatically relocates eligible Series between storage volumes.',
+    'next-season': 'Next Season',
+    'next-season-description':
+      'Automatically requests the next season when viewing progress reaches 70%.',
+    'watchlist-roulette-movies': 'Watchlist Roulette Movies',
+    'watchlist-roulette-movies-description':
+      "Automatically requests random Movies from users' Watchlists.",
+    'watchlist-roulette-series': 'Watchlist Roulette Series',
+    'watchlist-roulette-series-description':
+      "Automatically requests Season 1 of random Series from users' Watchlists.",
+    'watchlist-play-state-sync-description':
+      "Updates watched status and progress for each user's Watchlist.",
+    'current-jellyfin-viewing-sync-description':
+      'Updates what each user has watched in Jellyfin.',
+    'library-history-hydration-description':
+      'Keeps your Library in sync with your local media files.',
+    'fresh-sync': 'Fresh Sync',
+    'fresh-sync-description':
+      'Finds new releases matching your selected discovery sources.',
     editJobSchedule: 'Modify Job',
     jobScheduleEditSaved: 'Job edited successfully!',
     jobScheduleEditFailed: 'Something went wrong while saving the job.',
@@ -118,9 +168,22 @@ interface Job {
   type: 'process' | 'command';
   interval: 'seconds' | 'minutes' | 'hours' | 'days' | 'fixed';
   cronSchedule: string;
-  nextExecutionTime: string;
+  nextExecutionTime: string | null;
   running: boolean;
+  enabled: boolean;
+  configurableEnabled: boolean;
+  dryRunAvailable: boolean;
+  lastResult?: Record<string, unknown> | null;
+  lastExecutionTime?: string | null;
+  scheduledExecutionAllowed: boolean;
+  manualExecutionAllowed: boolean;
 }
+
+const numericResult = (
+  result: Record<string, unknown> | null | undefined,
+  key: string
+): number | null =>
+  result && typeof result[key] === 'number' ? (result[key] as number) : null;
 
 type JobModalState = {
   isOpen?: boolean;
@@ -203,21 +266,28 @@ const SettingsJobs = () => {
     scheduleSeconds: 30,
   });
   const [isSaving, setIsSaving] = useState(false);
+  const [dryRunningJob, setDryRunningJob] = useState<JobId | null>(null);
   const settings = useSettings();
-
+  const jobMessages = { ...messages };
   if (settings.currentSettings.mediaServerType === MediaServerType.EMBY) {
-    messages['jellyfin-recently-added-scan'] = {
+    jobMessages['jellyfin-recently-added-scan'] = {
       id: 'jellyfin-recently-added-scan',
       defaultMessage: 'Emby Recently Added Scan',
     };
-  }
-
-  if (settings.currentSettings.mediaServerType === MediaServerType.EMBY) {
-    messages['jellyfin-full-scan'] = {
+    jobMessages['jellyfin-full-scan'] = {
       id: 'jellyfin-full-scan',
       defaultMessage: 'Emby Full Library Scan',
     };
   }
+  const orderedJobs = data?.slice().sort((left, right) => {
+    const displayedNameOrder = intl
+      .formatMessage(jobMessages[left.id] ?? messages.unknownJob)
+      .localeCompare(
+        intl.formatMessage(jobMessages[right.id] ?? messages.unknownJob),
+        locale
+      );
+    return displayedNameOrder || left.id.localeCompare(right.id, locale);
+  });
 
   if (!data && !error) {
     return <LoadingSpinner />;
@@ -249,6 +319,36 @@ const SettingsJobs = () => {
       }
     );
     revalidate();
+  };
+
+  const dryRunJob = async (job: Job) => {
+    if (dryRunningJob) return;
+    setDryRunningJob(job.id);
+    try {
+      const response = await axios.post<{
+        qualifyingProgress: number;
+        candidates: { outcome: string }[];
+      }>(`/api/v1/settings/jobs/${job.id}/dry-run`);
+      addToast(
+        intl.formatMessage(messages.dryRunComplete, {
+          qualifying: response.data.qualifyingProgress,
+          candidates: response.data.candidates.filter(
+            (candidate) => candidate.outcome === 'would-request'
+          ).length,
+        }),
+        { appearance: 'info', autoDismiss: true }
+      );
+      await revalidate();
+    } catch {
+      addToast(
+        intl.formatMessage(messages.jobUpdateFailed, {
+          jobname: intl.formatMessage(messages[job.id] ?? messages.unknownJob),
+        }),
+        { appearance: 'error', autoDismiss: true }
+      );
+    } finally {
+      setDryRunningJob(null);
+    }
   };
 
   const flushCache = async (cache: CacheItem) => {
@@ -334,6 +434,7 @@ const SettingsJobs = () => {
           intl.formatMessage(globalMessages.settings),
         ]}
       />
+      <SynchronizationContainmentStatus />
       <Transition
         as={Fragment}
         enter="transition-opacity duration-300"
@@ -436,7 +537,7 @@ const SettingsJobs = () => {
                         })
                       }
                     >
-                      {[1, 2, 3, 4, 5, 6, 7, 10, 14, 21].map((v) => (
+                      {[1, 2, 3, 4, 5, 6, 7, 10, 14, 21, 30].map((v) => (
                         <option value={v} key={`jobScheduleDays-${v}`}>
                           {intl.formatMessage(
                             messages.editJobScheduleSelectorDays,
@@ -495,17 +596,68 @@ const SettingsJobs = () => {
             </tr>
           </thead>
           <Table.TBody>
-            {data?.map((job) => (
+            {orderedJobs?.map((job) => (
               <tr key={`job-list-${job.id}`}>
                 <Table.TD>
                   <div className="flex items-center text-sm leading-5 text-white">
                     <span>
                       {intl.formatMessage(
-                        messages[job.id] ?? messages.unknownJob
+                        jobMessages[job.id] ?? messages.unknownJob
                       )}
                     </span>
                     {job.running && <Spinner className="ml-2 h-5 w-5" />}
                   </div>
+                  {messages[`${job.id}-description`] && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages[`${job.id}-description`])}
+                    </div>
+                  )}
+                  {job.id === 'series-relocation' && job.lastResult && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages.jobresult, {
+                        moved: numericResult(job.lastResult, 'moved') ?? 0,
+                        blocked: numericResult(job.lastResult, 'blocked') ?? 0,
+                        reconciliation:
+                          numericResult(
+                            job.lastResult,
+                            'needsReconciliation'
+                          ) ?? 0,
+                      })}
+                    </div>
+                  )}
+                  {(job.id === 'watchlist-roulette-movies' ||
+                    job.id === 'watchlist-roulette-series') &&
+                    job.lastResult && (
+                      <div className="mt-1 text-xs text-gray-400">
+                        {intl.formatMessage(messages.rouletteJobResult, {
+                          requested:
+                            numericResult(job.lastResult, 'requested') ?? 0,
+                          skipped:
+                            numericResult(job.lastResult, 'skipped') ?? 0,
+                          failed: numericResult(job.lastResult, 'failed') ?? 0,
+                        })}
+                      </div>
+                    )}
+                  {job.id === 'next-season' && job.lastResult && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages.rouletteJobResult, {
+                        requested:
+                          numericResult(job.lastResult, 'requested') ?? 0,
+                        skipped: numericResult(job.lastResult, 'skipped') ?? 0,
+                        failed: numericResult(job.lastResult, 'failed') ?? 0,
+                      })}
+                    </div>
+                  )}
+                  {job.lastExecutionTime && (
+                    <div className="mt-1 text-xs text-gray-400">
+                      {intl.formatMessage(messages.lastExecution, {
+                        date: intl.formatDate(new Date(job.lastExecutionTime), {
+                          dateStyle: 'medium',
+                          timeStyle: 'short',
+                        }),
+                      })}
+                    </div>
+                  )}
                 </Table.TD>
                 <Table.TD>
                   <Badge
@@ -519,18 +671,37 @@ const SettingsJobs = () => {
                 </Table.TD>
                 <Table.TD>
                   <div className="text-sm leading-5 text-white">
-                    <FormattedRelativeTime
-                      value={Math.floor(
-                        (new Date(job.nextExecutionTime).getTime() -
-                          Date.now()) /
-                          1000
-                      )}
-                      updateIntervalInSeconds={1}
-                      numeric="auto"
-                    />
+                    {!job.enabled ? (
+                      intl.formatMessage(messages.disabled)
+                    ) : !job.scheduledExecutionAllowed ? (
+                      intl.formatMessage(messages.suppressed)
+                    ) : job.nextExecutionTime ? (
+                      <FormattedRelativeTime
+                        value={Math.floor(
+                          (new Date(job.nextExecutionTime).getTime() -
+                            Date.now()) /
+                            1000
+                        )}
+                        updateIntervalInSeconds={1}
+                        numeric="auto"
+                      />
+                    ) : (
+                      intl.formatMessage(messages.disabled)
+                    )}
                   </div>
                 </Table.TD>
                 <Table.TD alignText="right">
+                  {job.dryRunAvailable && (
+                    <Button
+                      className="mr-2"
+                      buttonType="default"
+                      disabled={dryRunningJob === job.id || job.running}
+                      onClick={() => void dryRunJob(job)}
+                    >
+                      <BeakerIcon />
+                      <span>{intl.formatMessage(messages.dryRun)}</span>
+                    </Button>
+                  )}
                   {job.interval !== 'fixed' && (
                     <Button
                       className="mr-2"
@@ -547,7 +718,11 @@ const SettingsJobs = () => {
                       <span>{intl.formatMessage(messages.canceljob)}</span>
                     </Button>
                   ) : (
-                    <Button buttonType="primary" onClick={() => runJob(job)}>
+                    <Button
+                      buttonType="primary"
+                      disabled={!job.enabled || !job.manualExecutionAllowed}
+                      onClick={() => runJob(job)}
+                    >
                       <PlayIcon />
                       <span>{intl.formatMessage(messages.runnow)}</span>
                     </Button>

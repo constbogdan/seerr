@@ -5,12 +5,15 @@ import { Transition } from '@headlessui/react';
 import type { MediaStatus } from '@server/constants/media';
 import type { MediaRequest } from '@server/entity/MediaRequest';
 import type { NonFunctionProperties } from '@server/interfaces/api/common';
+import { useRef } from 'react';
 
 interface RequestModalProps {
   show: boolean;
   type: 'movie' | 'tv' | 'collection';
   tmdbId: number;
   is4k?: boolean;
+  initialSeasonNumber?: number;
+  visibleSeasonNumbers?: number[];
   editRequest?: NonFunctionProperties<MediaRequest>;
   onComplete?: (newStatus: MediaStatus) => void;
   onCancel?: () => void;
@@ -22,11 +25,25 @@ const RequestModal = ({
   show,
   tmdbId,
   is4k,
+  initialSeasonNumber,
+  visibleSeasonNumbers,
   editRequest,
   onComplete,
   onUpdating,
   onCancel,
 }: RequestModalProps) => {
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const wasShownRef = useRef(false);
+  if (
+    show &&
+    !wasShownRef.current &&
+    typeof document !== 'undefined' &&
+    document.activeElement instanceof HTMLElement
+  ) {
+    returnFocusRef.current = document.activeElement;
+  }
+  wasShownRef.current = show;
+
   return (
     <Transition
       as="div"
@@ -37,6 +54,11 @@ const RequestModal = ({
       leaveFrom="opacity-100"
       leaveTo="opacity-0"
       show={show}
+      afterLeave={() => {
+        if (returnFocusRef.current?.isConnected) {
+          returnFocusRef.current.focus({ preventScroll: true });
+        }
+      }}
     >
       {type === 'movie' ? (
         <MovieRequestModal
@@ -49,12 +71,17 @@ const RequestModal = ({
         />
       ) : type === 'tv' ? (
         <TvRequestModal
+          key={`${tmdbId}:${initialSeasonNumber ?? 'all'}:${
+            visibleSeasonNumbers?.join(',') ?? 'all'
+          }`}
           onComplete={onComplete}
           onCancel={onCancel}
           tmdbId={tmdbId}
           onUpdating={onUpdating}
           is4k={is4k}
           editRequest={editRequest}
+          initialSeasonNumber={initialSeasonNumber}
+          visibleSeasonNumbers={visibleSeasonNumbers}
         />
       ) : (
         <CollectionRequestModal

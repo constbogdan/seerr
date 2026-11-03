@@ -1,0 +1,1307 @@
+{
+  "schemaVersion": 2,
+  "authority": "supported-production-turbopack",
+  "capturedAt": "2026-10-12T16:18:22.183Z",
+  "provenance": {
+    "buildCommand": "pnpm build:next",
+    "buildId": "aov50VlHtSmllZgX3c4Vl",
+    "bundler": "Next.js 16.2.6 Turbopack",
+    "fixture": "R11 engagement-heavy Library cards with normal and 4K Radarr/Sonarr external links",
+    "historicalBaseline": "baseline.json"
+  },
+  "environment": {
+    "node": "v22.19.0",
+    "chrome": "Chrome/154.0.8037.98",
+    "platform": "win32-x64",
+    "browserMode": "Next production Turbopack build, headless Chrome, local non-forwarding API mocks",
+    "cpuThrottling": "none"
+  },
+  "buildAndRuntimeAssertions": {
+    "svgModuleSemantics": "react-component",
+    "externalLinksPerCard": 2,
+    "externalLinksUseSvg": true,
+    "accessibleNames": ["Radarr", "Radarr 4K", "Sonarr", "Sonarr 4K"],
+    "runtimeErrorCount": 0
+  },
+  "libraryBrowser": [
+    {
+      "cardCount": 10,
+      "domElements": 2231,
+      "nodeCount": 2641,
+      "nodesPerCard": {
+        "minimum": 168,
+        "maximum": 198,
+        "mean": 183.3
+      },
+      "focusableElements": 428,
+      "tooltipTriggers": 355,
+      "documentMousedownListeners": 355,
+      "externalServiceLinks": 20,
+      "samples": [
+        {
+          "run": 1,
+          "totalJavaScriptListeners": 2351,
+          "heapAfterGarbageCollectionBytes": 14201400,
+          "longTaskCount": 4,
+          "longTaskTotalMilliseconds": 347,
+          "longTaskMaximumMilliseconds": 104,
+          "scriptDurationSeconds": 0.379791,
+          "taskDurationSeconds": 1.22468,
+          "layoutCount": 31,
+          "layoutDurationSeconds": 0.116514,
+          "styleRecalculationCount": 56,
+          "styleRecalculationDurationSeconds": 0.045872,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 2,
+          "totalJavaScriptListeners": 2351,
+          "heapAfterGarbageCollectionBytes": 14197732,
+          "longTaskCount": 4,
+          "longTaskTotalMilliseconds": 334,
+          "longTaskMaximumMilliseconds": 127,
+          "scriptDurationSeconds": 0.464842,
+          "taskDurationSeconds": 1.235497,
+          "layoutCount": 39,
+          "layoutDurationSeconds": 0.128013,
+          "styleRecalculationCount": 65,
+          "styleRecalculationDurationSeconds": 0.063833,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 3,
+          "totalJavaScriptListeners": 2351,
+          "heapAfterGarbageCollectionBytes": 14213880,
+          "longTaskCount": 3,
+          "longTaskTotalMilliseconds": 197,
+          "longTaskMaximumMilliseconds": 82,
+          "scriptDurationSeconds": 0.322991,
+          "taskDurationSeconds": 0.882574,
+          "layoutCount": 33,
+          "layoutDurationSeconds": 0.096368,
+          "styleRecalculationCount": 60,
+          "styleRecalculationDurationSeconds": 0.043864,
+          "runtimeErrorCount": 0
+        }
+      ]
+    },
+    {
+      "cardCount": 25,
+      "domElements": 4973,
+      "nodeCount": 5677,
+      "nodesPerCard": {
+        "minimum": 168,
+        "maximum": 198,
+        "mean": 183
+      },
+      "focusableElements": 1009,
+      "tooltipTriggers": 884,
+      "documentMousedownListeners": 884,
+      "externalServiceLinks": 50,
+      "samples": [
+        {
+          "run": 1,
+          "totalJavaScriptListeners": 4935,
+          "heapAfterGarbageCollectionBytes": 20310472,
+          "longTaskCount": 4,
+          "longTaskTotalMilliseconds": 370,
+          "longTaskMaximumMilliseconds": 170,
+          "scriptDurationSeconds": 0.492823,
+          "taskDurationSeconds": 1.175191,
+          "layoutCount": 39,
+          "layoutDurationSeconds": 0.109929,
+          "styleRecalculationCount": 62,
+          "styleRecalculationDurationSeconds": 0.060198,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 2,
+          "totalJavaScriptListeners": 4934,
+          "heapAfterGarbageCollectionBytes": 20308092,
+          "longTaskCount": 4,
+          "longTaskTotalMilliseconds": 380,
+          "longTaskMaximumMilliseconds": 173,
+          "scriptDurationSeconds": 0.517633,
+          "taskDurationSeconds": 1.199912,
+          "layoutCount": 33,
+          "layoutDurationSeconds": 0.110197,
+          "styleRecalculationCount": 58,
+          "styleRecalculationDurationSeconds": 0.061704,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 3,
+          "totalJavaScriptListeners": 4935,
+          "heapAfterGarbageCollectionBytes": 20306196,
+          "longTaskCount": 5,
+          "longTaskTotalMilliseconds": 566,
+          "longTaskMaximumMilliseconds": 254,
+          "scriptDurationSeconds": 0.636208,
+          "taskDurationSeconds": 1.522194,
+          "layoutCount": 32,
+          "layoutDurationSeconds": 0.136887,
+          "styleRecalculationCount": 58,
+          "styleRecalculationDurationSeconds": 0.07813,
+          "runtimeErrorCount": 0
+        }
+      ]
+    },
+    {
+      "cardCount": 50,
+      "domElements": 9565,
+      "nodeCount": 10769,
+      "nodesPerCard": {
+        "minimum": 168,
+        "maximum": 198,
+        "mean": 183.34
+      },
+      "focusableElements": 1984,
+      "tooltipTriggers": 1773,
+      "documentMousedownListeners": 1773,
+      "externalServiceLinks": 100,
+      "samples": [
+        {
+          "run": 1,
+          "totalJavaScriptListeners": 9272,
+          "heapAfterGarbageCollectionBytes": 32176024,
+          "longTaskCount": 5,
+          "longTaskTotalMilliseconds": 780,
+          "longTaskMaximumMilliseconds": 373,
+          "scriptDurationSeconds": 0.842179,
+          "taskDurationSeconds": 1.798747,
+          "layoutCount": 39,
+          "layoutDurationSeconds": 0.158129,
+          "styleRecalculationCount": 60,
+          "styleRecalculationDurationSeconds": 0.087757,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 2,
+          "totalJavaScriptListeners": 9272,
+          "heapAfterGarbageCollectionBytes": 30239308,
+          "longTaskCount": 4,
+          "longTaskTotalMilliseconds": 628,
+          "longTaskMaximumMilliseconds": 298,
+          "scriptDurationSeconds": 0.775968,
+          "taskDurationSeconds": 1.698891,
+          "layoutCount": 41,
+          "layoutDurationSeconds": 0.153186,
+          "styleRecalculationCount": 64,
+          "styleRecalculationDurationSeconds": 0.08489,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 3,
+          "totalJavaScriptListeners": 9272,
+          "heapAfterGarbageCollectionBytes": 30272040,
+          "longTaskCount": 4,
+          "longTaskTotalMilliseconds": 635,
+          "longTaskMaximumMilliseconds": 306,
+          "scriptDurationSeconds": 0.764011,
+          "taskDurationSeconds": 1.675957,
+          "layoutCount": 41,
+          "layoutDurationSeconds": 0.152073,
+          "styleRecalculationCount": 65,
+          "styleRecalculationDurationSeconds": 0.093623,
+          "runtimeErrorCount": 0
+        }
+      ]
+    },
+    {
+      "cardCount": 100,
+      "domElements": 18732,
+      "nodeCount": 20928,
+      "nodesPerCard": {
+        "minimum": 168,
+        "maximum": 199,
+        "mean": 183.34
+      },
+      "focusableElements": 3929,
+      "tooltipTriggers": 3545,
+      "documentMousedownListeners": 3545,
+      "externalServiceLinks": 200,
+      "samples": [
+        {
+          "run": 1,
+          "totalJavaScriptListeners": 17919,
+          "heapAfterGarbageCollectionBytes": 52249016,
+          "longTaskCount": 4,
+          "longTaskTotalMilliseconds": 1212,
+          "longTaskMaximumMilliseconds": 594,
+          "scriptDurationSeconds": 1.357642,
+          "taskDurationSeconds": 2.607925,
+          "layoutCount": 44,
+          "layoutDurationSeconds": 0.204513,
+          "styleRecalculationCount": 57,
+          "styleRecalculationDurationSeconds": 0.150436,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 2,
+          "totalJavaScriptListeners": 17920,
+          "heapAfterGarbageCollectionBytes": 52241800,
+          "longTaskCount": 5,
+          "longTaskTotalMilliseconds": 1283,
+          "longTaskMaximumMilliseconds": 611,
+          "scriptDurationSeconds": 1.421161,
+          "taskDurationSeconds": 2.746572,
+          "layoutCount": 47,
+          "layoutDurationSeconds": 0.200897,
+          "styleRecalculationCount": 61,
+          "styleRecalculationDurationSeconds": 0.133658,
+          "runtimeErrorCount": 0
+        },
+        {
+          "run": 3,
+          "totalJavaScriptListeners": 17920,
+          "heapAfterGarbageCollectionBytes": 52228736,
+          "longTaskCount": 5,
+          "longTaskTotalMilliseconds": 1275,
+          "longTaskMaximumMilliseconds": 600,
+          "scriptDurationSeconds": 1.424372,
+          "taskDurationSeconds": 2.702594,
+          "layoutCount": 48,
+          "layoutDurationSeconds": 0.20476,
+          "styleRecalculationCount": 63,
+          "styleRecalculationDurationSeconds": 0.129496,
+          "runtimeErrorCount": 0
+        }
+      ]
+    }
+  ],
+  "responsive": [
+    {
+      "width": 390,
+      "clientWidth": 390,
+      "scrollWidth": 390,
+      "overflowPixels": 0,
+      "meetsTarget": true,
+      "overflowElements": [
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative inline-flex h-7 items-center",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "absolute inset-0 rounded-full bg-gray-700 ring-1 ring-gray-600",
+          "left": 327.921875,
+          "right": 397.171875,
+          "width": 69.25
+        },
+        {
+          "tag": "SPAN",
+          "testId": null,
+          "className": "relative z-10 inline-flex h-7 items-center justify-center px-2 text-[11px] font-medium leading-none text-gray-200",
+          "left": 355.921875,
+          "right": 397.171875,
+          "width": 41.25
+        },
+        {
+          "tag": "P",
+          "testId": null,
+          "className": "",
+          "left": -1,
+          "right": 0,
+          "width": 1
+        }
+      ]
+    },
+    {
+      "width": 640,
+      "clientWidth": 640,
+      "scrollWidth": 656,
+      "overflowPixels": 16,
+      "meetsTarget": false,
+      "overflowElements": [
+        {
+          "tag": "DIV",
+          "testId": null,
+          "className": "sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 mb-5 bg-gray-900/95 px-4 pb-3 pt-1 shadow-md backdrop-blur sm:-mx-8 sm:px-8",
+          "left": -16,
+          "right": 656,
+          "width": 672
+        },
+        {
+          "tag": "NAV",
+          "testId": null,
+          "className": "sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 -mx-4 mt-3 border-t border-gray-700 bg-gray-900/95 px-4 py-3 text-white backdrop-blur sm:bottom-0 sm:-mx-8 sm:px-8",
+          "left": -16,
+          "right": 656,
+          "width": 672
+        },
+        {
+          "tag": "P",
+          "testId": null,
+          "className": "",
+          "left": -1,
+          "right": 0,
+          "width": 1
+        }
+      ]
+    },
+    {
+      "width": 900,
+      "clientWidth": 900,
+      "scrollWidth": 916,
+      "overflowPixels": 16,
+      "meetsTarget": false,
+      "overflowElements": [
+        {
+          "tag": "DIV",
+          "testId": null,
+          "className": "sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 mb-5 bg-gray-900/95 px-4 pb-3 pt-1 shadow-md backdrop-blur sm:-mx-8 sm:px-8",
+          "left": -16,
+          "right": 916,
+          "width": 932
+        },
+        {
+          "tag": "NAV",
+          "testId": null,
+          "className": "sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 -mx-4 mt-3 border-t border-gray-700 bg-gray-900/95 px-4 py-3 text-white backdrop-blur sm:bottom-0 sm:-mx-8 sm:px-8",
+          "left": -16,
+          "right": 916,
+          "width": 932
+        },
+        {
+          "tag": "P",
+          "testId": null,
+          "className": "",
+          "left": -1,
+          "right": 0,
+          "width": 1
+        }
+      ]
+    },
+    {
+      "width": 1440,
+      "clientWidth": 1440,
+      "scrollWidth": 1456,
+      "overflowPixels": 16,
+      "meetsTarget": false,
+      "overflowElements": [
+        {
+          "tag": "DIV",
+          "testId": null,
+          "className": "sticky top-[calc(4rem+env(safe-area-inset-top))] z-20 -mx-4 mb-5 bg-gray-900/95 px-4 pb-3 pt-1 shadow-md backdrop-blur sm:-mx-8 sm:px-8",
+          "left": 240,
+          "right": 1456,
+          "width": 1216
+        },
+        {
+          "tag": "NAV",
+          "testId": null,
+          "className": "sticky bottom-[calc(4rem+env(safe-area-inset-bottom))] z-20 -mx-4 mt-3 border-t border-gray-700 bg-gray-900/95 px-4 py-3 text-white backdrop-blur sm:bottom-0 sm:-mx-8 sm:px-8",
+          "left": 240,
+          "right": 1456,
+          "width": 1216
+        },
+        {
+          "tag": "P",
+          "testId": null,
+          "className": "",
+          "left": -1,
+          "right": 0,
+          "width": 1
+        }
+      ]
+    }
+  ],
+  "domAttribution": {
+    "collapsed": {
+      "movie": {
+        "card": {
+          "elements": 168,
+          "maximumDepth": 10,
+          "svgElements": 32,
+          "tooltipTriggers": 32,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 30,
+          "interactiveElements": 35,
+          "labelledElements": 32,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 27
+        },
+        "identityAndArtwork": {
+          "elements": 12,
+          "maximumDepth": 6,
+          "svgElements": 0,
+          "tooltipTriggers": 0,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 0,
+          "interactiveElements": 3,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "engagement": {
+          "elements": 90,
+          "maximumDepth": 8,
+          "svgElements": 21,
+          "tooltipTriggers": 23,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 21,
+          "interactiveElements": 23,
+          "labelledElements": 24,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 13
+        },
+        "ratingAndResolution": {
+          "elements": 13,
+          "maximumDepth": 6,
+          "svgElements": 2,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 1,
+          "labelledElements": 0,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadataAndCollection": {
+          "elements": 30,
+          "maximumDepth": 7,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadata": {
+          "elements": 29,
+          "maximumDepth": 6,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "collection": null,
+        "actionsAndExternalLinks": {
+          "elements": 21,
+          "maximumDepth": 7,
+          "svgElements": 4,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 4,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "expandedSeasons": null
+      },
+      "movieWithCollection": {
+        "card": {
+          "elements": 182,
+          "maximumDepth": 11,
+          "svgElements": 34,
+          "tooltipTriggers": 34,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 32,
+          "interactiveElements": 38,
+          "labelledElements": 35,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 28
+        },
+        "identityAndArtwork": {
+          "elements": 15,
+          "maximumDepth": 8,
+          "svgElements": 1,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 1,
+          "interactiveElements": 4,
+          "labelledElements": 3,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 2
+        },
+        "engagement": {
+          "elements": 90,
+          "maximumDepth": 8,
+          "svgElements": 21,
+          "tooltipTriggers": 23,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 21,
+          "interactiveElements": 23,
+          "labelledElements": 24,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 13
+        },
+        "ratingAndResolution": {
+          "elements": 13,
+          "maximumDepth": 6,
+          "svgElements": 2,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 1,
+          "labelledElements": 0,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadataAndCollection": {
+          "elements": 41,
+          "maximumDepth": 9,
+          "svgElements": 6,
+          "tooltipTriggers": 5,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 6,
+          "interactiveElements": 6,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 6
+        },
+        "metadata": {
+          "elements": 29,
+          "maximumDepth": 6,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "collection": {
+          "elements": 10,
+          "maximumDepth": 7,
+          "svgElements": 1,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 1,
+          "interactiveElements": 2,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 2
+        },
+        "actionsAndExternalLinks": {
+          "elements": 21,
+          "maximumDepth": 7,
+          "svgElements": 4,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 4,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "expandedSeasons": null
+      },
+      "series": {
+        "card": {
+          "elements": 195,
+          "maximumDepth": 10,
+          "svgElements": 33,
+          "tooltipTriggers": 38,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 34,
+          "interactiveElements": 42,
+          "labelledElements": 36,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 29
+        },
+        "identityAndArtwork": {
+          "elements": 22,
+          "maximumDepth": 6,
+          "svgElements": 1,
+          "tooltipTriggers": 6,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 1,
+          "interactiveElements": 10,
+          "labelledElements": 6,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 2
+        },
+        "engagement": {
+          "elements": 99,
+          "maximumDepth": 8,
+          "svgElements": 21,
+          "tooltipTriggers": 23,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 24,
+          "interactiveElements": 23,
+          "labelledElements": 24,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 16
+        },
+        "ratingAndResolution": {
+          "elements": 13,
+          "maximumDepth": 6,
+          "svgElements": 2,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 1,
+          "labelledElements": 0,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadataAndCollection": {
+          "elements": 30,
+          "maximumDepth": 7,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadata": {
+          "elements": 29,
+          "maximumDepth": 6,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "collection": null,
+        "actionsAndExternalLinks": {
+          "elements": 29,
+          "maximumDepth": 7,
+          "svgElements": 4,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 4,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "expandedSeasons": null
+      },
+      "mountedTooltipPortals": 0
+    },
+    "expandedSeries": {
+      "movie": {
+        "card": {
+          "elements": 168,
+          "maximumDepth": 10,
+          "svgElements": 32,
+          "tooltipTriggers": 32,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 30,
+          "interactiveElements": 35,
+          "labelledElements": 32,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 27
+        },
+        "identityAndArtwork": {
+          "elements": 12,
+          "maximumDepth": 6,
+          "svgElements": 0,
+          "tooltipTriggers": 0,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 0,
+          "interactiveElements": 3,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "engagement": {
+          "elements": 90,
+          "maximumDepth": 8,
+          "svgElements": 21,
+          "tooltipTriggers": 23,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 21,
+          "interactiveElements": 23,
+          "labelledElements": 24,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 13
+        },
+        "ratingAndResolution": {
+          "elements": 13,
+          "maximumDepth": 6,
+          "svgElements": 2,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 1,
+          "labelledElements": 0,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadataAndCollection": {
+          "elements": 30,
+          "maximumDepth": 7,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadata": {
+          "elements": 29,
+          "maximumDepth": 6,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "collection": null,
+        "actionsAndExternalLinks": {
+          "elements": 21,
+          "maximumDepth": 7,
+          "svgElements": 4,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 4,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "expandedSeasons": null
+      },
+      "movieWithCollection": {
+        "card": {
+          "elements": 182,
+          "maximumDepth": 11,
+          "svgElements": 34,
+          "tooltipTriggers": 34,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 32,
+          "interactiveElements": 38,
+          "labelledElements": 35,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 28
+        },
+        "identityAndArtwork": {
+          "elements": 15,
+          "maximumDepth": 8,
+          "svgElements": 1,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 1,
+          "interactiveElements": 4,
+          "labelledElements": 3,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 2
+        },
+        "engagement": {
+          "elements": 90,
+          "maximumDepth": 8,
+          "svgElements": 21,
+          "tooltipTriggers": 23,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 21,
+          "interactiveElements": 23,
+          "labelledElements": 24,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 13
+        },
+        "ratingAndResolution": {
+          "elements": 13,
+          "maximumDepth": 6,
+          "svgElements": 2,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 1,
+          "labelledElements": 0,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadataAndCollection": {
+          "elements": 41,
+          "maximumDepth": 9,
+          "svgElements": 6,
+          "tooltipTriggers": 5,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 6,
+          "interactiveElements": 6,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 6
+        },
+        "metadata": {
+          "elements": 29,
+          "maximumDepth": 6,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "collection": {
+          "elements": 10,
+          "maximumDepth": 7,
+          "svgElements": 1,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 1,
+          "interactiveElements": 2,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 2
+        },
+        "actionsAndExternalLinks": {
+          "elements": 21,
+          "maximumDepth": 7,
+          "svgElements": 4,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 4,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "expandedSeasons": null
+      },
+      "series": {
+        "card": {
+          "elements": 488,
+          "maximumDepth": 14,
+          "svgElements": 69,
+          "tooltipTriggers": 74,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 94,
+          "interactiveElements": 84,
+          "labelledElements": 78,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 105
+        },
+        "identityAndArtwork": {
+          "elements": 22,
+          "maximumDepth": 6,
+          "svgElements": 1,
+          "tooltipTriggers": 6,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 1,
+          "interactiveElements": 10,
+          "labelledElements": 6,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 2
+        },
+        "engagement": {
+          "elements": 99,
+          "maximumDepth": 8,
+          "svgElements": 21,
+          "tooltipTriggers": 23,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 24,
+          "interactiveElements": 23,
+          "labelledElements": 24,
+          "describedElements": 3,
+          "redundantWrapperCandidates": 16
+        },
+        "ratingAndResolution": {
+          "elements": 13,
+          "maximumDepth": 6,
+          "svgElements": 2,
+          "tooltipTriggers": 1,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 1,
+          "labelledElements": 0,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadataAndCollection": {
+          "elements": 30,
+          "maximumDepth": 7,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 4
+        },
+        "metadata": {
+          "elements": 29,
+          "maximumDepth": 6,
+          "svgElements": 5,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 5,
+          "interactiveElements": 4,
+          "labelledElements": 2,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "collection": null,
+        "actionsAndExternalLinks": {
+          "elements": 29,
+          "maximumDepth": 7,
+          "svgElements": 4,
+          "tooltipTriggers": 4,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 2,
+          "interactiveElements": 4,
+          "labelledElements": 4,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 3
+        },
+        "expandedSeasons": {
+          "elements": 293,
+          "maximumDepth": 13,
+          "svgElements": 36,
+          "tooltipTriggers": 36,
+          "cssHiddenMounted": 0,
+          "ariaHiddenElements": 60,
+          "interactiveElements": 42,
+          "labelledElements": 42,
+          "describedElements": 0,
+          "redundantWrapperCandidates": 76
+        }
+      },
+      "mountedTooltipPortals": 0
+    },
+    "runtimeErrors": []
+  },
+  "scrollHook": {
+    "before": {
+      "add": {
+        "scroll": 7,
+        "resize": 6
+      },
+      "remove": {
+        "scroll": 5,
+        "resize": 5
+      }
+    },
+    "afterScroll": {
+      "add": {
+        "scroll": 9,
+        "resize": 8
+      },
+      "remove": {
+        "scroll": 7,
+        "resize": 7
+      }
+    },
+    "afterUnmount": {
+      "operations": {
+        "add": {
+          "scroll": 9,
+          "resize": 8
+        },
+        "remove": {
+          "scroll": 8,
+          "resize": 8
+        }
+      },
+      "native": {
+        "scroll": 1,
+        "resize": 0
+      }
+    }
+  },
+  "requestSummary": {
+    "total": 450,
+    "api": 234,
+    "library": 18
+  },
+  "variability": {
+    "hardCorrectnessSignals": [
+      "fixture cardinality and durable row identity",
+      "DOM, focusable, tooltip-trigger, document-listener, external-link, and overflow counts",
+      "actual SVG rendering and accessible external-link names",
+      "zero console errors and uncaught exceptions"
+    ],
+    "hostSensitiveSignals": [
+      "heap after garbage collection",
+      "long-task count and duration",
+      "script and task duration",
+      "layout and style-recalculation duration"
+    ],
+    "repetitions": 3,
+    "cpuThrottling": "none"
+  }
+}
