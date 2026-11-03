@@ -159,3 +159,54 @@ bytes. External unsafe-workflow disablement, read-only token defaults and the
 The incoming Telegram documentation trailing blank line is removed for whitespace
 validation. Hosted Full and runtime acceptance remain outstanding; local success
 does not authorize publication or deployment.
+
+### Manual Stage 2: GitHub Actions lockfile
+
+Stage 1 was subsequently merged through
+[PR #51](https://github.com/constbogdan/seerr/pull/51). This separate, uncommitted
+manual integration uses the ordered native merge parents
+`[60022ec0f6f0be35cbc5749f6d0b0db19b251be0,
+53299c12ac538200cac5687f882400754aeab5e2]`. The second parent is the single
+upstream squash commit for [#3632](https://github.com/seerr-team/seerr/pull/3632),
+directly following Stage 1 target `6f63b08d5c610217c75580340ce78b69b8a0bd61`.
+The authenticated upstream tip was `b185621e8e48743bb38adaa0d15b334626b7b100`;
+later commits and the original PR commits are not imported.
+
+All 19 incoming files are retained source-identical: 18 workflow reference
+updates and the generated `actions.lock`. Parsed workflow structure, triggers,
+permissions, commands and job/step topology are unchanged apart from action
+references. All replacement pins preserve the old action commits except
+`upload-pages-artifact`, which advances v4 to v5 in the externally disabled
+Pages workflow. Do not describe that change as a reference-only rewrite.
+
+The v0.0.3 lockfile covers 19 inherited workflows, including the action-free
+Seerr Labeller, with 29 direct dependency entries and seven additional transitive
+entries. Read-only checks on November 3, 2026 verified all 36 repository/owner
+identities and commit/ref mappings, plus 39 action manifests and their nine
+declared transitive edges. This does not audit arbitrary downloaded tools,
+bundled JavaScript dependencies, container contents or reusable workflow code.
+
+GitHub executes locked commits for onboarded workflows, as described in its
+[lockfile documentation](https://docs.github.com/en/actions/concepts/security/workflow-dependency-lockfiles).
+This does not itself enable repository-wide Require lockfile enforcement. The
+two downstream workflows and policy-protected `upstream-sync.yml` remain
+byte-identical, outside this upstream lockfile; adding them or regenerating the
+file across all downstream workflows requires separate review. The executable
+workflow inventory remains 22 files, so its checked-in list is unchanged.
+
+Rejected alternatives: editing the generated lockfile, restoring old SHA syntax
+in inherited workflows, onboarding downstream workflows, enabling enforcement,
+or changing unsafe workflow enablement. Preserve all 14 externally disabled
+unsafe workflows and read-only default token permissions. Existing active
+CodeQL, Cypress, docs-link, Helm-lint and docs-test workflows retain their
+previous scopes and authority; candidate PRs may run existing read-scoped Cypress
+and docs-link checks, not upstream publication workflows.
+
+Baseline and candidate checks use the same ten isolated maintenance regression
+modules covering provenance, ownership, publication, release/version authority,
+and validation, plus executable YAML/lockfile checks and Fast validation. No
+application tests, local Full run, commit, publication, enforcement change or
+image operation is authorized here. The Stage 1 image run is independent.
+Future review-only publication requires separate authorization: the existing
+ordinary prepare-pr path enables auto-merge, while its preservation mode needs
+an already-existing managed Draft and does not bootstrap this manual branch.

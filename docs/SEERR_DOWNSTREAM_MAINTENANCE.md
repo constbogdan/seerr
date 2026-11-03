@@ -52,6 +52,17 @@ their unsafe instances remain disabled through external repository configuration
 Restoring source content does not re-enable a disabled workflow, and source
 changes must never be treated as a substitute for verifying its external state.
 
+The existing `upstream-sync.yml` is separately protected as `DOWNSTREAM-OWNED`
+by the ownership policy; it is not an inherited upstream workflow. Preserve its
+source and publication boundary unless explicitly approved.
+
+The upstream-generated `.github/workflows/actions.lock` covers the 19 inherited
+workflows, not the three downstream/protected workflows. Listed workflows execute
+the locked action commits; the file is not merely an inventory. This is separate
+from the repository-wide Require lockfile policy, which must not be enabled
+without approval. Preserve the generated file rather than editing it by hand.
+The workflow inventory lists only executable YAML workflows, not `actions.lock`.
+
 Unsafe inherited workflows include upstream CI publication, release/preview/tag
 creation, Pages and Helm publication, Trivy's inherited image scan, and upstream
 PR/issue moderation and indexing workflows. Do not rely on missing secrets or
