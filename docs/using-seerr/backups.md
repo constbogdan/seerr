@@ -19,9 +19,9 @@ database as one recovery set.
 
 Apart from the settings, all other data—including user accounts, media requests, blocklist etc. are stored in the database (either SQLite or PostgreSQL).
 
-# Backup
+### Backup
 
-### SQLite
+#### SQLite
 
 If your backup system provides an application-consistent filesystem snapshot
 (such as Kubernetes with Volsync), you can back up the Seerr data folder
@@ -41,7 +41,7 @@ configuration files needed by that database—especially `settings.json` and any
 deployment manifest—into the same versioned backup set. Verify the backup with
 `PRAGMA quick_check` before relying on it.
 
-### PostgreSQL
+#### PostgreSQL
 
 You can back up the `config` folder and dump the PostgreSQL database without stopping the Seerr application.
 
@@ -59,9 +59,9 @@ Depending on how your PostgreSQL instance is configured, you may need to add the
 pg_dump --format=custom -U <database_user> -d <database_name> -f /tmp/seerr_db.dump
 ```
 
-# Restore
+### Restore
 
-### SQLite
+#### SQLite
 
 Stop Seerr before restoring. Restore the database and its matching configuration
 files together. After restoring `db/db.sqlite3` and `settings.json`, the `config`
@@ -79,7 +79,7 @@ folder structure should look like this:
 Run `PRAGMA quick_check` against the restored database, then start exactly one
 Seerr application process.
 
-### PostgreSQL
+#### PostgreSQL
 
 Install the [PostgreSQL client](https://www.postgresql.org/download/) and restore the PostgreSQL database using the following command (replace the placeholders accordingly):
 

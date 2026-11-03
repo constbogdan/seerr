@@ -202,7 +202,7 @@ export const startJobs = async (): Promise<void> => {
       id: 'plex-watchlist-sync',
       name: 'Plex Watchlist Sync',
       type: 'process',
-      interval: 'seconds',
+      interval: 'minutes',
       cronSchedule: jobs['plex-watchlist-sync'].schedule,
       job: scheduleGuardedJob(
         'plex-watchlist-sync',
