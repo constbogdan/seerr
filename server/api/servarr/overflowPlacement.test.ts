@@ -52,6 +52,43 @@ const movieOptions: RadarrMovieOptions = {
 describe('Servarr Overflow placement boundaries', () => {
   afterEach(() => mock.restoreAll());
 
+  for (const applyPlacement of [false, true]) {
+    for (const isAvailable of [false, true]) {
+      for (const searchNow of [false, true]) {
+        it(`gates explicit search on availability (placement=${applyPlacement}, available=${isAvailable}, search=${searchNow})`, async () => {
+          const radarr = new RadarrAPI({
+            url: 'http://localhost:7878/api/v3',
+            apiKey: 'test',
+          });
+          const put = mock.method(
+            getAxios(radarr),
+            'put',
+            async (_url: string, body: unknown) => ({ data: body })
+          );
+          const search = mock.method(radarr, 'searchMovie', async () => {});
+          const result = await radarr.addMovie(
+            {
+              ...movieOptions,
+              applyRootFolderAndTagsToExisting: applyPlacement,
+              searchNow,
+            },
+            movie({ isAvailable })
+          );
+          assert.equal(put.mock.callCount(), Number(applyPlacement));
+          assert.equal(
+            search.mock.callCount(),
+            Number(searchNow && isAvailable)
+          );
+          assert.equal(
+            result.rootFolderPath,
+            applyPlacement ? '/volume9/movies' : '/volume1/movies'
+          );
+          assert.deepEqual(result.tags, applyPlacement ? [2, 3] : [1, 3]);
+        });
+      }
+    }
+  }
+
   it('updates an existing monitored Movie without files before search', async () => {
     const radarr = new RadarrAPI({
       url: 'http://localhost:7878/api/v3',

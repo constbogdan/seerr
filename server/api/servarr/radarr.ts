@@ -188,7 +188,12 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
             movie: response.data,
           });
 
-          if (options.searchNow) {
+          if (options.searchNow && response.data.isAvailable) {
+            logger.info('Movie is available, triggering Radarr search.', {
+              label: 'Radarr',
+              movieId: response.data.id,
+              movieTitle: response.data.title,
+            });
             this.searchMovie(response.data.id);
           }
 
@@ -220,16 +225,16 @@ class RadarrAPI extends ServarrBase<{ movieId: number }> {
           if (!response.data.id) {
             throw new Error('Failed to apply Movie Overflow placement');
           }
-          if (options.searchNow) {
+          if (options.searchNow && response.data.isAvailable) {
             this.searchMovie(response.data.id);
           }
           return response.data;
         }
 
-        // If searchNow is requested and movie doesn't have a file, trigger search
-        if (options.searchNow && !movie.hasFile) {
+        // If searchNow is requested, movie doesn't have a file, and Radarr considers the movie 'available' then trigger search
+        if (options.searchNow && !movie.hasFile && movie.isAvailable) {
           logger.info(
-            'Triggering search for existing monitored movie without file',
+            'Triggering search for existing, available, monitored movie without file',
             {
               label: 'Radarr',
               movieId: movie.id,

@@ -142,6 +142,7 @@ export class MediaSubscriber implements EntitySubscriberInterface<Media> {
         }
       }
 
+      // Keep transitions sequential: batched saves run afterUpdate concurrently.
       for (const request of completedRequests) {
         await updateRequestStatus(
           manager,
