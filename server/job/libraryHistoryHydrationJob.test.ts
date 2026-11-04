@@ -95,7 +95,7 @@ describe('Current Library Hydration native job', () => {
     assert.ok(recovery < firstRegistration);
     assert.ok(recovery < catchUp);
     assert.match(server, /await startJobs\(\)/);
-    assert.equal(auth.match(/await startJobs\(\)/g)?.length, 2);
+    assert.equal(auth.match(/await startJobs\(\)/g)?.length, 3);
   });
 
   it('shares the exclusive background database-write boundary with overlapping jobs', () => {

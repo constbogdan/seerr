@@ -388,7 +388,7 @@ describe('Storage settings configuration skeleton', () => {
         });
       }
     ).as('setSeriesRelocationEnabled');
-    login(Cypress.env('ADMIN_EMAIL'), Cypress.env('ADMIN_PASSWORD'));
+    login(Cypress.expose('ADMIN_EMAIL'), Cypress.expose('ADMIN_PASSWORD'));
   });
 
   it('renders fresh capacity facts and persists only compatible routes', () => {
@@ -1743,7 +1743,7 @@ describe('Storage settings configuration skeleton', () => {
   });
 
   it('does not expose Storage settings to a regular user', () => {
-    login(Cypress.env('USER_EMAIL'), Cypress.env('USER_PASSWORD'));
+    login(Cypress.expose('USER_EMAIL'), Cypress.expose('USER_PASSWORD'));
     cy.request({
       method: 'GET',
       url: '/api/v1/settings/storage',

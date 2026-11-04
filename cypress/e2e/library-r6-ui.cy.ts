@@ -128,7 +128,7 @@ const interceptLibrary = () => {
 
 const visitLibraryAfterAuthenticationHydrates = () => {
   cy.request('/api/v1/auth/me').then(({ body: adminUser }) => {
-    expect(adminUser.email).to.equal(Cypress.env('ADMIN_EMAIL'));
+    expect(adminUser.email).to.equal(Cypress.expose('ADMIN_EMAIL'));
     cy.intercept('GET', '/api/v1/auth/me', adminUser).as('authenticatedUser');
   });
   cy.visit('/');
