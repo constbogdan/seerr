@@ -90,8 +90,8 @@ const sonarrTestResponse = {
 const login = () =>
   cy.session('servarr-root-metadata-admin', () => {
     cy.request('POST', '/api/v1/auth/local', {
-      email: Cypress.env('ADMIN_EMAIL'),
-      password: Cypress.env('ADMIN_PASSWORD'),
+      email: Cypress.expose('ADMIN_EMAIL'),
+      password: Cypress.expose('ADMIN_PASSWORD'),
     })
       .its('status')
       .should('equal', 200);

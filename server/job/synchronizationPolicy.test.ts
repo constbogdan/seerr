@@ -216,7 +216,7 @@ describe('synchronization containment integration boundaries', () => {
 
   it('covers normal startup and both initial media-server setup paths', () => {
     assert.match(serverSource, /await startJobs\(\)/);
-    assert.equal(authSource.match(/await startJobs\(\)/g)?.length, 2);
+    assert.equal(authSource.match(/await startJobs\(\)/g)?.length, 3);
     assert.match(serverSource, /logSynchronizationMode\(\)/);
     assert.match(
       serverSource,

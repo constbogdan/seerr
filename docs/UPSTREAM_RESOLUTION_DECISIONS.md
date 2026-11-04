@@ -210,3 +210,90 @@ image operation is authorized here. The Stage 1 image run is independent.
 Future review-only publication requires separate authorization: the existing
 ordinary prepare-pr path enables auto-merge, while its preservation mode needs
 an already-existing managed Draft and does not bootstrap this manual branch.
+
+### Manual Stage 3: bounded final upstream range
+
+This operator-approved local resolution is not a managed Draft episode. The
+native merge remains pending on `chore/manual-upstream-final`, with ordered
+parents `0c7af80598c3dc65552832eef96b4f97412a6b66` and
+`b185621e8e48743bb38adaa0d15b334626b7b100`. The incoming range contains exactly
+13 commits after `f288fff37dcc8b3ef89ebe20f2ed5cb45fb92ec1`. The observed official
+develop tip was `886adac27597b45cd901099cd02a0b46d9d3cb7f`; later commits are
+excluded. No commit, push, PR, merge, image or production operation is authorized.
+
+#### Approved lifecycle override: upstream #3579
+
+Retain the downstream BaseScanner and Sonarr implementation, including guarded
+scalar settlement, source-current observations and quality-specific evidence.
+Present or partially available media must not cause new automatic declines.
+Unfinished requested seasons retain their rows, identities and factual history;
+removing them cannot manufacture completion. Existing genuinely missing-media
+cleanup retains its complete-scan, empty/failed-server, quality and independent
+provider-verification guards. The Stage 1 override of #3578 remains in force.
+
+The upstream season-reset collectors, abandonment-linked persistence and rollup
+extraction were reviewed together. The extraction has no independent behavioral
+benefit without the rejected second persistence path. Do not import its flags,
+direct entity-graph declines, season deletions or completion-after-deletion.
+Native ancestry still retains the upstream commit. Reject both taking #3579
+unchanged and inventing an alternative cleanup policy during this integration.
+
+All baseline scanner tests remain. Incoming multi-server and abandoned-season
+fixtures are adapted to the approved contract: assert retained request/season
+IDs, creation dates, unfinished intent and prior completion, not newly permitted
+re-requests or fabricated completion. Both server orders and failed metadata
+lookup remain exercised. Existing settlement/lifecycle regressions cover quality,
+source identity, stale observations, duplicate completion, retry and cancellation.
+
+#### Six conflicts and compatible improvements
+
+- Cypress configuration combines downstream synthetic provider tasks and optional
+  browser-isolation hooks with upstream failure-video retention. Any failed retry
+  attempt preserves its video. Three downstream-only credential consumers move
+  from `Cypress.env` to Cypress 16's `Cypress.expose`; assertions are unchanged.
+- Scheduler setup remains asynchronous with all downstream jobs, policy guards,
+  recoveries and catch-ups. Repeated setup cancels only old schedule handles,
+  after recovery succeeds, never active job ownership. A shared startup promise
+  coalesces overlapping setup and releases on failure. Read the current server
+  configuration after awaited recovery so owner setup cannot register stale
+  NOT_CONFIGURED schedules. Reject a synchronous reset copied ahead of recovery:
+  overlapping continuations would register duplicates. The new Plex-owner auth
+  path awaits setup like the existing two setup paths, retaining error handling.
+- BaseScanner, its conflict tests and the Sonarr scanner preserve the downstream
+  semantics above. No replacement lifecycle framework or migration is introduced.
+- TV request creation retains copied, sorted validated season selection and all
+  initial/visible-season guards. POST and PUT 202 responses are informational;
+  PUT returns before approval and neither path reports false completion. Existing
+  create, edit, approval, cancellation and finally/updating behavior remains.
+
+#### Clean overlaps, dependencies and acceptance boundary
+
+All nine downstream overlaps were reviewed. Requested-server Override Rules keep
+existing permission/routing guards and fall back only for an absent or invalid
+server ID. Tests cover explicit, other and unknown server IDs for Movie and TV.
+The auth change retains identity/privacy and awaited startup. Trending changes
+only URL-backed filters; shared discovery pagination and Fresh remain unchanged.
+English translations retain downstream keys. Cypress maintenance retains current
+navigation, storage-provider fixtures and request-ordering assertions.
+
+The Dockerfile retains downstream build/version/channel metadata and copies
+compiled server migrations, templates and translations. `next.config.mjs`
+preserves options without requiring a runtime TypeScript compiler. Runtime COPY
+exclusions intentionally remove sources and build-only modules; Alpine native
+module/image acceptance is still distinct from Windows local validation.
+
+Use a fresh frozen install for Next 16.4.2, SQLite driver 6.0.1 and Cypress 16.2.0;
+baseline dependency links are not candidate evidence. Compare all 527 baseline
+test identities in the same 36 files, plus incoming Override Rules tests,
+history-preservation tests and executable scheduler/TV-response regressions.
+Retain isolated SQLite migration, existing-data/savepoint, build/runtime, browser,
+type, lint, translation and Fast evidence in the operator handoff. Exact staged
+tree identity belongs in that handoff, not a self-referential hash here.
+
+All 19 inherited workflows must remain source-identical to the bounded target;
+the two downstream workflows and protected `upstream-sync.yml` retain downstream
+bytes. `actions.lock` remains unchanged and consistent with direct references.
+Reverify the 22-file inventory, 14 unsafe external disablements and read-only
+Actions defaults. No external settings are changed. Ubuntu 26.04 runner behavior,
+hosted Full validation and any unexecuted platform acceptance remain pending;
+local validation does not authorize publication or protected integration.

@@ -13,7 +13,7 @@ on:
       - 'cypress.config.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
-      - 'next.config.ts'
+      - 'next.config.mjs'
       - 'tsconfig.json'
       - '.github/workflows/cypress.yml'
   push:
@@ -26,7 +26,7 @@ on:
       - 'cypress.config.ts'
       - 'package.json'
       - 'pnpm-lock.yaml'
-      - 'next.config.ts'
+      - 'next.config.mjs'
       - 'tsconfig.json'
       - '.github/workflows/cypress.yml'
 
@@ -40,7 +40,7 @@ concurrency:
 jobs:
   cypress-run:
     name: Cypress Run
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1

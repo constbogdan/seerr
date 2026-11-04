@@ -127,14 +127,31 @@ export const createNextSeasonScheduledJob = (
   showDryRunAction: false,
 });
 
-export const startJobs = async (): Promise<void> => {
-  const jobs = getSettings().jobs;
-  const mediaServerType = getSettings().main.mediaServerType;
+let startingJobs: Promise<void> | undefined;
 
+export const startJobs = (): Promise<void> => {
+  // Async recovery must not allow overlapping setup calls to register duplicates.
+  if (!startingJobs) {
+    startingJobs = loadJobs().finally(() => {
+      startingJobs = undefined;
+    });
+  }
+  return startingJobs;
+};
+
+const loadJobs = async (): Promise<void> => {
   if (synchronizationPolicy.startupCatchUpsAllowed) {
     await currentJellyfinViewing.recoverAbandonedRuns();
     await seriesRelocation.reconcileOutstanding();
   }
+
+  // Replace schedules only after recovery succeeds; running jobs retain ownership.
+  scheduledJobs.forEach((scheduledJob) => scheduledJob.job.cancel());
+  scheduledJobs.length = 0;
+
+  // Setup may finish while recovery is awaiting; register the current server type.
+  const jobs = getSettings().jobs;
+  const mediaServerType = getSettings().main.mediaServerType;
 
   if (mediaServerType === MediaServerType.PLEX) {
     // Run recently added plex scan every 5 minutes

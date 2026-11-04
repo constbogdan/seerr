@@ -1,4 +1,5 @@
 import { defineConfig } from 'cypress';
+import { unlinkSync } from 'fs';
 import { registerStorageProviderTasks } from './cypress/support/storageProviders';
 
 export default defineConfig({
@@ -23,9 +24,22 @@ export default defineConfig({
 
         return launchOptions;
       });
+      on('after:spec', (_spec, results) => {
+        if (!results?.video) {
+          return;
+        }
+
+        const failed = results.tests.some((test) =>
+          test.attempts.some((attempt) => attempt.state === 'failed')
+        );
+
+        if (!failed) {
+          unlinkSync(results.video);
+        }
+      });
     },
   },
-  env: {
+  expose: {
     ADMIN_EMAIL: 'admin@seerr.dev',
     ADMIN_PASSWORD: 'test1234',
     USER_EMAIL: 'demo@seerr.dev',
