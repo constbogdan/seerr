@@ -11,7 +11,7 @@ describe('TVDB Integration', () => {
   const SELECTORS = {
     sidebarToggle: '[data-testid=sidebar-toggle]',
     sidebarSettingsMobile: '[data-testid=sidebar-menu-settings-mobile]',
-    settingsNavDesktop: 'nav[data-testid="settings-nav-desktop"]',
+    metadataSubmenu: '[data-testid="settings-submenu-metadata-tablet"]',
     metadataTestButton: 'button[type="button"]:contains("Test")',
     metadataSaveButton: '[data-testid="metadata-save-button"]',
     tmdbStatus: '[data-testid="tmdb-status"]',
@@ -32,9 +32,8 @@ describe('TVDB Integration', () => {
     cy.visit(ROUTES.home);
     cy.get(SELECTORS.sidebarToggle).click();
     cy.get(SELECTORS.sidebarSettingsMobile).click();
-    cy.get(
-      `${SELECTORS.settingsNavDesktop} a[href="${ROUTES.metadataSettings}"]`
-    ).click();
+    cy.get(SELECTORS.metadataSubmenu).click();
+    cy.location('pathname').should('eq', ROUTES.metadataSettings);
   };
 
   const testAndVerifyMetadataConnection = () => {
