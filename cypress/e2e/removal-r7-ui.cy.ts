@@ -150,38 +150,59 @@ describe('R7 Removal Settings and Leaving Soon state safety', () => {
     cy.visit('/settings/removal');
     cy.wait('@preview');
     cy.contains('button', 'Clear 2 items').should('be.enabled');
-    cy.get('#removalDelayDays').select('30');
-    cy.contains('button', 'Clear 2 items').should('not.exist');
+    cy.get('#Movies-items-per-run').select('11');
+    cy.contains('button', 'Clear 2 items').should('be.disabled');
     cy.wait('@preview');
-    cy.contains('Unable to calculate the eligibility preview.').should(
-      'be.visible'
+    cy.get('button[aria-label$="Retry preview"]')
+      .first()
+      .should('be.visible')
+      .focus();
+    cy.get('[role="tooltip"]').should(
+      'contain',
+      'Unable to calculate the eligibility preview.'
     );
     cy.contains('button', /^Clear /).should('be.disabled');
-    cy.contains('button', 'Retry preview').click();
+    cy.get('button[aria-label$="Retry preview"]').first().click();
     cy.wait('@preview');
     cy.contains('button', 'Clear 4 items').should('be.enabled');
+    cy.then(() => expect(previewRequests).to.equal(3));
   });
 
   it('ignores an older preview response that arrives after the current one', () => {
+    let releaseOlder: (() => void) | undefined;
+    const requested: number[] = [];
     cy.intercept('GET', '/api/v1/settings/removal', settings);
     cy.intercept('POST', '/api/v1/settings/removal/preview', (request) => {
-      const delay = request.body.removalDelayDays;
-      request.reply({
-        delay: delay === 30 ? 700 : 50,
-        body: preview(delay === 30 ? 3 : delay === 20 ? 4 : 2),
-      });
-    }).as('preview');
+      const batchSize = request.body.movie.itemsPerRun;
+      requested.push(batchSize);
+      expect(request.body.removalDelayDays).to.equal(60);
+      request.alias = batchSize === 11 ? 'olderPreview' : 'currentPreview';
+      if (batchSize === 11)
+        return new Promise<void>((resolve) => {
+          releaseOlder = () => {
+            request.reply(preview(3));
+            resolve();
+          };
+        });
+      request.reply(preview(batchSize === 12 ? 4 : 2));
+    });
 
     cy.visit('/settings/removal');
-    cy.wait('@preview');
-    cy.get('#removalDelayDays').select('30');
-    cy.wait(450);
-    cy.get('#removalDelayDays').select('20');
-    cy.wait('@preview');
+    cy.wait('@currentPreview');
+    cy.get('#Movies-items-per-run').select('11');
+    cy.wrap(null).should(() => expect(releaseOlder).to.be.a('function'));
+    cy.get('#Movies-items-per-run').select('12');
+    cy.wait('@currentPreview')
+      .its('response.body.actionableScheduleCount')
+      .should('eq', 4);
     cy.contains('button', 'Clear 4 items').should('be.enabled');
-    cy.wait('@preview');
+    cy.then(() => releaseOlder!());
+    cy.wait('@olderPreview')
+      .its('response.body.actionableScheduleCount')
+      .should('eq', 3);
     cy.contains('button', 'Clear 4 items').should('be.enabled');
     cy.contains('button', 'Clear 3 items').should('not.exist');
+    cy.then(() => expect(requested).to.deep.equal([10, 11, 12]));
   });
 
   it('moves from an invalid last page only after successful cancellation', () => {

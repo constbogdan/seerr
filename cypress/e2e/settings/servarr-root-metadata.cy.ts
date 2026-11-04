@@ -100,10 +100,7 @@ const login = () =>
 const interceptServices = () => {
   cy.intercept('GET', '/api/v1/settings/radarr', [radarrSettings]);
   cy.intercept('GET', '/api/v1/settings/sonarr', [sonarrSettings]);
-  cy.intercept('GET', '/api/v1/overrideRule*', {
-    pageInfo: { pages: 0, pageSize: 20, results: 0, page: 1 },
-    results: [],
-  });
+  cy.intercept('GET', '/api/v1/overrideRule*', []);
   cy.intercept('POST', '/api/v1/settings/radarr/test', radarrTestResponse).as(
     'testRadarr'
   );
@@ -152,7 +149,7 @@ describe('Servarr root-folder metadata', () => {
     cy.wait('@testRadarr');
 
     cy.get('#root-folder-name-10').clear().type('Movies Internal');
-    cy.get('button[aria-label="Animation"]').eq(0).click();
+    cy.get('[role="checkbox"][aria-label="Animation"]').eq(0).click();
     cy.get('button[aria-label="Storage color"]').eq(0).click();
     cy.get('button[aria-label="Storage color #facc15"]').click();
     cy.get('button[aria-label="Storage color"]').eq(1).click();
@@ -259,14 +256,19 @@ describe('Servarr root-folder metadata', () => {
     editService('Radarr Test');
     cy.wait('@testRadarr');
 
-    cy.contains('/volume4/media-animation-movies').should('be.visible');
+    cy.get('span[title="/volume4/media-animation-movies"]')
+      .scrollIntoView()
+      .should('be.visible');
     cy.get('[role="dialog"]').should(($dialog) => {
       expect($dialog[0].scrollWidth).to.be.at.most($dialog[0].clientWidth);
     });
     cy.get('#root-folder-name-10').should(($input) => {
       expect($input[0].getBoundingClientRect().width).to.be.greaterThan(200);
     });
-    cy.get('button[aria-label="Animation"]').should('have.length', 2);
+    cy.get('[role="checkbox"][aria-label="Animation"]').should(
+      'have.length',
+      2
+    );
     cy.get('button[aria-label="Storage color"]').should('have.length', 2);
   });
 });
