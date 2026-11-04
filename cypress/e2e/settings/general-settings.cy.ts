@@ -13,6 +13,8 @@ describe('General Settings', () => {
 
     cy.get('[data-testid=sidebar-toggle]').click();
     cy.get('[data-testid=sidebar-menu-settings-mobile]').click();
+    cy.get('[data-testid=settings-submenu-general-tablet]').click();
+    cy.location('pathname').should('eq', '/settings/main');
 
     cy.get('.heading').should('contain', 'General Settings');
   });

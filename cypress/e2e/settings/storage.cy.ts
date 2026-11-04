@@ -1,3 +1,12 @@
+// Assert the visible label-to-control association, not only a test selector.
+const labelledField = (label: string, id: string) => {
+  cy.get(`label[for="${id}"]`).should('have.text', label);
+  return cy.get(`#${id}`);
+};
+
+// Capacity and routing thresholds use bytes and GiB respectively.
+const gib = (value: number) => value * 1024 ** 3;
+
 const storageResponse = {
   settings: {
     enabled: false,
@@ -38,9 +47,9 @@ const storageResponse = {
       color: '#60a5fa',
       isAnimation: false,
       diskSpacePath: '/volume1',
-      totalSpace: 1000,
-      usedSpace: 600,
-      freeSpace: 400,
+      totalSpace: gib(1000),
+      usedSpace: gib(600),
+      freeSpace: gib(400),
       usedPercentage: 60,
       accessible: true,
       routable: true,
@@ -56,9 +65,9 @@ const storageResponse = {
       color: '#4ade80',
       isAnimation: false,
       diskSpacePath: '/volume4',
-      totalSpace: 2000,
-      usedSpace: 500,
-      freeSpace: 1500,
+      totalSpace: gib(2000),
+      usedSpace: gib(500),
+      freeSpace: gib(1500),
       usedPercentage: 25,
       accessible: true,
       routable: true,
@@ -92,9 +101,9 @@ const storageResponse = {
       color: '#2dd4bf',
       isAnimation: false,
       diskSpacePath: '/volume4',
-      totalSpace: 2000,
-      usedSpace: 500,
-      freeSpace: 1500,
+      totalSpace: gib(2000),
+      usedSpace: gib(500),
+      freeSpace: gib(1500),
       usedPercentage: 25,
       accessible: true,
       routable: true,
@@ -110,9 +119,9 @@ const storageResponse = {
       color: '#facc15',
       isAnimation: true,
       diskSpacePath: '/volume4',
-      totalSpace: 2000,
-      usedSpace: 500,
-      freeSpace: 1500,
+      totalSpace: gib(2000),
+      usedSpace: gib(500),
+      freeSpace: gib(1500),
       usedPercentage: 25,
       accessible: true,
       routable: true,
@@ -128,9 +137,9 @@ const storageResponse = {
       color: '#fb923c',
       isAnimation: true,
       diskSpacePath: '/volume4',
-      totalSpace: 2000,
-      usedSpace: 500,
-      freeSpace: 1500,
+      totalSpace: gib(2000),
+      usedSpace: gib(500),
+      freeSpace: gib(1500),
       usedPercentage: 25,
       accessible: true,
       routable: true,
@@ -153,23 +162,23 @@ const storageResponse = {
           label: 'Movies Internal',
           path: '/volume1/media-movies',
           color: '#60a5fa',
-          indexedUsageBytes: '100',
+          indexedUsageBytes: String(gib(100)),
           percentage: 10,
-          pendingRemovalBytes: '0',
+          pendingRemovalBytes: String(gib(0)),
           pendingRemovalPercentage: 0,
         },
       ],
-      totalSpace: 1000,
-      usedSpace: 600,
-      freeSpace: 400,
+      totalSpace: gib(1000),
+      usedSpace: gib(600),
+      freeSpace: gib(400),
       usedPercentage: 60,
-      knownLibraryUsageBytes: '100',
-      pendingRemovalBytes: '0',
+      knownLibraryUsageBytes: String(gib(100)),
+      pendingRemovalBytes: String(gib(0)),
       pendingRemovalPercentage: 0,
       pendingRemovalAvailable: true,
       pendingRemovalComplete: true,
       omittedRemovalScheduleCount: 0,
-      unaccountedUsageBytes: '500',
+      unaccountedUsageBytes: String(gib(500)),
       provisionedSpaceBytes: null,
       usageExceedsPhysical: false,
       capacityReadingsDiffer: false,
@@ -191,7 +200,7 @@ const storageResponse = {
           label: 'Shows Internal',
           path: '/volume3/media-shows',
           color: '#22d3ee',
-          indexedUsageBytes: '50',
+          indexedUsageBytes: String(gib(50)),
           percentage: null,
           pendingRemovalBytes: null,
           pendingRemovalPercentage: null,
@@ -201,7 +210,7 @@ const storageResponse = {
       usedSpace: null,
       freeSpace: null,
       usedPercentage: null,
-      knownLibraryUsageBytes: '50',
+      knownLibraryUsageBytes: String(gib(50)),
       pendingRemovalBytes: null,
       pendingRemovalPercentage: null,
       pendingRemovalAvailable: false,
@@ -234,9 +243,9 @@ const storageResponse = {
           label: 'Movies External',
           path: '/volume4/media-movies',
           color: '#4ade80',
-          indexedUsageBytes: '100',
+          indexedUsageBytes: String(gib(100)),
           percentage: 5,
-          pendingRemovalBytes: '20',
+          pendingRemovalBytes: String(gib(20)),
           pendingRemovalPercentage: 20,
         },
         {
@@ -249,9 +258,9 @@ const storageResponse = {
           label: 'Animation',
           path: '/volume4/media-animation',
           color: '#facc15',
-          indexedUsageBytes: '50',
+          indexedUsageBytes: String(gib(50)),
           percentage: 2.5,
-          pendingRemovalBytes: '0',
+          pendingRemovalBytes: String(gib(0)),
           pendingRemovalPercentage: 0,
         },
         {
@@ -264,9 +273,9 @@ const storageResponse = {
           label: 'Shows External',
           path: '/volume4/media-shows',
           color: '#2dd4bf',
-          indexedUsageBytes: '100',
+          indexedUsageBytes: String(gib(100)),
           percentage: 5,
-          pendingRemovalBytes: '25',
+          pendingRemovalBytes: String(gib(25)),
           pendingRemovalPercentage: 25,
         },
         {
@@ -279,23 +288,23 @@ const storageResponse = {
           label: 'Animation',
           path: '/volume4/media-animation',
           color: '#fb923c',
-          indexedUsageBytes: '50',
+          indexedUsageBytes: String(gib(50)),
           percentage: 2.5,
-          pendingRemovalBytes: '0',
+          pendingRemovalBytes: String(gib(0)),
           pendingRemovalPercentage: 0,
         },
       ],
-      totalSpace: 2000,
-      usedSpace: 500,
-      freeSpace: 1500,
+      totalSpace: gib(2000),
+      usedSpace: gib(500),
+      freeSpace: gib(1500),
       usedPercentage: 25,
-      knownLibraryUsageBytes: '300',
-      pendingRemovalBytes: '45',
+      knownLibraryUsageBytes: String(gib(300)),
+      pendingRemovalBytes: String(gib(45)),
       pendingRemovalPercentage: 15,
       pendingRemovalAvailable: true,
       pendingRemovalComplete: true,
       omittedRemovalScheduleCount: 0,
-      unaccountedUsageBytes: '200',
+      unaccountedUsageBytes: String(gib(200)),
       provisionedSpaceBytes: null,
       usageExceedsPhysical: false,
       capacityReadingsDiffer: false,
@@ -320,6 +329,25 @@ const login = (email: string, password: string) =>
 
 describe('Storage settings configuration skeleton', () => {
   let seriesRelocationEnabled = false;
+  const fixtureInstances: { provider: string; id: number; port: number }[] = [];
+
+  afterEach(() => {
+    // Only remove the disposable loopback instances created by this test.
+    for (const { provider, id, port } of fixtureInstances.splice(0)) {
+      cy.request(`/api/v1/settings/${provider}`).then(({ body }) => {
+        const instance = body.find((row: { id: number }) => row.id === id);
+        expect(instance).to.include({
+          hostname: '127.0.0.1',
+          port,
+          name: `Cypress Storage ${provider}`,
+        });
+        cy.request('DELETE', `/api/v1/settings/${provider}/${id}`)
+          .its('status')
+          .should('eq', 200);
+      });
+    }
+    cy.task('stopStorageProviders');
+  });
 
   beforeEach(() => {
     seriesRelocationEnabled = false;
@@ -373,7 +401,7 @@ describe('Storage settings configuration skeleton', () => {
         freeSpaceThreshold: 10,
         automaticSeriesPlacement: false,
         defaultSeriesVolumeId: null,
-        expansionSeriesVolumeId: null,
+        expansionSeriesVolumeId: 'physical:volume4',
         seriesSeasonThreshold: 3,
         torrentRelocationDelayHours: 48,
         routes: [
@@ -409,24 +437,26 @@ describe('Storage settings configuration skeleton', () => {
             '20',
           ]);
         });
-      cy.findByRole('button', { name: 'Refresh capacity' })
+      cy.get('button[aria-label="Refresh capacity"]')
         .should('be.visible')
         .and('not.contain.text', 'Refresh capacity')
         .focus();
     });
-    cy.findByRole('tooltip')
+    cy.get('[role="tooltip"]')
       .should('be.visible')
       .and('contain', 'Refresh capacity');
     cy.get('[data-testid="storage-overflow-routing-section"]').within(() => {
       cy.contains('h2', 'Storage Routing').should('be.visible');
-      cy.findByRole('checkbox', { name: 'Overflow Routing' }).should(
+      cy.get('[role="checkbox"][aria-label="Overflow Routing"]').should(
         'not.exist'
       );
       cy.contains(
         'Choose where media should be stored based on remaining volume capacity.'
       ).should('be.visible');
       cy.contains('h3', 'Routes').should('not.exist');
-      cy.findByLabelText('Target volume').should('be.disabled');
+      labelledField('Target volume', 'overflow-destination').should(
+        'be.disabled'
+      );
       cy.contains('No Overflow routes are configured.').should('not.exist');
       cy.get('#overflow-source').then(($source) => {
         const sourceLabel = Cypress.$('label[for="overflow-source"]')[0];
@@ -456,13 +486,17 @@ describe('Storage settings configuration skeleton', () => {
       cy.contains(
         'Choose where new Series are stored and when existing Series should be relocated.'
       ).should('be.visible');
-      cy.findByRole('checkbox').should('not.exist');
-      cy.findByLabelText('Default volume').should('be.visible');
-      cy.findByLabelText('Expansion volume').should('be.visible');
-      cy.findByLabelText('Season threshold')
+      cy.get('[role="checkbox"]').should('not.exist');
+      labelledField('Default volume', 'defaultSeriesVolumeId').should(
+        'be.visible'
+      );
+      labelledField('Expansion volume', 'expansionSeriesVolumeId').should(
+        'be.visible'
+      );
+      labelledField('Season threshold', 'seriesSeasonThreshold')
         .should('be.visible')
         .and('have.value', '3');
-      cy.findByLabelText('Relocation delay (h)')
+      labelledField('Relocation delay (h)', 'torrentRelocationDelayHours')
         .should('be.visible')
         .and('have.value', '48');
     });
@@ -477,18 +511,18 @@ describe('Storage settings configuration skeleton', () => {
       cy.contains(
         'Allows the scheduled job to relocate eligible existing Series.'
       ).should('be.visible');
-      cy.findAllByRole('checkbox').should('have.length', 3);
-      cy.findByRole('checkbox', { name: 'Automatic Series Placement' })
+      cy.get('[role="checkbox"]').should('have.length', 3);
+      cy.get('[role="checkbox"][aria-label="Automatic Series Placement"]')
         .should('have.attr', 'aria-checked', 'false')
         .click()
         .should('have.attr', 'aria-checked', 'true')
         .click()
         .should('have.attr', 'aria-checked', 'false');
-      cy.findByRole('checkbox', { name: 'Series Relocation' })
+      cy.get('[role="checkbox"][aria-label="Series Relocation"]')
         .should('have.attr', 'aria-checked', 'false')
         .and('have.attr', 'aria-disabled', 'false');
     });
-    cy.findByRole('checkbox', { name: 'Overflow Routing' }).should(
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]').should(
       'have.attr',
       'aria-checked',
       'false'
@@ -555,7 +589,7 @@ describe('Storage settings configuration skeleton', () => {
       cy.get('[data-testid="storage-leaving-soon-legend-physical:volume4"]')
         .should('be.visible')
         .and('contain', 'Leaving Soon')
-        .and('contain', '45 Bytes')
+        .and('contain', '45 GB')
         .and('contain', '15.0%')
         .and('not.contain', 'of occupied');
       cy.contains('Root folder details').should('not.exist');
@@ -568,7 +602,7 @@ describe('Storage settings configuration skeleton', () => {
       cy.get('[data-testid^="storage-free-space-level-"]').should('not.exist');
     });
     cy.get('[data-testid^="storage-volume-bar-"] [title]').should('not.exist');
-    cy.findByRole('button', { name: /Other/ }).should('not.exist');
+    cy.contains('button, [role="button"]', /Other/).should('not.exist');
 
     cy.get('[data-testid="storage-volume-volume3"]').within(() => {
       cy.get('[data-testid="storage-capacity-total-volume3"]').should(
@@ -590,25 +624,35 @@ describe('Storage settings configuration skeleton', () => {
       );
     });
 
-    cy.findByRole('checkbox', { name: 'Overflow Routing' })
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]')
       .focus()
       .type('{enter}')
       .should('have.attr', 'aria-checked', 'true');
-    cy.findByRole('checkbox', {
-      name: 'Automatic Series Placement',
-    }).should('have.attr', 'aria-checked', 'false');
+    cy.get('[role="checkbox"][aria-label="Automatic Series Placement"]').should(
+      'have.attr',
+      'aria-checked',
+      'false'
+    );
     cy.get('#overflow-source').select('physical:volume1');
     cy.get('#overflow-source option:selected').should('contain', 'Volume 1');
     cy.get('#overflow-destination')
       .find('option')
-      .should('have.length', 3)
-      .and('contain', 'Volume 4');
+      .should(($options) => {
+        expect([...$options].map((option) => option.value)).to.deep.equal([
+          '',
+          'physical:volume4',
+        ]);
+      });
     cy.get('#overflow-destination').select('physical:volume4');
     cy.get('#overflow-destination option:selected').should(
       'contain',
       'Volume 4'
     );
     cy.contains('button', 'Add route').click();
+    labelledField('Expansion volume', 'expansionSeriesVolumeId').should(
+      'have.value',
+      'physical:volume4'
+    );
     cy.contains('button', 'Save changes').click();
     cy.wait('@saveStorage');
   });
@@ -629,13 +673,13 @@ describe('Storage settings configuration skeleton', () => {
     cy.wait('@storage');
     cy.wait('@storageJobs');
 
-    cy.findByRole('checkbox', { name: 'Overflow Routing' }).click();
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]').click();
     cy.contains(
       'Configure at least one enabled storage route before enabling Overflow Routing.'
     ).should('be.visible');
     cy.contains('button', 'Save changes').should('be.disabled');
 
-    cy.findByRole('checkbox', { name: 'Overflow Routing' }).click();
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]').click();
     cy.contains(
       'Configure at least one enabled storage route before enabling Overflow Routing.'
     ).should('not.exist');
@@ -647,7 +691,7 @@ describe('Storage settings configuration skeleton', () => {
     cy.wait('@storage');
     cy.wait('@storageJobs');
     cy.get('#overflow-free-space-threshold').should('have.value', '15');
-    cy.findByRole('checkbox', { name: 'Overflow Routing' }).should(
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]').should(
       'have.attr',
       'aria-checked',
       'false'
@@ -667,7 +711,7 @@ describe('Storage settings configuration skeleton', () => {
     cy.wait('@storage');
     cy.wait('@storageJobs');
 
-    cy.findByRole('checkbox', { name: 'Overflow Routing' }).click();
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]').click();
     cy.contains(
       'Configure at least one enabled storage route before enabling Overflow Routing.'
     ).should('be.visible');
@@ -722,7 +766,7 @@ describe('Storage settings configuration skeleton', () => {
     cy.visit('/settings/storage');
     cy.wait('@storage');
     cy.wait('@storageJobs');
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).should(
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').should(
       'have.attr',
       'aria-checked',
       'false'
@@ -747,18 +791,20 @@ describe('Storage settings configuration skeleton', () => {
       .and('have.attr', 'rel', 'noopener noreferrer');
     cy.contains('4 Seasons · 100 GB').should('be.visible');
 
-    preview = {
-      status: 'eligible',
-      candidate: {
-        canonicalMediaId: 42,
-        title: 'The Expanse',
-        year: 2015,
-        retainedSeasonCount: 4,
-        totalBytes: String(100 * 1024 ** 3),
-        sonarrUrl: null,
-      },
-      reason: null,
-    };
+    cy.then(() => {
+      preview = {
+        status: 'eligible',
+        candidate: {
+          canonicalMediaId: 42,
+          title: 'The Expanse',
+          year: 2015,
+          retainedSeasonCount: 4,
+          totalBytes: String(100 * 1024 ** 3),
+          sonarrUrl: null,
+        },
+        reason: null,
+      };
+    });
     cy.get('[data-testid="series-relocation-next-candidate"]')
       .contains('button', 'Refresh')
       .click();
@@ -767,7 +813,9 @@ describe('Storage settings configuration skeleton', () => {
       .contains('The Expanse (2015)')
       .should('not.match', 'a');
 
-    preview = { status: 'none', candidate: null, reason: null };
+    cy.then(() => {
+      preview = { status: 'none', candidate: null, reason: null };
+    });
     cy.get('[data-testid="series-relocation-next-candidate"]')
       .contains('button', 'Refresh')
       .click();
@@ -776,11 +824,13 @@ describe('Storage settings configuration skeleton', () => {
       'be.visible'
     );
 
-    preview = {
-      status: 'unavailable',
-      candidate: null,
-      reason: 'provider-unavailable',
-    };
+    cy.then(() => {
+      preview = {
+        status: 'unavailable',
+        candidate: null,
+        reason: 'provider-unavailable',
+      };
+    });
     cy.get('[data-testid="series-relocation-next-candidate"]')
       .contains('button', 'Refresh')
       .click();
@@ -789,7 +839,9 @@ describe('Storage settings configuration skeleton', () => {
       'be.visible'
     );
 
-    cy.findByLabelText('Season threshold').clear().type('4');
+    labelledField('Season threshold', 'seriesSeasonThreshold')
+      .clear()
+      .type('4');
     cy.contains(
       'Save the Series Routing changes before refreshing the next candidate.'
     ).should('be.visible');
@@ -812,7 +864,7 @@ describe('Storage settings configuration skeleton', () => {
     cy.wait('@storageJobs');
     cy.contains('tr', 'Series Relocation').within(() => {
       cy.contains('Disabled').should('be.visible');
-      cy.findByRole('checkbox', { name: /Series Relocation/ }).should(
+      cy.get('[role="checkbox"][aria-label="Series Relocation"]').should(
         'not.exist'
       );
       cy.contains('button', 'Edit').should('be.enabled');
@@ -821,14 +873,14 @@ describe('Storage settings configuration skeleton', () => {
 
     cy.visit('/settings/storage');
     cy.wait('@storage');
-    cy.findByRole('checkbox', { name: 'Series Relocation' })
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]')
       .click()
       .should('have.attr', 'aria-checked', 'true');
     cy.wait('@setSeriesRelocationEnabled');
     cy.reload();
     cy.wait('@storage');
     cy.wait('@storageJobs');
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).should(
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').should(
       'have.attr',
       'aria-checked',
       'true'
@@ -836,8 +888,9 @@ describe('Storage settings configuration skeleton', () => {
 
     cy.visit('/settings/jobs');
     cy.contains('tr', 'Series Relocation').within(() => {
-      cy.contains('Enabled').should('be.visible');
-      cy.findByRole('checkbox', { name: /Series Relocation/ }).should(
+      cy.contains('Disabled').should('not.exist');
+      cy.contains('button', 'Run Now').should('be.enabled');
+      cy.get('[role="checkbox"][aria-label="Series Relocation"]').should(
         'not.exist'
       );
       cy.contains('button', 'Edit').should('be.enabled');
@@ -865,11 +918,11 @@ describe('Storage settings configuration skeleton', () => {
     cy.wait('@storageJobs');
 
     const overflow = () =>
-      cy.findByRole('checkbox', { name: 'Overflow Routing' });
+      cy.get('[role="checkbox"][aria-label="Overflow Routing"]');
     const placement = () =>
-      cy.findByRole('checkbox', { name: 'Automatic Series Placement' });
+      cy.get('[role="checkbox"][aria-label="Automatic Series Placement"]');
     const relocation = () =>
-      cy.findByRole('checkbox', { name: 'Series Relocation' });
+      cy.get('[role="checkbox"][aria-label="Series Relocation"]');
 
     overflow().click().should('have.attr', 'aria-checked', 'true');
     placement().click().should('have.attr', 'aria-checked', 'true');
@@ -923,25 +976,25 @@ describe('Storage settings configuration skeleton', () => {
     cy.wait('@storage');
     cy.wait('@storageJobs');
 
-    cy.findByRole('checkbox', { name: 'Overflow Routing' })
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]')
       .click()
       .should('have.attr', 'aria-checked', 'true');
     cy.contains('button', 'Save changes').click();
     cy.wait('@failedStorageSave');
-    cy.findByRole('checkbox', { name: 'Overflow Routing' }).should(
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]').should(
       'have.attr',
       'aria-checked',
       'true'
     );
-    cy.findByRole('checkbox', { name: 'Automatic Series Placement' }).should(
+    cy.get('[role="checkbox"][aria-label="Automatic Series Placement"]').should(
       'have.attr',
       'aria-checked',
       'false'
     );
 
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).click();
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').click();
     cy.wait('@failedRelocationSave');
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).should(
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').should(
       'have.attr',
       'aria-checked',
       'false'
@@ -957,34 +1010,40 @@ describe('Storage settings configuration skeleton', () => {
     cy.wait('@storage');
     cy.wait('@storageJobs');
 
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).click();
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').click();
     cy.contains(
       'Series Relocation requires two different eligible Sonarr volumes.'
     ).should('be.visible');
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).should(
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').should(
       'have.attr',
       'aria-checked',
       'false'
     );
-    cy.findByRole('checkbox', { name: 'Overflow Routing' }).should(
+    cy.get('[role="checkbox"][aria-label="Overflow Routing"]').should(
       'have.attr',
       'aria-checked',
       'false'
     );
-    cy.findByRole('checkbox', { name: 'Automatic Series Placement' }).should(
+    cy.get('[role="checkbox"][aria-label="Automatic Series Placement"]').should(
       'have.attr',
       'aria-checked',
       'false'
     );
 
-    cy.findByLabelText('Default volume').select('physical:volume3');
-    cy.findByLabelText('Expansion volume').select('physical:volume4');
-    cy.findByLabelText('Relocation delay (h)').clear().type('72');
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).click();
+    labelledField('Default volume', 'defaultSeriesVolumeId').select(
+      'physical:volume3'
+    );
+    labelledField('Expansion volume', 'expansionSeriesVolumeId').select(
+      'physical:volume4'
+    );
+    labelledField('Relocation delay (h)', 'torrentRelocationDelayHours')
+      .clear()
+      .type('72');
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').click();
     cy.contains(
       'Save the Series Routing volume and policy settings before enabling Series Relocation.'
     ).should('be.visible');
-    cy.findByRole('checkbox', { name: 'Series Relocation' }).should(
+    cy.get('[role="checkbox"][aria-label="Series Relocation"]').should(
       'have.attr',
       'aria-checked',
       'false'
@@ -1011,17 +1070,19 @@ describe('Storage settings configuration skeleton', () => {
       .invoke('text')
       .as('originalCapacity');
 
-    response = {
-      ...storageResponse,
-      refreshedAt: '2026-10-16T10:05:00.000Z',
-    };
-    cy.findByRole('button', { name: 'Refresh capacity' })
+    cy.then(() => {
+      response = {
+        ...storageResponse,
+        refreshedAt: '2026-10-16T10:05:00.000Z',
+      };
+    });
+    cy.get('button[aria-label="Refresh capacity"]')
       .click()
       .should('be.disabled')
       .and('have.attr', 'aria-busy', 'true')
       .find('svg')
       .should('have.class', 'animate-spin');
-    cy.findByRole('button', { name: 'Refresh capacity' }).then(($button) => {
+    cy.get('button[aria-label="Refresh capacity"]').then(($button) => {
       $button[0].click();
     });
     cy.wait('@refreshStorage');
@@ -1029,36 +1090,42 @@ describe('Storage settings configuration skeleton', () => {
     cy.contains('Storage capacity refreshed.').should('be.visible');
     cy.get('time').should('have.attr', 'datetime', '2026-10-16T10:05:00.000Z');
 
-    response = {
-      ...storageResponse,
-      refreshedAt: '2026-10-16T10:10:00.000Z',
-      instances: storageResponse.instances.map((instance) =>
-        instance.provider === 'sonarr'
-          ? { ...instance, capacityAvailable: false }
-          : instance
-      ),
-    };
-    cy.findByRole('button', { name: 'Refresh capacity' }).click();
+    cy.then(() => {
+      response = {
+        ...storageResponse,
+        refreshedAt: '2026-10-16T10:10:00.000Z',
+        instances: storageResponse.instances.map((instance) =>
+          instance.provider === 'sonarr'
+            ? { ...instance, capacityAvailable: false }
+            : instance
+        ),
+      };
+    });
+    cy.get('button[aria-label="Refresh capacity"]').click();
     cy.wait('@refreshStorage');
     cy.contains(
       'Storage capacity refreshed with warnings. Unable to refresh: Sonarr · Shows.'
     ).should('be.visible');
 
-    response = {
-      ...storageResponse,
-      refreshedAt: '2026-10-16T10:15:00.000Z',
-      instances: storageResponse.instances.map((instance) => ({
-        ...instance,
-        available: false,
-        capacityAvailable: false,
-      })),
-    };
-    cy.findByRole('button', { name: 'Refresh capacity' }).click();
+    cy.then(() => {
+      response = {
+        ...storageResponse,
+        refreshedAt: '2026-10-16T10:15:00.000Z',
+        instances: storageResponse.instances.map((instance) => ({
+          ...instance,
+          available: false,
+          capacityAvailable: false,
+        })),
+      };
+    });
+    cy.get('button[aria-label="Refresh capacity"]').click();
     cy.wait('@refreshStorage');
     cy.contains('Unable to refresh storage capacity.').should('be.visible');
 
-    response = { forceNetworkError: true };
-    cy.findByRole('button', { name: 'Refresh capacity' }).click();
+    cy.then(() => {
+      response = { forceNetworkError: true };
+    });
+    cy.get('button[aria-label="Refresh capacity"]').click();
     cy.wait('@refreshStorage');
     cy.contains('Unable to refresh storage capacity.').should('be.visible');
     cy.get('@originalCapacity').then((originalCapacity) => {
@@ -1082,23 +1149,23 @@ describe('Storage settings configuration skeleton', () => {
       (volume: { volumeKey: string }) => volume.volumeKey === 'volume4'
     );
     Object.assign(volume1, {
-      totalSpace: 1000,
-      freeSpace: 99,
-      usedSpace: 901,
+      totalSpace: gib(1000),
+      freeSpace: gib(99),
+      usedSpace: gib(901),
       usedPercentage: 90.1,
       accessible: true,
     });
     Object.assign(volume3, {
-      totalSpace: 1000,
-      freeSpace: 151,
-      usedSpace: 849,
+      totalSpace: gib(1000),
+      freeSpace: gib(151),
+      usedSpace: gib(849),
       usedPercentage: 84.9,
       accessible: true,
     });
     Object.assign(volume4, {
-      totalSpace: 2000,
-      freeSpace: 200,
-      usedSpace: 1800,
+      totalSpace: gib(2000),
+      freeSpace: gib(200),
+      usedSpace: gib(1800),
       usedPercentage: 90,
       accessible: true,
     });
@@ -1156,9 +1223,17 @@ describe('Storage settings configuration skeleton', () => {
 
     cy.get('#overflow-free-space-threshold')
       .find('option')
-      .should('have.length', 4)
-      .and('not.contain', '0%')
-      .and('not.contain', '25%');
+      .should(($options) => {
+        expect([...$options].map((option) => option.value)).to.deep.equal([
+          '5',
+          '10',
+          '15',
+          '20',
+        ]);
+        expect([...$options].map((option) => option.textContent)).to.deep.equal(
+          ['5%', '10%', '15%', '20%']
+        );
+      });
     cy.contains('Storage capacity and Overflow configuration.').should(
       'not.exist'
     );
@@ -1173,8 +1248,8 @@ describe('Storage settings configuration skeleton', () => {
     const volume1 = response.volumes.find(
       (volume: { volumeKey: string }) => volume.volumeKey === 'volume1'
     );
-    volume1.provisionedSpaceBytes = '25';
-    volume1.unaccountedUsageBytes = '475';
+    volume1.provisionedSpaceBytes = String(gib(25));
+    volume1.unaccountedUsageBytes = String(gib(475));
     cy.intercept('GET', '/api/v1/settings/storage', response).as('storage');
 
     cy.visit('/settings/storage');
@@ -1187,7 +1262,7 @@ describe('Storage settings configuration skeleton', () => {
       cy.get('[data-testid="storage-provisioned-legend-volume1"]')
         .should('be.visible')
         .and('contain', 'Provisioned')
-        .and('contain', '25 Bytes')
+        .and('contain', '25 GB')
         .and('contain', '2.5%');
     });
     cy.get('[data-testid="storage-volume-volume4"]')
@@ -1196,7 +1271,56 @@ describe('Storage settings configuration skeleton', () => {
   });
 
   it('renders fresh roots from the normal data-backed providers', () => {
+    // Refuse to seed an existing provider configuration or a non-test server.
+    const base = new URL(Cypress.config('baseUrl')!);
+    expect(['localhost', '127.0.0.1']).to.include(base.hostname);
+    expect(base.port).to.eq('5055');
+    for (const provider of ['radarr', 'sonarr'])
+      cy.request(`/api/v1/settings/${provider}`)
+        .its('body')
+        .should('deep.eq', []);
+    cy.task<number>('startStorageProviders').then((port) => {
+      for (const provider of ['radarr', 'sonarr']) {
+        cy.request('POST', `/api/v1/settings/${provider}`, {
+          name: `Cypress Storage ${provider}`,
+          hostname: '127.0.0.1',
+          port,
+          apiKey: 'synthetic-storage-fixture',
+          baseUrl: `/${provider}`,
+          useSsl: false,
+          activeProfileId: 1,
+          activeProfileName: 'Fixture',
+          activeDirectory: '/volume9/media',
+          is4k: false,
+          isDefault: true,
+          syncEnabled: false,
+          preventSearch: true,
+          ...(provider === 'radarr'
+            ? { minimumAvailability: 'released' }
+            : {
+                seriesType: 'standard',
+                animeSeriesType: 'anime',
+                enableSeasonFolders: true,
+                monitorNewItems: 'all',
+              }),
+        }).then(({ status, body }) => {
+          expect(status).to.eq(201);
+          fixtureInstances.push({ provider, id: body.id, port });
+        });
+      }
+    });
+    cy.intercept('GET', '/api/v1/settings/storage').as('realStorage');
     cy.visit('/settings/storage');
+    cy.wait('@realStorage').then(({ response }) => {
+      expect(response?.statusCode).to.eq(200);
+      expect(response?.body.locations).to.have.length(4);
+      expect(response?.body.volumes).to.have.length(3);
+      expect(
+        response?.body.instances.every(
+          (row: { available: boolean }) => row.available
+        )
+      ).to.eq(true);
+    });
 
     cy.contains('h3', 'Volume 1').should('be.visible');
     cy.contains('h3', 'Volume 3').should('be.visible');
@@ -1205,6 +1329,18 @@ describe('Storage settings configuration skeleton', () => {
     cy.get('[data-testid="storage-volume-volume9"]').should('have.length', 1);
     cy.contains('No Radarr or Sonarr storage roots were found.').should(
       'not.exist'
+    );
+    cy.task<Record<string, number>>('storageProviderRequests').then(
+      (requests) => {
+        for (const provider of ['radarr', 'sonarr'])
+          for (const endpoint of ['rootfolder', 'diskspace'])
+            expect(
+              requests[`GET /${provider}/api/v3/${endpoint}`]
+            ).to.be.greaterThan(0);
+        expect(
+          Object.keys(requests).every((key) => key.startsWith('GET '))
+        ).to.eq(true);
+      }
     );
   });
 
@@ -1403,13 +1539,11 @@ describe('Storage settings configuration skeleton', () => {
       });
       cy.get('[data-testid="storage-physical-volumes-section"]').within(() => {
         cy.get('#overflow-free-space-threshold').should('be.visible');
-        cy.findByRole('button', { name: 'Refresh capacity' }).should(
-          ($button) => {
-            const bounds = $button[0].getBoundingClientRect();
-            expect(bounds.width).to.be.at.least(40);
-            expect(bounds.height).to.be.at.least(40);
-          }
-        );
+        cy.get('button[aria-label="Refresh capacity"]').should(($button) => {
+          const bounds = $button[0].getBoundingClientRect();
+          expect(bounds.width).to.be.at.least(40);
+          expect(bounds.height).to.be.at.least(40);
+        });
       });
       cy.get('[data-testid="storage-volume-list"]').should(($list) => {
         expect(getComputedStyle($list[0]).display).to.equal('block');
@@ -1442,16 +1576,18 @@ describe('Storage settings configuration skeleton', () => {
       cy.get(
         '[data-testid="automation-overflow-routing-row"], [data-testid="automation-automatic-series-placement-row"], [data-testid="automation-series-relocation-row"]'
       ).each(($row) => {
-        const rowStyle = getComputedStyle($row[0]);
-        const rowBounds = $row[0].getBoundingClientRect();
         const toggle = $row[0].querySelector<HTMLElement>('[role="checkbox"]');
         expect(toggle).not.to.equal(null);
+        // Relocation includes a preview below its flex-aligned toggle row.
+        const toggleRow = toggle!.parentElement!;
+        const rowStyle = getComputedStyle(toggleRow);
+        const rowBounds = toggleRow.getBoundingClientRect();
         const toggleBounds = toggle?.getBoundingClientRect();
         expect(rowStyle.display).to.equal('flex');
         expect(rowStyle.alignItems).to.equal('center');
         expect(rowStyle.justifyContent).to.equal('space-between');
         expect(toggleBounds?.right ?? 0).to.be.closeTo(rowBounds.right, 1);
-        cy.findByRole('checkbox', { name: 'Overflow Routing' }).then(
+        cy.get('[role="checkbox"][aria-label="Overflow Routing"]').then(
           ($overflowToggle) => {
             const overflowBounds = $overflowToggle[0].getBoundingClientRect();
             expect(toggleBounds?.width).to.equal(overflowBounds.width);

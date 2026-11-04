@@ -1,4 +1,5 @@
 import { defineConfig } from 'cypress';
+import { registerStorageProviderTasks } from './cypress/support/storageProviders';
 
 export default defineConfig({
   projectId: 'onnqy3',
@@ -6,6 +7,7 @@ export default defineConfig({
     baseUrl: 'http://localhost:5055',
     video: true,
     setupNodeEvents(on) {
+      registerStorageProviderTasks(on);
       on('before:browser:launch', (browser, launchOptions) => {
         if (
           process.env.CYPRESS_NON_FORWARDING_NETWORK === 'true' &&
