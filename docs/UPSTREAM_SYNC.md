@@ -22,6 +22,10 @@ operator-supplied arbitrary target is trusted.
 
 Hosted synchronization is split into two jobs with separate authority.
 
+The checked-in schedule is `0 6,15,21 * * *` (UTC), with manual dispatch also
+available. GitHub scheduling is not a punctuality guarantee. On November 5, 2026,
+the workflow was externally active; future operators must recheck its live state.
+
 ### Observe
 
 Observe has read-only repository and pull-request access. In a disposable,
@@ -59,15 +63,17 @@ protection, publishes an image, or mutates unrelated GitHub state.
 
 Every path in the complete upstream range has one effective ownership class:
 
-- `FOLLOW`: accept the upstream path when current downstream has not diverged;
+- `FOLLOW`: include the upstream change in native merge construction;
 - `REVIEW`: require semantic review before accepting the result;
 - `DOWNSTREAM-OWNED`: preserve the downstream bytes or approved absence.
 
 The checked-in ownership policy is the machine contract. Unknown automation and
 workflow paths default to `REVIEW`. A normally followed path that has also been
-changed downstream becomes `REVIEW`; silent overwriting of downstream work is
-not allowed. Rename boundaries and path additions/deletions are classified as
-complete Git changes rather than as filename-only guesses.
+changed downstream does **not** automatically change ownership class: Git
+conflicts add attention paths independently of the policy label. A clean
+`FOLLOW` merge is not proof of semantic compatibility with downstream behavior.
+Rename boundaries and path additions/deletions are classified as complete Git
+changes rather than as filename-only guesses.
 
 Seerr-sensitive downstream policy includes the downstream-owned maintenance,
 validation, image-publication, and workflow-inventory surface. Inherited
@@ -107,6 +113,24 @@ Multiple candidates, malformed evidence, a foreign PR, head drift, missing
 ancestry, rewrite uncertainty, unexpected merge failure, or GitHub/API
 infrastructure failure remains red.
 
+### Observed attention example: PR #55
+
+On November 5, 2026, [PR #55](https://github.com/constbogdan/seerr/pull/55) was an
+open Draft with no auto-merge request. The observation bound downstream
+`c25e3eb82be9b8710ac1d38e52e83c09cfb5cf9b`, comparison anchor
+`b185621e8e48743bb38adaa0d15b334626b7b100`, and upstream
+`886adac27597b45cd901099cd02a0b46d9d3cb7f`. Its three incoming commits concern
+advanced request permissions (#3674), Helm zero replicas (#3629), and Slack
+links (#3679).
+
+All ten changed paths were policy `FOLLOW`, but `server/routes/request.ts`
+conflicted. Candidate `60dc90528868c1ab08fe669122105e9066e4be34` has only the
+downstream parent: it is a review workspace, not an accepted upstream merge.
+The [Observe/Publish run](https://github.com/constbogdan/seerr/actions/runs/41979903606)
+and live Draft are evidence of the attention workflow, not proof that these
+changes are integrated in v1.0.42. Reauthenticate the Draft before resolution;
+this example does not authorize resolving or publishing it.
+
 ## Publication and recovery
 
 Candidate branches use deterministic identities derived from the exact upstream
@@ -144,6 +168,15 @@ guidance so the operator can deliberately resolve them.
 The helper stops at a local, reviewable workspace. It cannot push, create or
 update a PR, delegate to `resolve-upstream.ps1`, acquire publication authority,
 or mutate GitHub state.
+
+An operator may separately approve a bounded manual native integration, as for
+PRs #51, #52 and #54. Record the exact current downstream base, approved upstream
+target/range, ordered native parents, semantic decisions, reviewed tree and
+validation. Do not invent managed episode provenance or squash/cherry-pick the
+range to simulate ancestry. Manual review-only publication needs an explicit
+exception: ordinary prepare-pr enables auto-merge, while managed-Draft
+preservation does not bootstrap an arbitrary manual branch. See
+[publication limitations](PREPARE_PR.md#review-only-manual-publication).
 
 ## Semantic resolution
 
@@ -202,6 +235,15 @@ Before hosted mutation is enabled, operators must verify:
 
 External configuration is not inferred from source. Drift is an operator-visible
 failure, not a reason to weaken source authentication.
+
+The publication App is not granted Workflows write. Before publishing changes
+to inherited workflow files, verify that the actual publishing credential can
+write those files and recheck unsafe-workflow disablement. A workflow-sensitive
+push can fail even when Contents/PR publication is otherwise authorized. Stop
+for an approved operator-credential/manual procedure when necessary; do not
+silently expand App permissions, enable inherited workflows or change Actions
+defaults. A scheduled workflow-file update is not automatically publishable just
+because its ownership class is `FOLLOW`.
 
 ## Failure policy
 

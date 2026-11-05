@@ -215,5 +215,8 @@ native availability/request integration, authorization, settings save failure,
 SQLite migration/entity equivalence and PostgreSQL generated DDL/unique contracts.
 
 Compare the frozen Movie experiment read-only where capture coverage permits;
-persisted old identities are not ground truth. Full repository validation and a
-production build remain mandatory before PR preparation, not during each change.
+persisted old identities are not ground truth. Use focused regressions and Fast
+local feedback during implementation. Hosted Downstream validation supplies the
+authoritative Full checks and production build before protected integration;
+local Full is an explicitly authorized diagnostic, not a prerequisite for every
+PR preparation. See [validation architecture](VALIDATION.md).

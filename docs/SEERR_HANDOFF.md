@@ -2,10 +2,12 @@
 
 ## Current checkpoint
 
-R0–R11 of the Library-enabled production-readiness program are accepted for the
-supported SQLite, single-process topology. R12 owns documentation, i18n, backup,
-and operational readiness; R13 remains the full validation and immutable release
-candidate gate.
+The product baseline is the published v1.0.42 release after PRs #51–#54, not an
+unpublished R13 candidate. See the [package reference](SEERR_DOWNSTREAM_PACKAGE.md)
+for source/digest and deployment evidence boundaries, and the
+[decision ledger](UPSTREAM_RESOLUTION_DECISIONS.md) for native ancestry and the
+approved #3578/#3579 lifecycle overrides. SQLite/single-process remains the
+claimed deployment topology.
 
 - Repository: `constbogdan/seerr`; upstream remains `seerr-team/seerr:develop`.
 - The intended production path is immutable GHCR digest → Dockhand → one Seerr
@@ -15,7 +17,9 @@ candidate gate.
   Foundation schema through migrations.
 - The approved October 4 `wholphin-history-v1` artifact is the default one-time
   historical input. Jellystat is not a continuing synchronization source.
-- Removal automation remains disabled and requires separate explicit approval.
+- Removal Scan and Processing are disabled by default. Actual deployment settings
+  require operator evidence; first-time commissioning keeps all four removal
+  controls off. Do not infer a live setting from the source default.
 - PostgreSQL runtime/concurrency acceptance and multi-replica support remain
   outside the claimed deployment topology.
 - Startup synchronization is controlled by the strict process-start
@@ -23,12 +27,15 @@ candidate gate.
   manual synchronization; commissioning mode enforces Library, Jellyfin
   Activity, Watchlist, then optional Fresh ordering. See the
   [first-production deployment runbook](FIRST_PRODUCTION_DEPLOYMENT.md).
+- Normal operation uses `normal` mode, with standard jobs, startup recovery and
+  catch-ups; containment is not the permanent runtime model.
 
 ## Decisions that must survive
 
 - Strategy C is the permanent workflow architecture: upstream workflow sources
   remain identical, unsafe workflows are disabled externally, and only downstream
-  validation and image publication are downstream-owned.
+  validation and image publication form the delivery surface. `upstream-sync.yml`
+  is separately policy-protected as downstream-owned.
 - `downstream-main` is the product branch. Clean upstream contributions remain
   based directly on `upstream/develop`.
 - Do not mix Fresh, queue contribution work, or direct refresh into workflow
@@ -44,8 +51,9 @@ the [roadmap](SEERR_DOWNSTREAM_ROADMAP.md) for sequencing.
 ### Queue sync
 
 [Upstream PR #3535](https://github.com/seerr-team/seerr/pull/3535) is open and
-non-Draft against `develop` from `fix/servarr-download-queue-sync-v2`. Its observed
-head is `3093f869e0ebcc14771a44846e79ba74325ff999`. Keep this an upstream
+non-Draft as observed on November 5, 2026; its head had advanced to
+`a7731f65e25e551bf91998881e97931ca3138c36`. Reauthenticate before continuing this
+contribution. Keep this an upstream
 contribution; do not merge it into the downstream product merely to establish the
 maintenance branch.
 
@@ -100,21 +108,18 @@ Keep it outside the Seerr source repository and outside hosted CI.
 
 ## Immediate next actions
 
-1. Verify startup-synchronization containment and ordered commissioning during
-   R13 clean-candidate validation.
-2. Complete R13 full validation from a clean immutable candidate containing all
-   intended WIP.
-3. Publish and authenticate the versioned GHCR image, source tag, rolling tag,
-   OCI metadata, and immutable digest through the protected workflow.
-4. Execute the runbook's backup/restore rehearsal before approving the
-   UGREEN/Dockhand deployment window.
-5. Deploy by immutable digest, import the verified artifact once, and preserve
-   Removal-disabled evidence through acceptance.
+1. Preserve the [November 5 acceptance observations](SEERR_DOWNSTREAM_PACKAGE.md#v1042-reference-and-evidence-boundary)
+   and verify backup integrity/restore separately; do not repeat a one-time history
+   import without a demonstrated need and its existing validation gates.
+2. Reauthenticate [PR #55's attention state](UPSTREAM_SYNC.md#observed-attention-example-pr-55)
+   before a separately approved resolver session. Its changes are not in v1.0.42.
+3. Preserve user-scoped Watchlist, factual Library/viewing, request authorization
+   and acquisition ownership boundaries for subsequent Mosaic work. Do not infer
+   a new product feature from documentation reconciliation.
 
 ## Deferred
 
 - Direct/on-demand Download Sync refresh.
-- Automated upstream detection and sync-PR creation.
 - Stable downstream image channel.
 - Richer release provenance/changelog.
 - Automated canary and rollback.
