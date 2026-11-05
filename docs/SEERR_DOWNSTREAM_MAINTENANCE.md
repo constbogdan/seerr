@@ -47,7 +47,8 @@ The permanent model is a minimal downstream workflow surface:
   every upstream sync.
 
 The temporary bootstrap guards previously carried in 14 inherited workflows have
-been removed. Those workflow files are source-identical to `upstream/develop`;
+been removed. Those workflow files are source-identical to the accepted upstream
+anchor, not necessarily the moving `upstream/develop` tip;
 their unsafe instances remain disabled through external repository configuration.
 Restoring source content does not re-enable a disabled workflow, and source
 changes must never be treated as a substitute for verifying its external state.
@@ -70,19 +71,28 @@ branch-name accidents as containment.
 
 ## Upstream sync
 
-For each update:
+Scheduled Observe/Publish is implemented in the protected `upstream-sync.yml`.
+It observes the complete range, applies ownership policy, and publishes an
+authenticated candidate or a conflict-review Draft. It does not resolve conflicts
+or merge. See [upstream synchronization](UPSTREAM_SYNC.md) for scheduling,
+provenance, the resolver and publication permissions.
+
+For an explicitly approved manual integration:
 
 1. Authenticate the `origin` and `upstream` repository identities.
-2. Fetch and record the exact `upstream/develop` tip.
+2. Fetch the exact `upstream/develop` tip and record the approved target. A bounded
+   target must be its ancestor; do not silently import later commits.
 3. Create a sync branch from current `downstream-main`.
-4. Merge the recorded upstream tip without rewriting downstream history.
+4. Merge the approved upstream target without rewriting downstream history.
 5. Review textual conflicts and semantic overlap with downstream-only features.
 6. Run downstream validation and inspect the workflow inventory.
 7. Merge through the protected downstream PR path.
 8. Reverify externally disabled workflow state before any publication.
 
-Automated detection and sync-PR generation are future conveniences, not current
-authority.
+Manual native integrations and managed Drafts have different provenance and
+publication requirements. Neither passing CI nor candidate generation grants
+human semantic approval. The [decision ledger](UPSTREAM_RESOLUTION_DECISIONS.md)
+records the integrated stages and the retained lifecycle overrides.
 
 ## Validation and publication
 

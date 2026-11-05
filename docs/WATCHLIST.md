@@ -152,15 +152,15 @@ positive **Watched** state uses the cyan Play indicator in the top-right state
 column, while Movie/Series remains top left and owner attribution remains
 bottom left in the all-users view.
 
-| Card element | Semantic class | Interaction / primitive |
-| --- | --- | --- |
-| Watchlist star, Blocklist prohibition icon | Secondary action | Hover-only native `Button` + `Tooltip`; activation mutates the explicit user state. |
-| Request download arrow | Primary action | Native primary `Button` + `Tooltip`; activation opens the existing request modal. |
-| Available, Requested, Partially Available, Processing, Blocklisted | Lifecycle state | Persistent, non-clickable `StatusBadgeMini`. |
-| Movie/Series | Classification | Persistent, non-clickable badge in the top-left region. |
-| Watched | Current user state | Persistent, non-clickable Play indicator in the top-right state column. |
-| Watchlist owner | Attribution | Persistent, non-clickable bottom-left badge in the all-users view. |
-| Error-card cleanup | Destructive action | Red native danger button; it is intentionally not normalized into a neutral state badge. |
+| Card element                                                       | Semantic class     | Interaction / primitive                                                                  |
+| ------------------------------------------------------------------ | ------------------ | ---------------------------------------------------------------------------------------- |
+| Watchlist star, Blocklist prohibition icon                         | Secondary action   | Hover-only native `Button` + `Tooltip`; activation mutates the explicit user state.      |
+| Request download arrow                                             | Primary action     | Native primary `Button` + `Tooltip`; activation opens the existing request modal.        |
+| Available, Requested, Partially Available, Processing, Blocklisted | Lifecycle state    | Persistent, non-clickable `StatusBadgeMini`.                                             |
+| Movie/Series                                                       | Classification     | Persistent, non-clickable badge in the top-left region.                                  |
+| Watched                                                            | Current user state | Persistent, non-clickable Play indicator in the top-right state column.                  |
+| Watchlist owner                                                    | Attribution        | Persistent, non-clickable bottom-left badge in the all-users view.                       |
+| Error-card cleanup                                                 | Destructive action | Red native danger button; it is intentionally not normalized into a neutral state badge. |
 
 The apparent historical “two icon systems” comes from these distinct native
 primitives: outlined 24px Heroicons inside interactive buttons versus solid
@@ -173,8 +173,10 @@ clickable or erasing destructive color.
 - This enrichment never creates Requests or drives acquisition. The existing,
   separately configured Plex Watchlist auto-request behavior is unchanged.
 - Watched is current completion, not immutable history or sentiment.
-- Likes, dislikes, favorites, recommendations, Historical Library, and Activity
-  are separate future features.
+- Sentiment, favorites and recommendations are not Watchlist membership. The
+  implemented [Library History/Activity](LIBRARY_HISTORY.md) and native
+  [Jellyfin preferences](JELLYFIN_PREFERENCES.md) have separate authorities;
+  do not label them unimplemented or infer intent from their state.
 - Library's Jellyfin Activity projection owns the universally visible watched
   aggregate for metrics-included users. Watchlist continues to consume its own
   user-scoped current projection; the two projections do not infer membership

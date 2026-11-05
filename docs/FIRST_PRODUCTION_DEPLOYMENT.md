@@ -12,6 +12,14 @@ rollback authority. Commands below use placeholders deliberately; record the
 actual container name, host-side config path, image identities, and backup path
 before making a change.
 
+This remains the **first-time commissioning** procedure, not a statement that
+the shipped application must remain contained. For the v1.0.42 artifact and
+November 5 deployment observations, see the
+[package reference](SEERR_DOWNSTREAM_PACKAGE.md#v1042-reference-and-evidence-boundary).
+Routine operation is `normal`; do not repeat the historical import or initial
+commissioning sequence merely because the image version changes. Review each
+upgrade's migrations and retain a matching database/settings recovery set.
+
 ## Release gate: startup synchronization containment
 
 Set `SEERR_SYNCHRONIZATION_MODE` on the single Seerr container to select one of
@@ -27,24 +35,28 @@ three immutable process modes:
 
 Values are strict. An invalid value prevents startup instead of silently falling
 back to normal. The mode cannot change inside a running process. Verify the
-effective state in **Settings â†’ Jobs & Cache** and **Settings â†’ Import historical
+effective state in **Settings → Jobs & Cache** and **Settings → Import historical
 data** after every restart; do not infer it from the deployment manifest alone.
 Editing cron schedules never bypasses containment.
 
 The relevant job behavior is:
 
-| Display name | Internal ID | Default recurring schedule | Startup behavior / gate |
-| --- | --- | --- | --- |
-| Jellyfin Activity Sync | `current-jellyfin-viewing-sync` | every 5 minutes at second 45 | Immediate catch-up for Jellyfin/Emby; no independent enabled setting. |
-| Library Sync | `library-history-hydration` | daily at 05:30 | Catch-up after 30 seconds; no independent enabled setting. |
-| Watchlist Play State Sync | `watchlist-play-state-sync` | every 5 minutes at second 30 | Immediate catch-up for Jellyfin/Emby, with bounded database-contention retries; no independent enabled setting. |
-| Fresh Sync | `fresh-sync` | every 5 minutes | Immediate catch-up only when Fresh is enabled. |
-| Fresh Reconciliation | `fresh-reconciliation` | daily at 03:15 | Scheduled only; no startup catch-up. |
-| Removal Scan | `removal-candidate-selection` | every 14 days at 01:00 | Scheduled only and callback is a no-op unless Removal Scan is enabled. Movie/Series participation is checked separately. |
-| Removal Processing | `scheduled-removal-processing` | daily at 01:30 | Scheduled only and callback is a no-op unless Removal Processing is enabled. |
+| Display name              | Internal ID                     | Default recurring schedule   | Startup behavior / gate                                                                                                  |
+| ------------------------- | ------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Jellyfin Activity Sync    | `current-jellyfin-viewing-sync` | every 5 minutes at second 45 | Immediate catch-up for Jellyfin/Emby; no independent enabled setting.                                                    |
+| Library Sync              | `library-history-hydration`     | daily at 05:30               | Catch-up after 30 seconds; no independent enabled setting.                                                               |
+| Watchlist Play State Sync | `watchlist-play-state-sync`     | every 5 minutes at second 30 | Immediate catch-up for Jellyfin/Emby, with bounded database-contention retries; no independent enabled setting.          |
+| Fresh Sync                | `fresh-sync`                    | every 5 minutes              | Immediate catch-up only when Fresh is enabled.                                                                           |
+| Next Season               | `next-season`                   | every 5 minutes              | Scheduled only; disabled by default with its own execution gate.                                                         |
+| Removal Scan              | `removal-candidate-selection`   | every 14 days at 01:00       | Scheduled only and callback is a no-op unless Removal Scan is enabled. Movie/Series participation is checked separately. |
+| Removal Processing        | `scheduled-removal-processing`  | daily at 01:30               | Scheduled only and callback is a no-op unless Removal Processing is enabled.                                             |
 
-In normal mode, startup first awaits recovery of expired current-viewing runs,
-then registers jobs and starts the catch-ups above. In contained and
+In normal mode, startup first awaits recovery of expired current-viewing runs
+and outstanding Series relocation reconciliation, then registers jobs and starts
+the catch-ups above. Concurrent setup calls share that startup operation; old
+schedule handles are replaced only after recovery succeeds, without cancelling
+active job ownership. Fresh V2 has only Fresh Sync, not the retired Fresh
+Reconciliation job. In contained and
 commissioning modes, recovery and catch-ups are suppressed before they can
 change checkpoints. Normal server startup and initial media-server setup use the
 same policy-aware registration path.
@@ -197,29 +209,29 @@ jq '{schema,datasetId,contentHash,jellyfinServerScope,coverage,counts:{viewers:(
 
 Expected identity and scope:
 
-| Field | Expected value |
-| --- | --- |
-| File SHA-256 | `77d8aa5ad74eb59ce16f9b9f7c1ccd5751e6e95508eac1f694265362d3cbd306` |
-| Schema | `wholphin-history-v1` |
-| Dataset ID | `wholphin-history-v1:6d19c5e622b0642c6d6281b10e774367cc9962db4fd04a4d90a68b1286d073e2` |
-| Embedded content hash | `sha256:6d19c5e622b0642c6d6281b10e774367cc9962db4fd04a4d90a68b1286d073e2` |
-| Jellyfin server scope | `91ed610f57154c3596f5c018e0ba7f6b` |
-| Observed start | `2025-12-19T23:32:08.961Z` |
-| Observed end | `2026-10-04T19:03:29.072Z` |
+| Field                 | Expected value                                                                         |
+| --------------------- | -------------------------------------------------------------------------------------- |
+| File SHA-256          | `77d8aa5ad74eb59ce16f9b9f7c1ccd5751e6e95508eac1f694265362d3cbd306`                     |
+| Schema                | `wholphin-history-v1`                                                                  |
+| Dataset ID            | `wholphin-history-v1:6d19c5e622b0642c6d6281b10e774367cc9962db4fd04a4d90a68b1286d073e2` |
+| Embedded content hash | `sha256:6d19c5e622b0642c6d6281b10e774367cc9962db4fd04a4d90a68b1286d073e2`              |
+| Jellyfin server scope | `91ed610f57154c3596f5c018e0ba7f6b`                                                     |
+| Observed start        | `2025-12-19T23:32:08.961Z`                                                             |
+| Observed end          | `2026-10-04T19:03:29.072Z`                                                             |
 
 Expected counts:
 
-| Fact type | Count |
-| --- | ---: |
-| Viewers | 4 |
-| Media | 588 |
-| Seasons | 283 |
-| Episodes | 2,649 |
-| Library facts | 111 |
-| Viewing facts | 2,030 |
-| Completion facts | 562 |
-| Activity facts | 6 |
-| Untimed evidence facts | 82 |
+| Fact type              | Count |
+| ---------------------- | ----: |
+| Viewers                |     4 |
+| Media                  |   588 |
+| Seasons                |   283 |
+| Episodes               | 2,649 |
+| Library facts          |   111 |
+| Viewing facts          | 2,030 |
+| Completion facts       |   562 |
+| Activity facts         |     6 |
+| Untimed evidence facts |    82 |
 
 The file checksum covers the serialized JSON file; the embedded content hash is
 the artifact contract's normalized-content identity, so the two values are not

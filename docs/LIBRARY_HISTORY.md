@@ -346,9 +346,11 @@ rebuildable viewing projections and the factual Library dashboard.
 
 The normalization boundary adds exact durable Watchlist
 `ACTIVE`/`SATISFIED`/`REMOVED` occurrences while retaining the current active
-membership projection. It also removes reconstructable Fresh presentation
-snapshots and resolves the selected Fresh page through normal Seerr metadata.
-Fresh's irreversible admission/opportunity history remains unchanged.
+membership projection; current completion does not automatically satisfy or
+remove intent. Fresh V2 resolves presentation through normal Seerr metadata and
+rebuilds durable discoveries from approved source history. Legacy admission,
+correction and opportunity records remain untouched for rollback, not imported
+into V2. See [Fresh discovery](FRESH.md) for the current ownership boundary.
 
 Canonical identity, closed/current presence, files and Episode links, Viewer
 identity, normalized viewing evidence, checkpoints, Watchlist occurrence
@@ -356,5 +358,8 @@ history, and Fresh discovery history remain durable even though the initial
 Library page focuses on current physical media.
 
 The accepted portable export passed clean-database equivalence before the
-disposable Phase C migration tooling was retired. Favorite, co-viewing,
-Like/Dislike and Storage Router behavior remain deferred.
+disposable Phase C migration tooling was retired. Favorite, co-viewing and
+Storage Router behavior are not provided by this foundation. Native nullable
+Like/Dislike state and the reviewed Web integration have their own
+[preference contract](JELLYFIN_PREFERENCES.md); neither watched completion nor
+historical evidence may invent sentiment or Watchlist membership.

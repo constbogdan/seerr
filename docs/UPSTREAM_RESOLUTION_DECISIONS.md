@@ -1,7 +1,8 @@
 # Upstream resolution decisions
 
 This is the durable decision ledger for human semantic resolution of managed
-Seerr upstream Drafts. It complements the operating contract in
+Seerr upstream Drafts and explicitly approved manual native integrations. It
+complements the operating contract in
 [UPSTREAM_SYNC.md](UPSTREAM_SYNC.md); it does not replace machine evidence,
 Git history, PR review, or validation.
 
@@ -10,8 +11,9 @@ evidence and are intentionally not carried into this ledger.
 
 ## What belongs here
 
-Add one entry only after an authenticated resolver session produces a reviewed
-semantic decision. Record durable information that a future maintainer cannot
+Add one entry only after an authenticated resolver session or approved manual
+review produces a semantic decision. Manual entries must not invent a managed
+episode identity. Record durable information that a future maintainer cannot
 reconstruct safely from the final diff alone:
 
 - managed PR number and episode ID;
@@ -60,10 +62,10 @@ direct merge, branch replacement, or force push.
 
 ### Manual Stage 1: pre-lockfile integration
 
-This operator-approved manual integration is not a managed Draft episode. No PR,
-publication, merge commit, or protected-main update is authorized by this entry.
-The native merge remains pending on `chore/manual-upstream-pre-lockfile` with
-ordered parents:
+This operator-approved manual integration was not a managed Draft episode. The
+resolution-stage entry did not authorize publication; separate approval later
+produced PR #51 (see the completion record below). The reviewed native merge on
+`chore/manual-upstream-pre-lockfile` retained ordered parents:
 
 1. downstream `edcc0a66a9db456ce2e8da6f29ef14989a1cd0f4`;
 2. upstream target `6f63b08d5c610217c75580340ce78b69b8a0bd61`.
@@ -145,7 +147,7 @@ merge result:
 #### Validation and workflow boundary
 
 The unchanged downstream baseline passed 374 tests in 25 selected files, with
-zero failures or skips. Candidate validation must rerun those same file lists,
+zero failures or skips. The resolution gate required the same file lists,
 plus privacy, lifecycle, scanner, scheduler and integration regressions, server
 and client types, targeted lint/formatting, and Fast validation. Full remains
 hosted authority and is not authorized locally for this task. Exact candidate
@@ -157,20 +159,23 @@ downstream workflows and policy-protected `upstream-sync.yml` retain downstream
 bytes. External unsafe-workflow disablement, read-only token defaults and the
 22-file workflow inventory must be reverified. No `actions.lock` is introduced.
 The incoming Telegram documentation trailing blank line is removed for whitespace
-validation. Hosted Full and runtime acceptance remain outstanding; local success
-does not authorize publication or deployment.
+validation. Hosted Full and runtime acceptance were outstanding at resolution;
+subsequent publication evidence is recorded below. Local success alone did not
+authorize publication or deployment.
 
 ### Manual Stage 2: GitHub Actions lockfile
 
 Stage 1 was subsequently merged through
-[PR #51](https://github.com/constbogdan/seerr/pull/51). This separate, uncommitted
-manual integration uses the ordered native merge parents
+[PR #51](https://github.com/constbogdan/seerr/pull/51). The initial Stage 2
+manual integration used the ordered native merge parents
 `[60022ec0f6f0be35cbc5749f6d0b0db19b251be0,
 53299c12ac538200cac5687f882400754aeab5e2]`. The second parent is the single
 upstream squash commit for [#3632](https://github.com/seerr-team/seerr/pull/3632),
 directly following Stage 1 target `6f63b08d5c610217c75580340ce78b69b8a0bd61`.
-The authenticated upstream tip was `b185621e8e48743bb38adaa0d15b334626b7b100`;
-later commits and the original PR commits are not imported.
+The authenticated upstream tip was `b185621e8e48743bb38adaa0d15b334626b7b100`.
+This was the initial lockfile boundary, not the eventual final PR #52 scope:
+separate approval incorporated the official Cypress startup correction through
+`f288fff37dcc8b3ef89ebe20f2ed5cb45fb92ec1` and reconciled merged PR #53.
 
 All 19 incoming files are retained source-identical: 18 workflow reference
 updates and the generated `actions.lock`. Parsed workflow structure, triggers,
@@ -206,20 +211,20 @@ Baseline and candidate checks use the same ten isolated maintenance regression
 modules covering provenance, ownership, publication, release/version authority,
 and validation, plus executable YAML/lockfile checks and Fast validation. No
 application tests, local Full run, commit, publication, enforcement change or
-image operation is authorized here. The Stage 1 image run is independent.
-Future review-only publication requires separate authorization: the existing
+image operation was authorized at that initial gate. The Stage 1 image run was
+independent. Later review-only publication required separate authorization: the existing
 ordinary prepare-pr path enables auto-merge, while its preservation mode needs
 an already-existing managed Draft and does not bootstrap this manual branch.
 
 ### Manual Stage 3: bounded final upstream range
 
-This operator-approved local resolution is not a managed Draft episode. The
-native merge remains pending on `chore/manual-upstream-final`, with ordered
+This operator-approved local resolution was not a managed Draft episode. The
+reviewed native merge on `chore/manual-upstream-final` retained ordered
 parents `0c7af80598c3dc65552832eef96b4f97412a6b66` and
 `b185621e8e48743bb38adaa0d15b334626b7b100`. The incoming range contains exactly
 13 commits after `f288fff37dcc8b3ef89ebe20f2ed5cb45fb92ec1`. The observed official
 develop tip was `886adac27597b45cd901099cd02a0b46d9d3cb7f`; later commits are
-excluded. No commit, push, PR, merge, image or production operation is authorized.
+excluded. Publication was separately approved after this resolution gate.
 
 #### Approved lifecycle override: upstream #3579
 
@@ -294,6 +299,51 @@ All 19 inherited workflows must remain source-identical to the bounded target;
 the two downstream workflows and protected `upstream-sync.yml` retain downstream
 bytes. `actions.lock` remains unchanged and consistent with direct references.
 Reverify the 22-file inventory, 14 unsafe external disablements and read-only
-Actions defaults. No external settings are changed. Ubuntu 26.04 runner behavior,
-hosted Full validation and any unexecuted platform acceptance remain pending;
-local validation does not authorize publication or protected integration.
+Actions defaults. No external settings were changed. Ubuntu 26.04, hosted Full
+and unexecuted platform acceptance were separate pending gates at resolution;
+local validation alone did not authorize publication or protected integration.
+
+### Completed integration record through v1.0.42
+
+The following commits and trees are authenticated from Git history, not inferred
+from PR descriptions. Short SHAs below uniquely identify the full Git objects.
+Protected PR merges preserve the already-reviewed native merge as a parent.
+
+| PR                                                  | Reviewed head  | Protected merge | Head/merge tree                            |
+| --------------------------------------------------- | -------------- | --------------- | ------------------------------------------ |
+| [#51](https://github.com/constbogdan/seerr/pull/51) | `a955672a1188` | `60022ec0f6f0`  | `9023a2a45a4c37990d45e30a9006d9d3ccd9ff7a` |
+| [#53](https://github.com/constbogdan/seerr/pull/53) | `79db0a110117` | `10e4c8f77d54`  | `b1faf26a4c5d8f38ec27ff575643e2d92cf95633` |
+| [#52](https://github.com/constbogdan/seerr/pull/52) | `531f90bf3d6d` | `0c7af80598c3`  | `e20359d6666368995a76e5afa0d2633c6702c6d7` |
+| [#54](https://github.com/constbogdan/seerr/pull/54) | `0cc93e8d9557` | `c25e3eb82be9`  | `c177a9f895faf772845b5ccecb0590fcad172a4a` |
+
+PR #53 landed before #52 and changed only nine Cypress configuration/spec/support
+files. Its corrected 83-test suite passed against Stage 1 and Stage 2 application
+revisions. Do not conflate the pre-existing browser-test defects with the earlier
+Cypress startup problem, or infer lockfile causality from chronology.
+PR #52's final head reconciles parents `[47ab40317ab8, 10e4c8f77d54]`, retaining
+the official lockfile/startup-fix ancestry and the accepted Cypress maintenance.
+Stage 1 and Stage 3 native parent order remains exactly as recorded above.
+
+Stage 3 local evidence recorded 540 passing tests, including all 527 baseline
+test identities, plus 27 focused regressions and 47 browser scenarios in ten
+specs. These counts describe those selected suites, not a permanent repository
+test total. Hosted [Downstream validation](https://github.com/constbogdan/seerr/actions/runs/41916930351)
+and [Cypress](https://github.com/constbogdan/seerr/actions/runs/41916930325)
+subsequently passed. No local Full claim is added.
+
+The accepted upstream anchor is `b185621e8e48743bb38adaa0d15b334626b7b100`.
+The 26-commit Stage 1 range, lockfile/startup-fix integration and 13-commit Stage 3
+range retain native ancestry and the #3578/#3579 overrides; this does not accept
+later upstream commits. PR #55 remains a separate attention workspace as
+[documented here](UPSTREAM_SYNC.md#observed-attention-example-pr-55).
+All 19 inherited workflow sources match that accepted anchor; the two downstream
+workflows and protected `upstream-sync.yml` retain their downstream authority.
+On November 5, read-only GitHub checks confirmed 14 unsafe inherited workflows
+disabled, eight active workflows, read-only Actions defaults and an active
+`Protect downstream-main` ruleset requiring an up-to-date `Downstream validation`
+check and PR integration. A legacy branch-protection endpoint alone is not a
+complete ruleset check. External state must be reauthenticated at publication.
+
+The protected merge is the v1.0.42 image source. Public artifact verification and
+operator-reported NAS/runtime acceptance are deliberately separated in the
+[package reference](SEERR_DOWNSTREAM_PACKAGE.md#v1042-reference-and-evidence-boundary).

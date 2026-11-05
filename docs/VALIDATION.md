@@ -64,6 +64,23 @@ downstream inventory. An upstream workflow addition, removal, or rename fails
 until its mutation/publication safety is explicitly reviewed and the inventory
 is deliberately updated.
 
+## Browser and documentation checks
+
+The inherited Cypress workflow is a separate, read-scoped browser check, not a
+replacement for Downstream validation. At v1.0.42 it uses Cypress 16.2.0 and
+Ubuntu 26.04, builds with `pnpm cypress:build`, starts `pnpm start`, and waits on
+`http://localhost:5055`. The corrected downstream specs/fixtures landed in PR #53;
+Stage 3 retains failure videos and uses Cypress 16's `Cypress.expose` in the three
+downstream credential consumers. Synthetic provider fixtures must not connect
+browser tests to production. Passing this Linux workflow does not establish
+Alpine/native-driver or NAS acceptance.
+
+The inherited docs-link workflow runs Lychee with `fail: false` and accepts
+several non-success statuses, including 404. A green job therefore is not proof
+that every link resolves. Review its report and check changed local links and
+anchors explicitly. Neither this limitation nor docs-only scope authorizes
+weakening required validation or changing inherited workflows.
+
 ## Local feedback
 
 The adapted local validator exposes bounded Fast feedback and explicit Full

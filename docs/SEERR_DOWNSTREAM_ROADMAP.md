@@ -25,10 +25,12 @@ downstream home.
 
 ## Current baseline
 
-- The Library-enabled candidate has completed R0–R11 stabilization for the
-  supported SQLite, single-process topology.
-- R12 provides release documentation and operational procedures; R13 remains
-  the immutable clean-candidate validation gate.
+- The maintained product has passed the staged upstream integrations and shipped
+  v1.0.42. See the [package reference](SEERR_DOWNSTREAM_PACKAGE.md) for immutable
+  release evidence and the boundary between publication and deployment acceptance.
+- The supported deployment claim remains SQLite, single process. Historical
+  R0–R13 candidate gates are not unfinished feature work; runtime/rollback
+  observations still need their own release-specific evidence.
 - Exact upstream/downstream SHAs and the deployment digest are release evidence,
   not durable roadmap text, and must be captured in the publication summary and
   deployment record.
@@ -50,53 +52,57 @@ downstream home.
 - [x] Add downstream-owned GHCR image publication.
 - [x] Add namespaced versions, GHCR package metadata, and per-build summaries.
 - [ ] Live-verify Dockhand update detection and release-detail presentation.
-- [ ] Validate deployment and rollback against the NAS environment.
+- [x] Record the operator-reported November 5 NAS health/UI acceptance and supplied
+      runtime-log observations, separately from public image verification.
+- [ ] Verify backup integrity and an isolated restore rehearsal; retain long-term
+      stability and exhaustive feature acceptance as separate open checks.
 
 ## Phase 2 — downstream features and repeatable upkeep
 
 - [x] Deliver persistent Fresh discovery with focused tests and downstream release validation.
-- [x] Refine Fresh with irreversible Movie/Season/Special history, typed manual
-  correction, admission overrides, and an administrator work queue.
-- [x] Add administrator shortcuts from Fresh/Discover to Candidate Diagnostics.
+- [x] Replace legacy Fresh matching administration with Fresh V2 automatic sync,
+      durable discoveries and bounded recovery. Manual corrections, overrides
+      and Candidate Diagnostics were retired, not carried forward.
 - [x] Enrich explicit Watchlist intent with a reusable per-user typed-media
-  Jellyfin current-state projection, an explicit user-metrics inclusion flag,
-  and privacy-preserving people selectors. See
-  [Watchlist intent and Jellyfin completion](WATCHLIST.md).
+      Jellyfin current-state projection, an explicit user-metrics inclusion flag,
+      and privacy-preserving people selectors. See
+      [Watchlist intent and Jellyfin completion](WATCHLIST.md).
 - [x] Establish the durable Library History foundation and hydrate the current
-  Radarr, Sonarr, Jellyfin, Seerr Media, and Request baseline using exact source
-  identity and fail-closed source coverage. See
-  [Library History foundation](LIBRARY_HISTORY.md).
+      Radarr, Sonarr, Jellyfin, Seerr Media, and Request baseline using exact source
+      identity and fail-closed source coverage. See
+      [Library History foundation](LIBRARY_HISTORY.md).
 - [x] Complete the one-time legacy-history reconciliation and export a
-  deterministic `wholphin-history-v1` dataset. Permanent Seerr imports this
-  Jellystat-agnostic format into its normal Jellyfin-owned Foundation. See
-  [Library History foundation](LIBRARY_HISTORY.md).
+      deterministic `wholphin-history-v1` dataset. Permanent Seerr imports this
+      Jellystat-agnostic format into its normal Jellyfin-owned Foundation. See
+      [Library History foundation](LIBRARY_HISTORY.md).
 - [x] Reconcile current Jellyfin Movie/Episode UserData into durable current
-  viewing state and confirmed evidence, with rebuildable Movie, Season, and
-  Series projections. See [Library History foundation](LIBRARY_HISTORY.md).
-- [x] Normalize shipped Fresh provider-presentation persistence without
-  changing Fresh evidence/history semantics.
-- [x] Preserve durable Watchlist ACTIVE/SATISFIED/REMOVED intent occurrences,
-  including exact confirmed-Movie satisfaction, without changing the active
-  membership UI or Series semantics.
+      viewing state and confirmed evidence, with rebuildable Movie, Season, and
+      Series projections. See [Library History foundation](LIBRARY_HISTORY.md).
+- [x] Resolve Fresh presentation through normal metadata; V2 rebuilds from
+      approved source history rather than importing legacy admission outcomes.
+- [x] Preserve durable Watchlist intent occurrences and legacy SATISFIED history.
+      Current completion enriches explicit membership; it does not automatically
+      satisfy or remove Movie/Series intent.
 - [x] Add hardened administrator Movie/Series/Season removal, durable manual
-  and bounded automatic schedules, activity cancellation, acquisition safety,
-  and the ordinary-user Leaving Soon projection. Foundation hydration remains
-  responsible for Current-to-Archive transitions.
+      and bounded automatic schedules, activity cancellation, acquisition safety,
+      and the ordinary-user Leaving Soon projection. Foundation hydration remains
+      responsible for Current-to-Archive transitions.
 - [ ] Normalize the remaining Watchlist query-title cache to deterministic
-  English provider metadata without changing membership or card presentation.
+      English provider metadata without changing membership or card presentation.
 - [ ] Improve validation performance without weakening exact-tree evidence.
 - [ ] Evaluate direct/on-demand Download Sync refresh as a separate downstream feature.
-- [ ] Add automated upstream change detection.
-- [ ] Add reusable upstream sync-PR generation if manual sync becomes costly.
+- [x] Add scheduled upstream observation and guarded candidate PR publication,
+      including managed attention Drafts and resolver handoff. See
+      [upstream synchronization](UPSTREAM_SYNC.md).
 
 ## Later, when justified
 
 - Activity dashboard and broader analytics beyond the normalized viewing
   foundation.
 - [x] Promote one fast factual administrator Library at `/library`, backed by
-  current physical presence, current Watchlist membership, and normalized
-  per-user viewing facts. Policy-driven Retention was rejected as a product
-  requirement and removed before publication.
+      current physical presence, current Watchlist membership, and normalized
+      per-user viewing facts. Policy-driven Retention was rejected as a product
+      requirement and removed before publication.
 - Storage Router behavior remains separately gated; source-specific legacy
   migration state is disposable.
 - User-scoped Mosaic Watchlist integration without a parallel state store.

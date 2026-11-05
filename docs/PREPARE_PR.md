@@ -148,6 +148,24 @@ Prepare-pr does not mark a managed attention Draft Ready, enable auto-merge for
 it, merge it, replace it, or rewrite its history. Human semantic review and the
 Ready/merge/reject decision remain mandatory.
 
+## Review-only manual publication
+
+Ordinary prepare-pr always requests native auto-merge; it has no general
+no-auto-merge switch. Its managed-Draft preservation path authenticates an
+existing managed episode and is not a bootstrap mechanism for a manual branch.
+Do not invoke ordinary publication when approval is PR-only. Stop and report
+the mismatch unless the operator explicitly approves a manual exception.
+
+For such an exception, retain the same safeguards: authenticate current main,
+remotes, the complete diff and validation; commit only the approved snapshot;
+verify its exact tree and, for an upstream integration, ordered native parents;
+prove normal fast-forward push safety; check workflow-write credentials and
+external workflow states where applicable. Use only the approved branch and PR
+target. Reauthenticate the published head/base, Draft state if requested, and
+`autoMergeRequest: null`. Do not mark Ready, merge, or enable auto-merge without
+separate approval. See the [manual integration ledger](UPSTREAM_RESOLUTION_DECISIONS.md)
+for the historical exceptions; they do not grant blanket publication authority.
+
 ## After integration
 
 Update a clean local product branch without rewriting it:
