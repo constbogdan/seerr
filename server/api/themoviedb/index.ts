@@ -413,7 +413,11 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     mediaType: 'movie' | 'tv',
     tmdbId: number,
     signal: AbortSignal
-  ): Promise<Pick<TmdbMovieDetails, 'id' | 'poster_path' | 'backdrop_path'>> =>
+  ): Promise<
+    Pick<TmdbMovieDetails, 'id' | 'poster_path' | 'backdrop_path'> &
+      Partial<Pick<TmdbMovieDetails, 'release_date'>> &
+      Partial<Pick<TmdbTvDetails, 'first_air_date'>>
+  > =>
     this.get(
       `/${mediaType}/${tmdbId}`,
       { params: { language: this.locale }, signal },

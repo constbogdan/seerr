@@ -16,6 +16,16 @@ const imagePath = (value: unknown): string | null =>
     ? value
     : null;
 
+const releaseDate = (value: unknown): string | null => {
+  if (typeof value !== 'string' || !/^(?!0000)\d{4}-\d{2}-\d{2}$/.test(value))
+    return null;
+  const date = new Date(value);
+  return !Number.isNaN(date.valueOf()) &&
+    date.toISOString().slice(0, 10) === value
+    ? value
+    : null;
+};
+
 export const enrichWatchlistArtwork = async (
   page: WatchlistResponse,
   tmdb: Pick<TheMovieDb, 'getWatchlistArtwork'> = new TheMovieDb(),
@@ -47,6 +57,9 @@ export const enrichWatchlistArtwork = async (
           artwork.set(key(item), {
             posterPath: imagePath(metadata.poster_path),
             backdropPath: imagePath(metadata.backdrop_path),
+            ...(item.mediaType === 'movie'
+              ? { releaseDate: releaseDate(metadata.release_date) }
+              : { firstAirDate: releaseDate(metadata.first_air_date) }),
           });
         }
       } catch {

@@ -1224,10 +1224,20 @@ components:
       nullable: true
       additionalProperties: false
       required: [posterPath, backdropPath]
-      description: Public TMDB image paths, not full URLs. Present only with includeArtwork=true on local lists; null when metadata fails or times out. The entry's title remains usable.
+      description: Public TMDB image paths and optional catalog dates from the same lookup. Present only with includeArtwork=true on local lists; null when metadata fails or times out. The entry's title remains usable.
       properties:
         posterPath: { type: string, nullable: true }
         backdropPath: { type: string, nullable: true }
+        releaseDate:
+          type: string
+          format: date
+          nullable: true
+          description: Movie release date; null when unknown or invalid. Omitted for series.
+        firstAirDate:
+          type: string
+          format: date
+          nullable: true
+          description: Series first-air date; null when unknown or invalid. Omitted for movies.
     WatchlistResponse:
       type: object
       required:
