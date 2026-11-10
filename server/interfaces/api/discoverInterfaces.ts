@@ -16,7 +16,12 @@ export interface WatchlistItem {
   media?: Media | null;
   createdAt?: Date;
   updatedAt?: Date;
-  artwork?: { posterPath: string | null; backdropPath: string | null } | null;
+  artwork?: {
+    posterPath: string | null;
+    backdropPath: string | null;
+    releaseDate?: string | null;
+    firstAirDate?: string | null;
+  } | null;
   watchState?: 'watched' | 'not_watched' | 'unknown';
   lastPlayedAt?: string;
   watchStateSyncedAt?: string;

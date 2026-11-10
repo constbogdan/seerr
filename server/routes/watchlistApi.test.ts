@@ -298,17 +298,34 @@ describe('Opt-in Watchlist page artwork', () => {
         user: { email: 'private@example.test' },
         requests: ['private'],
         watchState: 'private',
+        release_date: '1999-03-31',
+        first_air_date: '2020-01-01',
       })
     );
-    fixtures.set('/tv/123', fixture(123, { poster_path: '/tv.jpg' }));
+    fixtures.set(
+      '/tv/123',
+      fixture(123, {
+        poster_path: '/tv.jpg',
+        first_air_date: '2024-02-29',
+        release_date: '2000-01-01',
+      })
+    );
     const baseline = await list();
     const response = await list('&includeArtwork=true');
     assert.equal(response.status, 200);
     assert.deepEqual(
       response.body.results.map((item: { artwork: unknown }) => item.artwork),
       [
-        { posterPath: '/123-poster.jpg', backdropPath: '/123-backdrop.jpg' },
-        { posterPath: '/tv.jpg', backdropPath: '/123-backdrop.jpg' },
+        {
+          posterPath: '/123-poster.jpg',
+          backdropPath: '/123-backdrop.jpg',
+          releaseDate: '1999-03-31',
+        },
+        {
+          posterPath: '/tv.jpg',
+          backdropPath: '/123-backdrop.jpg',
+          firstAirDate: '2024-02-29',
+        },
       ]
     );
     const withoutArtwork = {
@@ -391,7 +408,7 @@ describe('Opt-in Watchlist page artwork', () => {
     );
     assert.deepEqual(
       response.body.results.map((item: { artwork: unknown }) => item.artwork),
-      [null, { posterPath: null, backdropPath: null }, null]
+      [null, { posterPath: null, backdropPath: null, releaseDate: null }, null]
     );
   });
 
@@ -482,6 +499,44 @@ const artworkPage = (count: number): WatchlistResponse => ({
 });
 
 describe('Artwork resource and projection boundaries', () => {
+  it('keeps images and rows when dates are missing or invalid without additional lookups', async () => {
+    const invalidDates = [
+      undefined,
+      null,
+      '',
+      '2023-02-29',
+      '2024-02-30',
+      '2024-13-01',
+      '2024-01-01T00:00:00Z',
+      '0000-01-01',
+      2024,
+    ];
+    for (const mediaType of ['movie', 'tv'] as const) {
+      for (const date of invalidDates) {
+        let calls = 0;
+        const page = artworkPage(1);
+        page.results[0].mediaType = mediaType;
+        const result = await enrichWatchlistArtwork(page, {
+          getWatchlistArtwork: async () => {
+            calls++;
+            return fixture(1, {
+              release_date: date,
+              first_air_date: date,
+            }) as never;
+          },
+        });
+        assert.equal(calls, 1);
+        assert.deepEqual(result.results[0].artwork, {
+          posterPath: '/1-poster.jpg',
+          backdropPath: '/1-backdrop.jpg',
+          [mediaType === 'movie' ? 'releaseDate' : 'firstAirDate']: null,
+        });
+        assert.equal(result.totalResults, 1);
+        assert.equal(result.results[0].title, page.results[0].title);
+      }
+    }
+  });
+
   it('reuses the existing TMDB transport cache and passes its deadline signal', async () => {
     mock.restoreAll();
     const client = new TheMovieDb();
@@ -571,6 +626,7 @@ describe('Artwork resource and projection boundaries', () => {
     assert.deepEqual(result.results[0].artwork, {
       posterPath: null,
       backdropPath: null,
+      releaseDate: null,
     });
     assert.doesNotMatch(
       JSON.stringify(result),
