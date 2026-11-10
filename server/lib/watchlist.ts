@@ -16,6 +16,7 @@ import type { User } from '@server/entity/User';
 import { UserMediaState } from '@server/entity/UserMediaState';
 import { Watchlist } from '@server/entity/Watchlist';
 import type { WatchlistResponse } from '@server/interfaces/api/discoverInterfaces';
+import { enrichWatchlistArtwork } from '@server/lib/watchlistArtwork';
 import { applyWatchlistLibraryStatusFilter } from '@server/lib/watchlistLibraryStatus';
 import type { SelectQueryBuilder } from 'typeorm';
 
@@ -75,6 +76,7 @@ export interface WatchlistQuery {
   sort: WatchlistSort;
   watched?: WatchlistWatchedFilter;
   libraryStatus?: WatchlistLibraryStatusFilter;
+  includeArtwork?: boolean;
 }
 
 export const parseWatchlistQuery = (query: {
@@ -83,6 +85,7 @@ export const parseWatchlistQuery = (query: {
   sort?: unknown;
   watched?: unknown;
   libraryStatus?: unknown;
+  includeArtwork?: unknown;
 }): WatchlistQuery => {
   const parsedPage = Number(query.page ?? 1);
   const page =
@@ -106,7 +109,16 @@ export const parseWatchlistQuery = (query: {
     ? (query.libraryStatus as WatchlistLibraryStatusFilter)
     : 'absent';
 
-  return { page, category, sort, watched, libraryStatus };
+  return {
+    page,
+    category,
+    sort,
+    watched,
+    libraryStatus,
+    ...((query.includeArtwork === true || query.includeArtwork === 'true') && {
+      includeArtwork: true,
+    }),
+  };
 };
 
 export const toWatchState = (played?: boolean | null): WatchState =>
@@ -258,7 +270,7 @@ export const getLocalWatchlist = async ({
     },
   }));
 
-  return {
+  const result: WatchlistResponse = {
     page: query.page,
     totalPages: Math.max(1, Math.ceil(totalResults / WATCHLIST_PAGE_SIZE)),
     totalResults,
@@ -269,6 +281,7 @@ export const getLocalWatchlist = async ({
     supportsLibraryStatus: true,
     hasUnclassifiedItems,
   };
+  return query.includeArtwork ? enrichWatchlistArtwork(result) : result;
 };
 
 export const getPlexWatchlist = async ({
