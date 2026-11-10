@@ -1,3 +1,5 @@
+import type Media from '@server/entity/Media';
+
 export interface GenreSliderItem {
   id: number;
   name: string;
@@ -11,6 +13,10 @@ export interface WatchlistItem {
   mediaType: 'movie' | 'tv';
   title: string;
   genreIds?: number[] | null;
+  media?: Media | null;
+  createdAt?: Date;
+  updatedAt?: Date;
+  artwork?: { posterPath: string | null; backdropPath: string | null } | null;
   watchState?: 'watched' | 'not_watched' | 'unknown';
   lastPlayedAt?: string;
   watchStateSyncedAt?: string;
@@ -19,6 +25,14 @@ export interface WatchlistItem {
     displayName: string;
     avatar: string;
   };
+}
+
+export interface WatchlistMembershipResponse {
+  results: {
+    mediaType: 'movie' | 'tv';
+    tmdbId: number;
+    onWatchlist: boolean;
+  }[];
 }
 
 export interface WatchlistResponse {

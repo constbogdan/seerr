@@ -16,8 +16,30 @@ import {
   getWatchlistHistory,
   type WatchlistHistoryResponse,
 } from '@server/lib/watchlistLifecycle';
+import {
+  getWatchlistMembership,
+  watchlistMembershipQuery,
+} from '@server/lib/watchlistMembership';
 
 const watchlistRoutes = Router();
+
+watchlistRoutes.get('/membership', async (req, res, next) => {
+  if (!req.user)
+    return next({ status: 401, message: 'Authentication required.' });
+  try {
+    const { items } = watchlistMembershipQuery.parse(req.query);
+    return res.json(await getWatchlistMembership(req.user.id, items));
+  } catch (error) {
+    if (error instanceof ZodError) {
+      return next({
+        status: 400,
+        message: 'Invalid Watchlist membership query.',
+      });
+    }
+    // A failed lookup must not become a successful empty/absent result.
+    return next(error);
+  }
+});
 
 watchlistRoutes.get<never, WatchlistHistoryResponse>(
   '/history',

@@ -4,6 +4,53 @@ The downstream Watchlist is an explicit, user-owned statement of future viewing
 intent. Requests, availability, acquisition, playback, completion, and future
 preference signals do not add or remove Watchlist membership.
 
+## Personal API foundations for Mosaic
+
+`GET /api/v1/watchlist/membership?items=movie:123,tv:456` checks the
+authenticated user's **local** Watchlist rows directly, including memberships
+whose optional Media link is missing. It does not query a remote Plex Watchlist.
+No owner/user query override is accepted, even for an administrator. Existing
+delegated `WATCHLIST_VIEW` reads on other routes are unchanged.
+
+The endpoint accepts 1–100 comma-separated typed identities **before
+deduplication**, retaining first-occurrence order. Types are `movie` and `tv`;
+IDs are positive safe decimal integers without leading zeroes or whitespace.
+Movie and TV identities remain distinct even when their numeric IDs match.
+A single parameterized owner-scoped query returns only:
+
+```json
+{
+  "results": [
+    { "mediaType": "movie", "tmdbId": 123, "onWatchlist": true },
+    { "mediaType": "tv", "tmdbId": 456, "onWatchlist": false }
+  ]
+}
+```
+
+Invalid/missing/oversized input returns 400; unauthenticated access returns 403.
+A database failure returns an error, never a successful empty result or false
+absence. No membership cache or new persistence is involved.
+
+Existing local list reads optionally accept `includeArtwork=true`. Omitted or
+false leaves their response shape and provider work unchanged. When requested,
+each saved row gains `artwork: { posterPath, backdropPath }`, using public TMDB
+image paths (not full URLs), or `artwork: null` if lookup fails or times out.
+Missing individual images are null. Title, original added date, owner, ordering,
+filtered totals and pagination are preserved. Only the selected page is enriched,
+with typed-title deduplication, at most three concurrent lookups, a three-second
+page deadline and abort signals. Queued work stops on expiry; late metadata does
+not change the returned page. Lookups reuse the existing TMDB cache and bounded
+transport, fetch no credits/trailer fallback, and project no private user,
+playback or request data. Plex reads ignore this option and remain unchanged.
+
+To list **all** personal saved titles, clients must explicitly use
+`owner=me&category=all&sort=added_desc&watched=all&libraryStatus=any` on
+`GET /api/v1/discover/watchlist`; existing defaults still hide watched titles
+and titles with physical library history. Categories stay exclusive: Movies and
+Shows exclude TMDB genre 16; Animation includes Movie and TV genre-16 entries;
+All also includes unclassified entries. Artwork is not Jellyfin ownership,
+request status or playback readiness. Add/remove operations remain personal.
+
 ## Completion projection
 
 Seerr stores a narrow projection of the same user's current Jellyfin completion

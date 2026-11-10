@@ -407,6 +407,19 @@ class TheMovieDb extends ExternalAPI implements TvShowProvider {
     }
   };
 
+  // Public catalog metadata only; shares the existing cache/queue and supports
+  // the optional Watchlist page deadline without fetching credits or trailers.
+  public getWatchlistArtwork = (
+    mediaType: 'movie' | 'tv',
+    tmdbId: number,
+    signal: AbortSignal
+  ): Promise<Pick<TmdbMovieDetails, 'id' | 'poster_path' | 'backdrop_path'>> =>
+    this.get(
+      `/${mediaType}/${tmdbId}`,
+      { params: { language: this.locale }, signal },
+      43200
+    );
+
   public getMovie = async ({
     movieId,
     language = this.locale,
