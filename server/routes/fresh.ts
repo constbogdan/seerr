@@ -36,6 +36,13 @@ export const createFreshRoutes = ({
   const freshRoutes = Router();
   const snapshots = new FreshFilterSnapshots();
   freshRoutes.get('/', async (req, res, next) => {
+    const category = req.query.category;
+    if (
+      category !== undefined &&
+      category !== 'animation' &&
+      category !== 'documentary'
+    )
+      return next({ status: 400, message: 'Invalid Fresh category.' });
     try {
       const settings = readSettings();
       const status = await readStatus();
@@ -80,6 +87,19 @@ export const createFreshRoutes = ({
         query.andWhere('discovery.mediaType = :mediaType', {
           mediaType: req.query.mediaType,
         });
+      if (category) {
+        const column =
+          category === 'animation' ? 'isAnimation' : 'isDocumentary';
+        query.andWhere(
+          `EXISTS (SELECT 1 FROM fresh_discovery anchor WHERE
+            anchor."sourceKey" = discovery."sourceKey" AND
+            anchor."mediaType" = discovery."mediaType" AND
+            anchor."tmdbId" = discovery."tmdbId" AND
+            anchor."eventKey" = CASE WHEN discovery."mediaType" = 'movie' THEN 'movie' ELSE 'series' END AND
+            anchor."${column}" = :classified)`,
+          { classified: true }
+        );
+      }
       const count = await database
         .createQueryBuilder()
         .select('COUNT(*)', 'count')

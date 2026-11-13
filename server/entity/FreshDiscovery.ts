@@ -24,6 +24,13 @@ export default class FreshDiscovery {
   @DbAwareColumn({ type: 'datetime' }) public discoveredAt: Date;
   @DbAwareColumn({ type: 'datetime' }) public visibleUntil: Date;
   @Column({ type: 'varchar', length: 300 }) public title: string;
+  // Authoritative only on movie/series anchors, never on season events.
+  @Column({ type: 'boolean', nullable: true }) public isAnimation:
+    | boolean
+    | null = null;
+  @Column({ type: 'boolean', nullable: true }) public isDocumentary:
+    | boolean
+    | null = null;
 
   constructor(init?: Partial<FreshDiscovery>) {
     Object.assign(this, init);

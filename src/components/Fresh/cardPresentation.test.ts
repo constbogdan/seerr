@@ -86,6 +86,7 @@ let sortControl: {
   value: string;
   onChange: (event: React.ChangeEvent<HTMLSelectElement>) => void;
 };
+let mediaControl: { value: string; onChange: (value: string) => void };
 const recordSelect =
   (factory: typeof jsxRuntime.jsx): typeof jsxRuntime.jsx =>
   (...args) => {
@@ -138,15 +139,35 @@ stub(
 );
 stub('@app/hooks/useVerticalScroll', component(empty));
 stub(
+  '@app/components/Common/MediaTypeFilter',
+  component(
+    (
+      props: typeof mediaControl & {
+        options: { value: string; label: string }[];
+      }
+    ) => {
+      mediaControl = props;
+      return createElement(
+        'div',
+        null,
+        props.options.map((option) =>
+          createElement('span', { key: option.value }, option.label)
+        )
+      );
+    }
+  )
+);
+stub(
   '@app/hooks/useSettings',
   component(() => ({ currentSettings: { freshEnabled: true } }))
 );
 stub('@app/hooks/useUpdateQueryParams', {
-  useUpdateQueryParams:
+  useBatchUpdateQueryParams:
     (base: Record<string, string | undefined>) =>
-    (key: string, value?: string) => {
+    (items: Record<string, string | undefined>, action: 'push' | 'replace') => {
+      assert.equal(action, 'sort' in items ? 'replace' : 'push');
       filterEvents.push('query');
-      queryChanges.push({ ...base, [key]: value });
+      queryChanges.push({ ...base, ...items });
     },
 });
 stub('next/router', {
@@ -197,6 +218,66 @@ const render = (child: ReactNode, locale = 'en') =>
   );
 
 describe('Fresh ratings and shared card integration', () => {
+  it('pushes all five explicit category choices atomically while preserving URL sort', async () => {
+    const { default: Fresh } = await import('./index');
+    try {
+      for (const value of ['all', 'movie', 'tv', 'animation', 'documentary']) {
+        routeQuery = { category: 'documentary', sort: 'oldest', page: '4' };
+        render(createElement(Fresh));
+        mediaControl.onChange(value);
+        const category = value === 'animation' || value === 'documentary';
+        assert.deepEqual(queryChanges.at(-1), {
+          page: undefined,
+          mediaType: category || value === 'all' ? undefined : value,
+          category: category ? value : undefined,
+        });
+        if (value !== 'documentary')
+          assert.deepEqual(filterEvents.slice(-2), ['pages:1', 'query']);
+      }
+    } finally {
+      routeQuery = {};
+    }
+  });
+  it('maps both category tabs atomically, preserves sort and separates cached feed keys', async () => {
+    const { default: Fresh } = await import('./index');
+    try {
+      for (const category of ['animation', 'documentary']) {
+        routeQuery = { category, sort: 'oldest' };
+        const markup = render(createElement(Fresh));
+        assert.match(markup, /Animation/);
+        assert.match(markup, /Documentary/);
+        assert.equal(mediaControl.value, category);
+        assert.equal(
+          discoverPageKey(0, null),
+          `/api/v1/fresh?page=1&mediaType=all&sort=oldest&category=${category}`
+        );
+        mediaControl.onChange('movie');
+        assert.deepEqual(queryChanges.at(-1), {
+          page: undefined,
+          mediaType: 'movie',
+          category: undefined,
+        });
+        assert.deepEqual(filterEvents.slice(-2), ['pages:1', 'query']);
+        sortControl.onChange({
+          target: { value: 'vote_count' },
+        } as React.ChangeEvent<HTMLSelectElement>);
+        assert.deepEqual(queryChanges.at(-1), {
+          page: undefined,
+          sort: 'vote_count',
+        });
+      }
+      routeQuery = { mediaType: 'tv', sort: 'oldest' };
+      render(createElement(Fresh));
+      mediaControl.onChange('documentary');
+      assert.deepEqual(queryChanges.at(-1), {
+        page: undefined,
+        mediaType: undefined,
+        category: 'documentary',
+      });
+    } finally {
+      routeQuery = {};
+    }
+  });
   it('uses the Watchlist heading count style, authoritative totals and loading/error suppression', async () => {
     const { default: Fresh } = await import('./index');
     try {
