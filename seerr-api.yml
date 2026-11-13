@@ -8393,6 +8393,12 @@ paths:
         - search
       parameters:
         - in: query
+          name: category
+          description: Persisted cross-media classification, intersected with mediaType. Unknown classifications are excluded. Omit for existing media-type behavior.
+          schema:
+            type: string
+            enum: [animation, documentary]
+        - in: query
           name: page
           schema:
             type: integer

@@ -149,6 +149,84 @@ refresh sweep or rebuild lifecycle is introduced.
 
 ## UI and API
 
+### Persisted Animation and Documentary categories
+
+`GET /api/v1/fresh?category=animation|documentary` selects TMDB genre 16 or
+99 respectively across both Movie and TV identities. Omit `category` for the
+existing All/Movies/Series behavior. `mediaType=movie|tv|all` still applies and
+may intersect a category; Movies and Series continue to include animated and
+documentary titles. Invalid or repeated categories return HTTP 400.
+
+The existing verified TMDB details response supplies both classifications; no
+additional matching request is made. A valid empty genre array means false for
+both flags. Missing or malformed genres mean unknown, not false, and do not
+weaken identity matching or erase previous classifications. A title may belong
+to both categories. Only `movie` and `series` title anchors own the nullable
+`isAnimation` / `isDocumentary` flags. Season events remain unclassified.
+
+Classification is source-scoped by the existing typed anchor identity. A new
+successful verification can correct either flag independently of discovery
+timestamps. Repeated unchanged release groups do not cause new metadata reads.
+Known classifications are not continuously refreshed; later successful matching
+observations can correct them. Read-time presentation remains independent.
+
+SQL selects the matching anchor before grouping, totals and pagination, without
+applying the visibility cutoff to that anchor. Thus a recent regular Season can
+make an old Series visible in its category. Category-only First Seen reads keep
+SQL paging and hydrate only the selected page. Administrator content restrictions
+and metric sorts retain their existing bounded snapshot evaluation, now over the
+category-selected population. Blocklist exclusion remains authoritative.
+
+SQLite and PostgreSQL migration `1790000000051` adds the two nullable columns.
+Historical records remain unknown; it performs no network calls or backfill.
+The existing unique source/type/TMDB/event index supports anchor lookups. No
+Boolean-only index is added. Rollback removes only these derived flags, and
+requires the matching old application code; it does not remove discovery history.
+
+#### Explicit historical maintenance
+
+Use an **offline, consistently backed-up and migrated SQLite database**, never a
+running application's database. No maintenance command is registered with the
+scheduler or called by startup/API reads. The default invocation is a dry run
+with no provider calls or classification writes:
+
+```powershell
+pnpm exec ts-node -r tsconfig-paths/register --project server/tsconfig.json server/scripts/backfillFreshCategories.ts --database C:\isolated\db.sqlite3
+```
+
+The read-only preview reports `afterId`, `limit`, `maxLimit`, `budgetMs`, total
+`remainingUnknown`, `unknownMovies`, `unknownTv`, `eligibleRecords`,
+`selectedAnchorIds`, `nextAfterId` and `hasMore`. Bounds are validated in both
+modes. Preview and apply share the same unknown-title-anchor selection. The
+preview cursor is the last selected anchor, not persisted progress: use the
+original cursor when applying that previewed batch. `hasMore` describes unknown
+anchors beyond the selected batch; unknowns before the cursor remain in the total.
+
+After separately authorizing provider reads and writes to that offline database,
+append `--apply --limit 20 --after-id 0`. Each invocation examines at most 100
+anchors (default 20), with a two-minute budget checked between provider calls.
+It uses the ordinary bounded TMDB client/cache; a call already in flight is
+subject to that client's timeout, not an independent batch cancellation deadline.
+Each typed title is fetched once per batch even if multiple sources contain it.
+Both flags come from the same valid response. Existing known flags survive
+provider failures and unavailable genres. Dates, source progress, work records,
+autobrr evidence and season events are untouched.
+
+The JSON report contains `inspected`, `updated`, `failures`, `unavailableGenres`,
+`nextAfterId`, `hasMore`, and `remainingUnknown`. Continue using `nextAfterId`
+while `hasMore` is true. **Advance even after failures** so persistent failures
+cannot starve higher IDs. At the end, restart at zero if `remainingUnknown` is
+nonzero to retry failed/unknown anchors. Completed anchors are skipped. These
+nullable flags plus the reported cursor make restart/resume idempotent; save the
+cursor externally if desired. Do not fabricate false classifications to complete
+the backlog. Refresh browser feeds after replacing the offline-maintained
+database through the separately authorized operational workflow.
+
+The web filter maps All/Movies/Series/Animation/Documentary atomically into URL
+parameters, preserves sorting, resets pages on selection changes and uses distinct
+SWR keys. Mosaic can consume these same category parameters without local genre
+filtering; this change contains no Mosaic implementation.
+
 The user interface retains the Fresh slider/page, All/Movies/Series controls,
 discovery-date directions and ordinary TitleCards. The dedicated page also offers
 `vote_average` (highest rating) and `vote_count` (most votes), descending before

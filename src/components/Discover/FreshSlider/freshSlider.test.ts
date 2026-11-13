@@ -56,7 +56,7 @@ describe('Fresh native pagination integration', () => {
 
   it('uses useDiscover for the complete paginated Fresh page', () => {
     assert.match(page, /useDiscover</);
-    assert.match(page, /FRESH_API_PATH, \{ mediaType, sort \}/);
+    assert.match(page, /FRESH_API_PATH,/);
     assert.match(page, /MediaTypeFilter/);
     assert.match(page, /value: 'all'/);
     assert.match(page, /value: 'movie'/);

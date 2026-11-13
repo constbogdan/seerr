@@ -29,6 +29,37 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import request from 'supertest';
 import type { DataSource } from 'typeorm';
 
+// SQLite may label a flattened correlated lookup as "anchor EXISTS". Require
+// an indexed SEARCH on all four identity keys, regardless of that display label.
+const categoryAnchorIndex = (detail: string) =>
+  /^SEARCH anchor(?: EXISTS)? USING (?:COVERING )?INDEX (\S+) \(sourceKey=\? AND mediaType=\? AND tmdbId=\? AND eventKey=\?\)$/.exec(
+    detail
+  )?.[1];
+
+describe('Fresh category query-plan recognition', () => {
+  it('accepts indexed identity searches across SQLite plan formats and rejects scans or incomplete lookups', () => {
+    const keys = '(sourceKey=? AND mediaType=? AND tmdbId=? AND eventKey=?)';
+    for (const operation of [
+      'SEARCH anchor USING INDEX',
+      'SEARCH anchor EXISTS USING INDEX',
+      'SEARCH anchor EXISTS USING COVERING INDEX',
+    ])
+      assert.equal(
+        categoryAnchorIndex(`${operation} fixture_identity ${keys}`),
+        'fixture_identity'
+      );
+    for (const detail of [
+      `SCAN anchor USING INDEX fixture_identity ${keys}`,
+      'SCAN anchor',
+      'SEARCH anchor USING INDEX fixture_identity (sourceKey=?)',
+      'SEARCH anchor USING INDEX fixture_identity (tmdbId=? AND mediaType=?)',
+      `SEARCH discovery USING INDEX fixture_identity ${keys}`,
+      `SEARCH anchor USING AUTOMATIC COVERING INDEX ${keys}`,
+    ])
+      assert.equal(categoryAnchorIndex(detail), undefined, detail);
+  });
+});
+
 describe('Fresh V2 API contract', () => {
   let database: DataSource;
   const status: FreshStatus = {
@@ -167,6 +198,151 @@ describe('Fresh V2 API contract', () => {
       .get('/api/v1/settings/fresh')
       .set('x-test-role', 'user');
     assert.equal(unauthorized.status, 403, JSON.stringify(unauthorized.body));
+  });
+
+  it('filters persisted Animation and Documentary anchors before pages and preserves old Series anchors, typed IDs and existing restrictions', async () => {
+    const repository = database.getRepository(FreshDiscovery);
+    for (let id = 1; id <= 45; id++) {
+      const row = await add(id);
+      await repository.update(row.id, {
+        isAnimation: true,
+        isDocumentary: id === 2,
+      });
+    }
+    const oldSeries = await add(1, 'tv', 100);
+    await repository.update(oldSeries.id, {
+      isAnimation: true,
+      isDocumentary: true,
+    });
+    await add(1, 'tv', 0.5, 'season:2');
+    const nonAnimation = await add(90);
+    await repository.update(nonAnimation.id, {
+      isAnimation: false,
+      isDocumentary: false,
+    });
+    await add(91); // Historical unknown remains visible in All.
+    const documentary = await add(92);
+    await repository.update(documentary.id, {
+      isAnimation: false,
+      isDocumentary: true,
+    });
+    await database.query(`INSERT INTO blocklist VALUES (3, 'movie')`);
+    let largestBatch = 0;
+    presentation = async (rows) => {
+      largestBatch = Math.max(largestBatch, rows.length);
+      return new Map(
+        rows.map((row) => [
+          freshPresentationKey(row),
+          {
+            id: row.tmdbId,
+            genres: [{ id: 16, name: 'Animation' }],
+            original_language: 'en',
+            vote_average: row.tmdbId % 2 === 0 ? 9 : 7,
+            vote_count: row.tmdbId,
+          } as FreshProviderPresentation,
+        ])
+      );
+    };
+    const server = app();
+    const get = (query: string) =>
+      request(server)
+        .get('/api/v1/fresh?' + query)
+        .set('x-test-role', 'user');
+    const sql: { query: string; parameters?: unknown[] }[] = [];
+    mock.method(
+      database.logger,
+      'logQuery',
+      (query: string, parameters?: unknown[]) => {
+        sql.push({ query, parameters });
+      }
+    );
+    const first = await get('category=animation');
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.totalResults, 45);
+    assert.equal(first.body.totalPages, 3);
+    assert.equal(first.body.results[0].mediaType, 'tv');
+    const selection = sql.find(
+      (entry) =>
+        entry.query.includes('EXISTS (SELECT 1 FROM fresh_discovery anchor') &&
+        entry.query.includes('LIMIT 20')
+    );
+    assert.ok(selection, 'category query must retain native SQL LIMIT');
+    const plan = await database.query(
+      'EXPLAIN QUERY PLAN ' + selection.query,
+      selection.parameters
+    );
+    const anchorSearch = plan.find((row: { detail: string }) =>
+      categoryAnchorIndex(row.detail)
+    );
+    assert.ok(anchorSearch, JSON.stringify(plan));
+    assert.deepEqual(
+      await database.query(
+        'SELECT name FROM pragma_index_info(?) ORDER BY seqno',
+        [categoryAnchorIndex(anchorSearch.detail)]
+      ),
+      ['sourceKey', 'mediaType', 'tmdbId', 'eventKey'].map((name) => ({ name }))
+    );
+    const second = await get('category=animation&page=2');
+    const third = await get('category=animation&page=3');
+    const all = [
+      ...first.body.results,
+      ...second.body.results,
+      ...third.body.results,
+    ];
+    assert.equal(all.length, 45);
+    assert.equal(
+      new Set(all.map((row) => `${row.mediaType}:${row.id}`)).size,
+      45
+    );
+    assert.ok(!all.some((row) => row.id === 3));
+    assert.equal(
+      largestBatch,
+      20,
+      'plain category reads hydrate only the selected SQL page'
+    );
+    assert.equal((await get('category=documentary')).body.totalResults, 3);
+    assert.equal(
+      (await get('category=animation&mediaType=tv')).body.totalResults,
+      1
+    );
+    assert.equal(
+      (await get('category=documentary&mediaType=movie')).body.totalResults,
+      2
+    );
+    assert.equal(
+      (await get('mediaType=movie')).body.totalResults,
+      47,
+      'Movies still includes classified and unknown titles'
+    );
+    for (const sort of ['freshest', 'oldest', 'vote_average', 'vote_count']) {
+      const response = await get(`category=animation&sort=${sort}`);
+      assert.equal(response.status, 200, JSON.stringify(response.body));
+      assert.equal(response.body.totalResults, 45);
+    }
+    configured.minimumTmdbScore = 8;
+    assert.equal((await get('category=animation')).body.totalResults, 22);
+    configured.excludeGenreIds = [16];
+    assert.equal((await get('category=animation')).body.totalResults, 0);
+    assert.equal(
+      (
+        await repository.findOneByOrFail({ id: oldSeries.id })
+      ).discoveredAt.getTime(),
+      oldSeries.discoveredAt.getTime()
+    );
+  });
+
+  it('rejects unsupported and repeated category values with HTTP 400', async () => {
+    for (const query of [
+      'category=other',
+      'category=',
+      'category=animation&category=documentary',
+      'category[]=animation',
+    ]) {
+      const response = await request(app())
+        .get('/api/v1/fresh?' + query)
+        .set('x-test-role', 'user');
+      assert.equal(response.status, 400, query);
+    }
   });
   it('retains administrator-only read-only status retrieval and truthful unavailable responses', async () => {
     const statusRead = mock.method(freshService, 'status', async () => status);

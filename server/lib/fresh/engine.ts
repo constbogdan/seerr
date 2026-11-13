@@ -8,6 +8,10 @@ import FreshDiscovery from '@server/entity/FreshDiscovery';
 import FreshSourceState from '@server/entity/FreshSourceState';
 import FreshWork from '@server/entity/FreshWork';
 import {
+  freshTitleAnchor,
+  type FreshClassification,
+} from '@server/lib/fresh/categories';
+import {
   matchFreshIdentity,
   type FreshIdentityProvider,
 } from '@server/lib/fresh/matching';
@@ -322,7 +326,8 @@ export class FreshEngine {
   private async discover(
     manager: EntityManager,
     work: FreshWork,
-    settings: FreshSettings
+    settings: FreshSettings,
+    classification?: FreshClassification
   ): Promise<void> {
     if (!work.tmdbId || !work.canonicalTitle)
       throw new Error('invalid_identity');
@@ -339,6 +344,15 @@ export class FreshEngine {
         eventKey,
       };
       const existing = await repository.findOneBy(identity);
+      const flags =
+        eventKey === freshTitleAnchor(work.mediaType) && classification
+          ? {
+              isAnimation:
+                classification.isAnimation ?? existing?.isAnimation ?? null,
+              isDocumentary:
+                classification.isDocumentary ?? existing?.isDocumentary ?? null,
+            }
+          : {};
       // During descending backfill, earlier evidence may arrive later. Move
       // clocks earlier only, never to ingestion/retry/repack time.
       if (!existing || work.firstObservedAt < existing.discoveredAt) {
@@ -346,6 +360,7 @@ export class FreshEngine {
           new FreshDiscovery({
             ...existing,
             ...identity,
+            ...flags,
             discoveredAt: work.firstObservedAt,
             visibleUntil: new Date(
               work.firstObservedAt.getTime() +
@@ -354,6 +369,14 @@ export class FreshEngine {
             title: work.canonicalTitle,
           })
         );
+      } else if (
+        classification &&
+        eventKey === freshTitleAnchor(work.mediaType) &&
+        (existing.isAnimation !== flags.isAnimation ||
+          existing.isDocumentary !== flags.isDocumentary)
+      ) {
+        // Classification is independent of the original discovery clock.
+        await repository.update(existing.id, flags);
       }
     }
   }
@@ -415,7 +438,7 @@ export class FreshEngine {
         work.tmdbId = match.id;
         work.canonicalTitle = match.title;
         await this.dependencies.database.transaction(async (manager) => {
-          await this.discover(manager, work, settings);
+          await this.discover(manager, work, settings, match);
           await manager.getRepository(FreshWork).save(work);
         });
         result.resolved++;

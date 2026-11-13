@@ -2,6 +2,7 @@ import FreshDiscovery from '@server/entity/FreshDiscovery';
 import FreshSourceState from '@server/entity/FreshSourceState';
 import FreshWork from '@server/entity/FreshWork';
 import { AddFreshV21790000000048 } from '@server/migration/sqlite/1790000000048-AddFreshV2';
+import { AddFreshCategories1790000000051 } from '@server/migration/sqlite/1790000000051-AddFreshCategories';
 import { addFreshV2 } from '@server/utils/freshV2Migration';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -24,6 +25,7 @@ describe('Fresh V2 additive persistence', () => {
         "INSERT INTO fresh_media VALUES (1, 'Preserved legacy identity')"
       );
       await new AddFreshV21790000000048().up(runner);
+      await new AddFreshCategories1790000000051().up(runner);
       for (const entity of [FreshSourceState, FreshWork, FreshDiscovery])
         assert.equal(await database.getRepository(entity).count(), 0);
       assert.deepEqual(await runner.query('SELECT * FROM fresh_media'), [

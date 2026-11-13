@@ -10,7 +10,7 @@ import {
   type FreshStatus,
 } from '@app/components/Fresh/api';
 import useDiscover from '@app/hooks/useDiscover';
-import { useUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
+import { useBatchUpdateQueryParams } from '@app/hooks/useUpdateQueryParams';
 import { Permission, useUser } from '@app/hooks/useUser';
 import defineMessages from '@app/utils/defineMessages';
 import { ArrowPathIcon, BarsArrowDownIcon } from '@heroicons/react/24/solid';
@@ -23,7 +23,9 @@ const messages = defineMessages('components.Fresh', {
   fresh: 'Fresh',
   all: 'All',
   movies: 'Movies',
-  series: 'Series',
+  series: 'Shows',
+  animation: 'Animation',
+  documentary: 'Documentary',
   freshest: 'Freshest / First Seen',
   oldest: 'Oldest First Seen',
   highestRating: 'TMDB Rating — Highest First',
@@ -59,27 +61,46 @@ const Fresh = () => {
   const intl = useIntl();
   const router = useRouter();
   const { hasPermission } = useUser();
-  const updateQuery = useUpdateQueryParams({ page: undefined });
+  const updateQuery = useBatchUpdateQueryParams({ page: undefined });
   const mediaType = ['movie', 'tv'].includes(String(router.query.mediaType))
     ? String(router.query.mediaType)
     : 'all';
   const requestedSort = String(router.query.sort || 'freshest') as FreshSort;
   const sort = allowedSorts.has(requestedSort) ? requestedSort : 'freshest';
+  const category = ['animation', 'documentary'].includes(
+    String(router.query.category)
+  )
+    ? String(router.query.category)
+    : undefined;
   const discover = useDiscover<
     FreshMediaResult,
     { status: FreshStatus },
-    { mediaType: string; sort: FreshSort }
-  >(FRESH_API_PATH, { mediaType, sort }, { initialSize: 1 });
+    { mediaType: string; sort: FreshSort; category?: string }
+  >(
+    FRESH_API_PATH,
+    { mediaType, sort, ...(category ? { category } : {}) },
+    { initialSize: 1 }
+  );
   const status = discover.firstResultData?.status;
   const set = (key: string, value?: string) => {
+    const isCategory = value === 'animation' || value === 'documentary';
+    const updates =
+      key === 'mediaType'
+        ? {
+            mediaType: isCategory ? undefined : value,
+            category: isCategory ? value : undefined,
+          }
+        : { sort: value };
     // Reset the departing feed before changing its key, not while SWR is already
     // fetching the new key. Ordinary remounts/Details → Back retain cached pages.
     resetFreshSortPages(
-      `${mediaType}:${sort}`,
-      `${key === 'mediaType' ? (value ?? 'all') : mediaType}:${key === 'sort' ? (value ?? 'freshest') : sort}`,
+      `${mediaType}:${category ?? ''}:${sort}`,
+      key === 'mediaType'
+        ? `${updates.mediaType ?? 'all'}:${updates.category ?? ''}:${sort}`
+        : `${mediaType}:${category ?? ''}:${value ?? 'freshest'}`,
       discover.setPageCount
     );
-    updateQuery(key, value);
+    updateQuery(updates, key === 'mediaType' ? 'push' : 'replace');
   };
 
   return (
@@ -102,11 +123,19 @@ const Fresh = () => {
         <div className="mt-2 flex min-w-0 flex-wrap gap-2">
           <MediaTypeFilter
             ariaLabel={intl.formatMessage(messages.mediaType)}
-            value={mediaType}
+            value={category ?? mediaType}
             options={[
               { value: 'all', label: intl.formatMessage(messages.all) },
               { value: 'movie', label: intl.formatMessage(messages.movies) },
               { value: 'tv', label: intl.formatMessage(messages.series) },
+              {
+                value: 'animation',
+                label: intl.formatMessage(messages.animation),
+              },
+              {
+                value: 'documentary',
+                label: intl.formatMessage(messages.documentary),
+              },
             ]}
             onChange={(value) =>
               set('mediaType', value === 'all' ? undefined : value)

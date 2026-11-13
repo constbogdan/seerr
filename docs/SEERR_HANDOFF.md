@@ -59,6 +59,13 @@ maintenance branch.
 
 ### Fresh
 
+An uncommitted isolated candidate adds native persisted Animation (TMDB 16) and
+Documentary (99) categories on Fresh title anchors. It uses the existing verified
+details response, nullable flags, additive migration `1790000000051`, native
+pre-pagination SQL and an explicit bounded offline maintenance command. See
+[Fresh discovery](FRESH.md#persisted-animation-and-documentary-categories).
+This note does not establish merge, deployment or historical backfill completion.
+
 Fresh is merged into `downstream-main` and maintained in this repository. The
 earlier isolated prototype checkout has been retired. Fresh V2 replaces the
 matching administration system with one automatic sync and three runtime

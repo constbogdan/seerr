@@ -4,6 +4,10 @@ import type {
   TmdbTvResult,
 } from '@server/api/themoviedb/interfaces';
 import type FreshWork from '@server/entity/FreshWork';
+import {
+  classifyFreshGenres,
+  type FreshClassification,
+} from '@server/lib/fresh/categories';
 import { normalizeFreshTitle } from '@server/lib/fresh/normalize';
 
 export type FreshIdentityProvider = Pick<
@@ -16,7 +20,7 @@ export type FreshIdentityProvider = Pick<
   | 'getDiscoveryAliases'
 >;
 export type FreshMatch =
-  | { kind: 'resolved'; id: number; title: string }
+  | ({ kind: 'resolved'; id: number; title: string } & FreshClassification)
   | { kind: 'no_match' | 'ambiguous' | 'incomplete' };
 const SEARCH_PAGES = 3;
 const YEAR_SEARCHES = 4;
@@ -59,7 +63,12 @@ export const matchFreshIdentity = async (
       title.length > 300
     )
       throw new Error('invalid_identity');
-    return { kind: 'resolved', id, title };
+    return {
+      kind: 'resolved',
+      id,
+      title,
+      ...classifyFreshGenres(details.genres),
+    };
   };
   if (work.externalTmdbId) return verify(work.externalTmdbId);
   if (work.externalImdbId || (work.mediaType === 'tv' && work.externalTvdbId)) {
