@@ -72,7 +72,7 @@ describe('migration/entity schema authority', () => {
       const currentApplied = await current.runMigrations();
       assert.equal(
         currentApplied.at(-1)?.name,
-        'AddJellyfinPreference1790000000050'
+        'AddFreshCategories1790000000051'
       );
       assert.deepEqual(
         await current.query(

@@ -29,6 +29,37 @@ import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import request from 'supertest';
 import type { DataSource } from 'typeorm';
 
+// SQLite may label a flattened correlated lookup as "anchor EXISTS". Require
+// an indexed SEARCH on all four identity keys, regardless of that display label.
+const categoryAnchorIndex = (detail: string) =>
+  /^SEARCH anchor(?: EXISTS)? USING (?:COVERING )?INDEX (\S+) \(sourceKey=\? AND mediaType=\? AND tmdbId=\? AND eventKey=\?\)$/.exec(
+    detail
+  )?.[1];
+
+describe('Fresh category query-plan recognition', () => {
+  it('accepts indexed identity searches across SQLite plan formats and rejects scans or incomplete lookups', () => {
+    const keys = '(sourceKey=? AND mediaType=? AND tmdbId=? AND eventKey=?)';
+    for (const operation of [
+      'SEARCH anchor USING INDEX',
+      'SEARCH anchor EXISTS USING INDEX',
+      'SEARCH anchor EXISTS USING COVERING INDEX',
+    ])
+      assert.equal(
+        categoryAnchorIndex(`${operation} fixture_identity ${keys}`),
+        'fixture_identity'
+      );
+    for (const detail of [
+      `SCAN anchor USING INDEX fixture_identity ${keys}`,
+      'SCAN anchor',
+      'SEARCH anchor USING INDEX fixture_identity (sourceKey=?)',
+      'SEARCH anchor USING INDEX fixture_identity (tmdbId=? AND mediaType=?)',
+      `SEARCH discovery USING INDEX fixture_identity ${keys}`,
+      `SEARCH anchor USING AUTOMATIC COVERING INDEX ${keys}`,
+    ])
+      assert.equal(categoryAnchorIndex(detail), undefined, detail);
+  });
+});
+
 describe('Fresh V2 API contract', () => {
   let database: DataSource;
   const status: FreshStatus = {
@@ -240,11 +271,16 @@ describe('Fresh V2 API contract', () => {
       'EXPLAIN QUERY PLAN ' + selection.query,
       selection.parameters
     );
-    assert.ok(
-      plan.some((row: { detail: string }) =>
-        /SEARCH anchor USING INDEX/.test(row.detail)
+    const anchorSearch = plan.find((row: { detail: string }) =>
+      categoryAnchorIndex(row.detail)
+    );
+    assert.ok(anchorSearch, JSON.stringify(plan));
+    assert.deepEqual(
+      await database.query(
+        'SELECT name FROM pragma_index_info(?) ORDER BY seqno',
+        [categoryAnchorIndex(anchorSearch.detail)]
       ),
-      JSON.stringify(plan)
+      ['sourceKey', 'mediaType', 'tmdbId', 'eventKey'].map((name) => ({ name }))
     );
     const second = await get('category=animation&page=2');
     const third = await get('category=animation&page=3');
