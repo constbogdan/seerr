@@ -20,6 +20,8 @@ import {
   normalizeFreshTitle,
 } from '@server/lib/fresh/normalize';
 import type { FreshRunResult } from '@server/lib/fresh/types';
+import type { TmdbCollectionMembershipObservation } from '@server/lib/libraryCollectionMembership';
+import { movieCollectionMembership } from '@server/lib/movieCollectionMembership';
 import type { FreshSettings } from '@server/lib/settings';
 import logger from '@server/logger';
 import { createHash } from 'crypto';
@@ -38,6 +40,10 @@ export interface FreshEngineDependencies {
   pagesPerRun?: number;
   workPerRun?: number;
   budgetMs?: number;
+  recordMovieCollectionMembership?: (
+    tmdbId: number,
+    observation: TmdbCollectionMembershipObservation
+  ) => Promise<void>;
 }
 
 /** One bounded pipeline; limits apply per execution, never to total history. */
@@ -442,6 +448,21 @@ export class FreshEngine {
           await manager.getRepository(FreshWork).save(work);
         });
         result.resolved++;
+        if (work.mediaType === 'movie' && match.collectionMembership) {
+          try {
+            await (
+              this.dependencies.recordMovieCollectionMembership ??
+              ((tmdbId, observation) =>
+                movieCollectionMembership.observeValidated(tmdbId, observation))
+            )(match.id, match.collectionMembership);
+          } catch {
+            if (warnings++ < 3)
+              logger.warn('Fresh collection membership observation deferred', {
+                label: 'Fresh',
+                tmdbId: match.id,
+              });
+          }
+        }
       } else {
         await repository.save(work);
         result.skipped++;

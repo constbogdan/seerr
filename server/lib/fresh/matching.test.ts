@@ -17,6 +17,43 @@ const work = (values: Partial<FreshWork> = {}) =>
     ...values,
   });
 describe('Fresh V2 automatic identity selection', () => {
+  it('distinguishes collection, standalone, and missing membership in an already fetched movie detail', async () => {
+    const provider = fixtureProvider();
+    for (const [value, expected] of [
+      [{ id: 18 }, 18],
+      [null, null],
+    ] as const) {
+      provider.getMovie = async ({ movieId }) =>
+        ({
+          id: movieId,
+          title: 'Silent Friend',
+          genres: [],
+          belongs_to_collection: value,
+        }) as never;
+      const result = await matchFreshIdentity(
+        work({ externalTmdbId: 77 }),
+        [],
+        provider
+      );
+      assert.equal(result.kind, 'resolved');
+      if (result.kind === 'resolved')
+        assert.equal(result.collectionMembership?.tmdbCollectionId, expected);
+    }
+    provider.getMovie = async ({ movieId }) =>
+      ({
+        id: movieId,
+        title: 'Silent Friend',
+        genres: [],
+      }) as never;
+    const missing = await matchFreshIdentity(
+      work({ externalTmdbId: 77 }),
+      [],
+      provider
+    );
+    assert.equal(missing.kind, 'resolved');
+    if (missing.kind === 'resolved')
+      assert.equal(missing.collectionMembership, undefined);
+  });
   it('uses broader year evidence and exact title ahead of ranking and primary release date', async () => {
     const provider = fixtureProvider();
     provider.searchMoviesStrict = async (options) => {

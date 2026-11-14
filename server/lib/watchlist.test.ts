@@ -18,6 +18,7 @@ import {
   LibraryPresence,
 } from '@server/entity/LibraryHistory';
 import Media from '@server/entity/Media';
+import { MovieCollectionObservation } from '@server/entity/MovieCollectionObservation';
 import { User } from '@server/entity/User';
 import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
 import { UserMediaState } from '@server/entity/UserMediaState';
@@ -46,6 +47,7 @@ type TmdbFixture = {
   id: number;
   external_ids: { tvdb_id?: number };
   genres: { id: number; name: string }[];
+  belongs_to_collection?: { id: number } | null;
 };
 
 let tmdbFixtures = new Map<number, TmdbFixture>();
@@ -866,6 +868,64 @@ describe('Watchlist metadata capture and backfill', () => {
     tmdbFixtures = new Map();
     failingTmdbIds = new Set();
     providerCalls = 0;
+  });
+
+  it('captures movie collection and standalone observations without changing add/remove behavior', async () => {
+    const user = await admin();
+    for (const [id, membership] of [
+      [4010, { id: 55 }],
+      [4011, null],
+    ] as const) {
+      tmdbFixtures.set(id, {
+        id,
+        external_ids: {},
+        genres: [],
+        belongs_to_collection: membership,
+      });
+      const seen: number[] = [];
+      const created = await Watchlist.createWatchlist({
+        user,
+        tmdb,
+        watchlistRequest: { tmdbId: id, mediaType: MediaType.MOVIE },
+        observeCollection: async (observedId, movie) => {
+          assert.equal(observedId, id);
+          seen.push(
+            (movie.belongs_to_collection as { id: number } | null)?.id ?? 0
+          );
+          throw new Error('observation storage failed');
+        },
+      });
+      assert.ok(created.id > 0);
+      assert.deepEqual(seen, [membership?.id ?? 0]);
+      await Watchlist.deleteWatchlist(id, MediaType.MOVIE, user);
+    }
+    assert.equal(providerCalls, 2);
+    assert.equal(await getRepository(Watchlist).count(), 0);
+  });
+
+  it('persists a confirmed movie observation globally after an explicit add and retains it after removal', async () => {
+    const user = await admin();
+    tmdbFixtures.set(4012, {
+      id: 4012,
+      external_ids: {},
+      genres: [],
+      belongs_to_collection: { id: 77 },
+    });
+    await Watchlist.createWatchlist({
+      user,
+      tmdb,
+      watchlistRequest: { tmdbId: 4012, mediaType: MediaType.MOVIE },
+    });
+    const observation = await getRepository(
+      MovieCollectionObservation
+    ).findOneByOrFail({ tmdbId: 4012 });
+    assert.equal(observation.tmdbCollectionId, 77);
+    assert.equal(providerCalls, 1);
+    await Watchlist.deleteWatchlist(4012, MediaType.MOVIE, user);
+    assert.equal(
+      await getRepository(MovieCollectionObservation).countBy({ tmdbId: 4012 }),
+      1
+    );
   });
 
   it('captures TMDB genre IDs during the existing add lookup', async () => {

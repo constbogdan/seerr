@@ -42,6 +42,33 @@ describe('Fresh V2 durable sync', () => {
       ...extra,
     });
 
+  it('captures existing movie-detail membership without another lookup and keeps discovery successful on persistence failure', async () => {
+    const tmdb = fixtureProvider();
+    let detailCalls = 0;
+    tmdb.getMovie = async ({ movieId }) => {
+      detailCalls++;
+      return {
+        id: movieId,
+        title: 'Movie ' + movieId,
+        genres: [],
+        belongs_to_collection: { id: 42 },
+      } as never;
+    };
+    const observations: number[] = [];
+    const result = await engine([fixtureRelease(1)], {
+      tmdb,
+      recordMovieCollectionMembership: async (id, observation) => {
+        observations.push(observation.tmdbCollectionId ?? 0);
+        assert.equal(id, 1);
+        throw new Error('observation database unavailable');
+      },
+    }).run(fixtureSettings);
+    assert.equal(result.resolved, 1);
+    assert.equal(detailCalls, 1);
+    assert.deepEqual(observations, [42]);
+    assert.equal(await database.getRepository(FreshDiscovery).count(), 1);
+  });
+
   it('traverses all history over multiple executions and restarts without early checkpoint completion', async () => {
     const releases = Array.from({ length: 8 }, (_, index) =>
       fixtureRelease(8 - index)

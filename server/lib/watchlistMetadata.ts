@@ -2,6 +2,7 @@ import TheMovieDb from '@server/api/themoviedb';
 import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import { Watchlist } from '@server/entity/Watchlist';
+import { movieCollectionMembership } from '@server/lib/movieCollectionMembership';
 import logger from '@server/logger';
 import { IsNull } from 'typeorm';
 
@@ -57,6 +58,19 @@ class WatchlistMetadataBackfill {
           row.genreIds = details.genres.map((genre) => genre.id);
           await repository.save(row);
           hydrated += 1;
+          if (row.mediaType === MediaType.MOVIE) {
+            try {
+              await movieCollectionMembership.observeMovie(row.tmdbId, details);
+            } catch {
+              logger.warn(
+                'Watchlist collection membership observation deferred',
+                {
+                  label: 'Watchlist',
+                  tmdbId: row.tmdbId,
+                }
+              );
+            }
+          }
         } catch (error) {
           // Move a failed row behind older unhydrated rows so a persistent
           // provider failure cannot starve the rest of the bounded backlog.

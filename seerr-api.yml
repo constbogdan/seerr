@@ -2112,6 +2112,33 @@ components:
           type: boolean
           description: Whether the optional Fresh discovery source is enabled
           example: false
+    MovieCollectionMembership:
+      description: A confirmed TMDB collection, confirmed standalone movie, or unresolved membership.
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [kind, collectionId]
+          properties:
+            kind: { type: string, enum: [collection] }
+            collectionId: { type: integer, minimum: 1 }
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [standalone] }
+        - type: object
+          additionalProperties: false
+          required: [kind]
+          properties:
+            kind: { type: string, enum: [unresolved] }
+    MovieRecommendationWithCollectionMembership:
+      allOf:
+        - $ref: '#/components/schemas/MovieResult'
+        - type: object
+          required: [collectionMembership]
+          properties:
+            collectionMembership:
+              $ref: '#/components/schemas/MovieCollectionMembership'
     MovieResult:
       type: object
       required:
@@ -10054,6 +10081,10 @@ paths:
           schema:
             type: string
             example: en
+        - in: query
+          name: includeCollectionIds
+          description: Opt in to bounded, best-effort TMDB movie collection membership enrichment. Omitted or false preserves the original response shape.
+          schema: { type: boolean, default: false }
       responses:
         '200':
           description: List of movies
@@ -10074,7 +10105,10 @@ paths:
                   results:
                     type: array
                     items:
-                      $ref: '#/components/schemas/MovieResult'
+                      description: Without enrichment, MovieResult. With enrichment, every result includes collectionMembership.
+                      anyOf:
+                        - $ref: '#/components/schemas/MovieResult'
+                        - $ref: '#/components/schemas/MovieRecommendationWithCollectionMembership'
   /movie/{movieId}/similar:
     get:
       summary: Get similar movies
