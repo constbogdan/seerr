@@ -9,6 +9,10 @@ import {
   type FreshClassification,
 } from '@server/lib/fresh/categories';
 import { normalizeFreshTitle } from '@server/lib/fresh/normalize';
+import {
+  parseTmdbCollectionMembership,
+  type TmdbCollectionMembershipObservation,
+} from '@server/lib/libraryCollectionMembership';
 
 export type FreshIdentityProvider = Pick<
   TheMovieDb,
@@ -20,7 +24,12 @@ export type FreshIdentityProvider = Pick<
   | 'getDiscoveryAliases'
 >;
 export type FreshMatch =
-  | ({ kind: 'resolved'; id: number; title: string } & FreshClassification)
+  | ({
+      kind: 'resolved';
+      id: number;
+      title: string;
+      collectionMembership?: TmdbCollectionMembershipObservation;
+    } & FreshClassification)
   | { kind: 'no_match' | 'ambiguous' | 'incomplete' };
 const SEARCH_PAGES = 3;
 const YEAR_SEARCHES = 4;
@@ -68,6 +77,16 @@ export const matchFreshIdentity = async (
       id,
       title,
       ...classifyFreshGenres(details.genres),
+      ...(work.mediaType === 'movie' &&
+      Object.prototype.hasOwnProperty.call(details, 'belongs_to_collection')
+        ? {
+            collectionMembership: parseTmdbCollectionMembership(
+              (details as { belongs_to_collection?: unknown })
+                .belongs_to_collection,
+              new Date()
+            ),
+          }
+        : {}),
     };
   };
   if (work.externalTmdbId) return verify(work.externalTmdbId);

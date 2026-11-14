@@ -72,7 +72,7 @@ describe('migration/entity schema authority', () => {
       const currentApplied = await current.runMigrations();
       assert.equal(
         currentApplied.at(-1)?.name,
-        'AddFreshCategories1790000000051'
+        'AddMovieCollectionObservation1790000000052'
       );
       assert.deepEqual(
         await current.query(

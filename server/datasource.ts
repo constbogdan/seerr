@@ -36,6 +36,7 @@ import {
 } from '@server/entity/LibraryHydration';
 import Media from '@server/entity/Media';
 import { MediaRequest } from '@server/entity/MediaRequest';
+import { MovieCollectionObservation } from '@server/entity/MovieCollectionObservation';
 import OverrideRule from '@server/entity/OverrideRule';
 import {
   RemovalExecution,
@@ -97,6 +98,7 @@ const entities = [
   LibrarySourceObservation,
   Media,
   MediaRequest,
+  MovieCollectionObservation,
   OverrideRule,
   RemovalExecution,
   RemovalExecutionClaim,

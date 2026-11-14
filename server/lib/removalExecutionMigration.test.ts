@@ -21,7 +21,10 @@ describe('removal execution migration', () => {
     try {
       await database.initialize();
       const applied = await database.runMigrations();
-      assert.equal(applied.at(-1)?.name, 'AddFreshCategories1790000000051');
+      assert.equal(
+        applied.at(-1)?.name,
+        'AddMovieCollectionObservation1790000000052'
+      );
       const runner = database.createQueryRunner();
       const execution = await runner.getTable('removal_execution');
       const claim = await runner.getTable('removal_execution_claim');
@@ -47,6 +50,7 @@ describe('removal execution migration', () => {
       assert.deepEqual(await runner.query('PRAGMA foreign_key_check'), []);
       await runner.release();
 
+      await database.undoLastMigration(); // Movie collection observations
       await database.undoLastMigration(); // Fresh category flags
       await database.undoLastMigration(); // Jellyfin preferences V1
       await database.undoLastMigration(); // Fresh V2
@@ -109,6 +113,7 @@ describe('removal execution migration', () => {
     try {
       await database.initialize();
       await database.runMigrations();
+      await database.undoLastMigration(); // Movie collection observations
       await database.undoLastMigration(); // Fresh category flags
       await database.undoLastMigration(); // Jellyfin preferences V1
       await database.undoLastMigration(); // Fresh V2
@@ -138,6 +143,7 @@ describe('removal execution migration', () => {
           'AddFreshV21790000000048',
           'AddJellyfinPreference1790000000050',
           'AddFreshCategories1790000000051',
+          'AddMovieCollectionObservation1790000000052',
         ]
       );
       assert.deepEqual(

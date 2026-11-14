@@ -6,6 +6,10 @@ import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import { Watchlist } from '@server/entity/Watchlist';
+import {
+  movieCollectionMembership,
+  type MovieCollectionResolution,
+} from '@server/lib/movieCollectionMembership';
 import logger from '@server/logger';
 import { mapMovieDetails } from '@server/models/Movie';
 import { mapMovieResult } from '@server/models/Search';
@@ -79,19 +83,48 @@ movieRoutes.get('/:id/recommendations', async (req, res, next) => {
       { includeActiveRequest: true }
     );
 
+    const mappedResults = results.results.map((result) =>
+      mapMovieResult(
+        result,
+        media.find(
+          (item) =>
+            item.tmdbId === result.id && item.mediaType === MediaType.MOVIE
+        )
+      )
+    );
+    if (String(req.query.includeCollectionIds) === 'true') {
+      let memberships: Map<number, MovieCollectionResolution> | undefined;
+      try {
+        memberships = (
+          await movieCollectionMembership.resolve(
+            mappedResults.map((item) => ({
+              mediaType: 'movie',
+              tmdbId: item.id,
+            })),
+            { maxLookups: 4, concurrency: 4, deadlineMs: 1_000 }
+          )
+        ).results;
+      } catch {
+        // Enrichment is optional and cannot turn a valid recommendations page into an error.
+      }
+      return res.status(200).json({
+        page: results.page,
+        totalPages: results.total_pages,
+        totalResults: results.total_results,
+        results: mappedResults.map((item) => ({
+          ...item,
+          collectionMembership: memberships?.get(item.id)?.membership ?? {
+            kind: 'unresolved',
+          },
+        })),
+      });
+    }
+
     return res.status(200).json({
       page: results.page,
       totalPages: results.total_pages,
       totalResults: results.total_results,
-      results: results.results.map((result) =>
-        mapMovieResult(
-          result,
-          media.find(
-            (req) =>
-              req.tmdbId === result.id && req.mediaType === MediaType.MOVIE
-          )
-        )
-      ),
+      results: mappedResults,
     });
   } catch (e) {
     logger.debug('Something went wrong retrieving movie recommendations', {

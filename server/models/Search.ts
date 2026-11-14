@@ -9,6 +9,7 @@ import type {
 } from '@server/api/themoviedb/interfaces';
 import { MediaType as MainMediaType } from '@server/constants/media';
 import type Media from '@server/entity/Media';
+import type { MovieCollectionMembership } from '@server/lib/movieCollectionMembership';
 
 export type MediaType = 'tv' | 'movie' | 'person' | 'collection';
 
@@ -35,6 +36,11 @@ export interface MovieResult extends SearchResult {
   video: boolean;
   mediaInfo?: Media;
 }
+
+/** Only the opt-in recommendations response carries this additional field. */
+export type MovieRecommendationWithCollectionMembership = MovieResult & {
+  collectionMembership: MovieCollectionMembership;
+};
 
 export interface TvResult extends SearchResult {
   mediaType: 'tv';

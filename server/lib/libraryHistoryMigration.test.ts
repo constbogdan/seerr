@@ -179,7 +179,10 @@ describe('Library History Foundation migration', () => {
       const applied = await database.query(
         `SELECT "name" FROM "migrations" ORDER BY "id" DESC LIMIT 1`
       );
-      assert.equal(applied[0].name, 'AddFreshCategories1790000000051');
+      assert.equal(
+        applied[0].name,
+        'AddMovieCollectionObservation1790000000052'
+      );
       const normalizedJellyfinIndex = (await database.query(
         `SELECT "sql" FROM "sqlite_master" WHERE "type" = 'index' AND "name" = 'UQ_user_jellyfin_id_normalized'`
       )) as { sql: string }[];
@@ -200,6 +203,7 @@ describe('Library History Foundation migration', () => {
       await entityDatabase.destroy();
 
       await database.initialize();
+      await database.undoLastMigration(); // Movie collection observations
       await database.undoLastMigration(); // Fresh category flags
       const categoryRollbackRunner = database.createQueryRunner();
       assert.equal(

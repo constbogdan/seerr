@@ -94,3 +94,41 @@ export const persistMovieCollectionMembership = async (
     .execute();
   return (result.affected ?? 0) > 0;
 };
+
+/** A newer exact TMDB observation may converge onto an existing canonical row. */
+export const persistCanonicalMovieMembershipObservation = async (
+  repository: Repository<CanonicalMedia>,
+  input: {
+    canonicalMediaId: number;
+    tmdbId: number;
+    collectionMembership: TmdbCollectionMembershipObservation;
+  }
+): Promise<boolean> => {
+  const result = await repository
+    .createQueryBuilder()
+    .update(CanonicalMedia)
+    .set({
+      tmdbCollectionId: input.collectionMembership.tmdbCollectionId,
+      collectionMembershipHydratedAt: input.collectionMembership.observedAt,
+    })
+    .where('"id" = :canonicalMediaId', {
+      canonicalMediaId: input.canonicalMediaId,
+    })
+    .andWhere('"mediaType" = :mediaType', {
+      mediaType: LibraryMediaType.MOVIE,
+    })
+    .andWhere(
+      'EXISTS (SELECT 1 FROM "canonical_media_identity" identity WHERE ' +
+        'identity."canonicalMediaId" = "canonical_media"."id" AND ' +
+        'identity."provider" = :provider AND identity."sourceScope" = :scope AND ' +
+        'identity."mediaType" = :mediaType AND identity."value" = :tmdbId)',
+      { provider: 'tmdb', scope: '', tmdbId: String(input.tmdbId) }
+    )
+    .andWhere(
+      '("collectionMembershipHydratedAt" IS NULL OR ' +
+        '"collectionMembershipHydratedAt" < :observedAt)',
+      { observedAt: input.collectionMembership.observedAt }
+    )
+    .execute();
+  return (result.affected ?? 0) > 0;
+};

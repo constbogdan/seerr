@@ -99,6 +99,7 @@ export class Watchlist implements WatchlistItem {
     watchlistRequest,
     user,
     tmdb = new TheMovieDb(),
+    observeCollection,
   }: {
     watchlistRequest: {
       mediaType: MediaType;
@@ -108,6 +109,10 @@ export class Watchlist implements WatchlistItem {
     };
     user: User;
     tmdb?: Pick<TheMovieDb, 'getMovie' | 'getTvShow'>;
+    observeCollection?: (
+      tmdbId: number,
+      movie: { id: number; belongs_to_collection?: unknown }
+    ) => Promise<unknown>;
   }): Promise<Watchlist> {
     const watchlistRepository = getRepository(this);
 
@@ -138,7 +143,7 @@ export class Watchlist implements WatchlistItem {
       throw new DuplicateWatchlistRequestError();
     }
 
-    return dataSource.transaction(async (manager) => {
+    const watchlist = await dataSource.transaction(async (manager) => {
       const transactionalWatchlistRepository = manager.getRepository(this);
       const mediaRepository = manager.getRepository(Media);
       const mediaStateRepository = manager.getRepository(UserMediaState);
@@ -203,6 +208,27 @@ export class Watchlist implements WatchlistItem {
       }
       return watchlist;
     });
+    if (
+      watchlistRequest.mediaType === MediaType.MOVIE &&
+      Object.prototype.hasOwnProperty.call(tmdbMedia, 'belongs_to_collection')
+    ) {
+      try {
+        const observe =
+          observeCollection ??
+          (async (id, movie) => {
+            const { movieCollectionMembership } =
+              await import('@server/lib/movieCollectionMembership');
+            return movieCollectionMembership.observeMovie(id, movie);
+          });
+        await observe(watchlistRequest.tmdbId, tmdbMedia);
+      } catch {
+        logger.warn('Watchlist collection membership observation deferred', {
+          label: 'Watchlist',
+          tmdbId: watchlistRequest.tmdbId,
+        });
+      }
+    }
+    return watchlist;
   }
 
   public static async deleteWatchlist(
