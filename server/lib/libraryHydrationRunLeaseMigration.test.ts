@@ -18,6 +18,7 @@ describe('hydration run lease migration', () => {
     try {
       await database.initialize();
       await database.runMigrations();
+      await database.undoLastMigration(); // Similar Collections
       await database.undoLastMigration(); // Movie collection observations
       await database.undoLastMigration(); // Fresh category flags
       await database.undoLastMigration(); // Jellyfin preferences V1
@@ -31,10 +32,7 @@ describe('hydration run lease migration', () => {
       );
 
       const applied = await database.runMigrations();
-      assert.equal(
-        applied.at(-1)?.name,
-        'AddMovieCollectionObservation1790000000052'
-      );
+      assert.equal(applied.at(-1)?.name, 'AddSimilarCollections1790000000053');
       assert.deepEqual(
         await database.query(
           `SELECT "id", "source", "status", "heartbeatAt", "leaseExpiresAt" FROM "hydration_run" WHERE "id" = 9001`
