@@ -11,6 +11,25 @@ import { Router } from 'express';
 
 const collectionRoutes = Router();
 
+collectionRoutes.get<{ id: string }>('/:id/similar', async (req, res, next) => {
+  const id = Number(req.params.id);
+  if (!Number.isSafeInteger(id) || id <= 0) {
+    return next({
+      status: 400,
+      message: 'Invalid Similar Collections collection ID.',
+    });
+  }
+
+  try {
+    return res.status(200).json(await similarCollections.read(id));
+  } catch {
+    return next({
+      status: 500,
+      message: 'Unable to read Similar Collections state.',
+    });
+  }
+});
+
 collectionRoutes.post<{ id: string }>(
   '/:id/similar',
   async (req, res, next) => {

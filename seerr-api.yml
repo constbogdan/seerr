@@ -10733,6 +10733,31 @@ paths:
               schema:
                 $ref: '#/components/schemas/Collection'
   /collection/{collectionId}/similar:
+    get:
+      summary: Read persisted Similar Collections state
+      description: Returns persisted relationships and discovery progress without fetching collection metadata or starting discovery. Requires the global cookie or API-key authentication.
+      tags:
+        - collection
+      parameters:
+        - in: path
+          name: collectionId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        '200':
+          description: Persisted state; an unvisited collection has an empty state
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SimilarCollectionsRead'
+        '400':
+          description: Invalid collection ID
+        '403':
+          description: Authentication required
+        '500':
+          description: Unable to read Similar Collections persistence
     post:
       summary: Start up to three distinct page-one Similar Collections seed passes
       description: A duplicate active or most recent visitToken does not restart discovery; work continues asynchronously. Each eligible seed is attempted at most once per visit, and an incomplete seed can be retried after backoff on a later visit.

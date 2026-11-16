@@ -33,6 +33,95 @@ app.use(
 afterEach(() => mock.restoreAll());
 
 describe('Similar Collections routes', () => {
+  it('requires authentication to read persisted state', async () => {
+    const read = mock.method(similarCollections, 'read', async () => ({
+      relatedCollectionIds: [],
+      completedSeedCount: 0,
+      incompleteSeedCount: 0,
+      discoveryActive: false,
+    }));
+    const response = await request(app).get('/collection/100/similar');
+    assert.equal(response.status, 403);
+    assert.equal(read.mock.callCount(), 0);
+  });
+
+  it('rejects invalid collection IDs before reading persistence', async () => {
+    const read = mock.method(similarCollections, 'read', async () => ({
+      relatedCollectionIds: [],
+      completedSeedCount: 0,
+      incompleteSeedCount: 0,
+      discoveryActive: false,
+    }));
+    for (const id of ['0', '-1', '1.5', 'not-a-number', '9007199254740992']) {
+      const response = await request(app)
+        .get(`/collection/${id}/similar`)
+        .set('x-test-user', 'yes');
+      assert.equal(response.status, 400, id);
+    }
+    assert.equal(read.mock.callCount(), 0);
+  });
+
+  it('returns empty persisted state for a valid unvisited ID', async () => {
+    const empty = {
+      relatedCollectionIds: [],
+      completedSeedCount: 0,
+      incompleteSeedCount: 0,
+      discoveryActive: false,
+    };
+    const read = mock.method(similarCollections, 'read', async () => empty);
+    const response = await request(app)
+      .get('/collection/100/similar')
+      .set('x-test-user', 'yes');
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, empty);
+    assert.deepEqual(read.mock.calls[0].arguments, [100]);
+  });
+
+  it('returns persisted IDs in service order and active discovery without other work', async () => {
+    const state = {
+      relatedCollectionIds: [528, 5547],
+      completedSeedCount: 2,
+      incompleteSeedCount: 1,
+      discoveryActive: true,
+    };
+    const read = mock.method(similarCollections, 'read', async () => state);
+    const collection = mock.method(
+      TheMovieDb.prototype,
+      'getCollection',
+      async () => {
+        throw new Error('TMDB must not be called');
+      }
+    );
+    const media = mock.method(Media, 'getRelatedMedia', async () => {
+      throw new Error('Media mapping must not be called');
+    });
+    const trigger = mock.method(similarCollections, 'trigger', async () => {
+      throw new Error('Discovery must not be triggered');
+    });
+    const response = await request(app)
+      .get('/collection/100/similar')
+      .set('x-test-user', 'yes');
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, state);
+    assert.equal(read.mock.callCount(), 1);
+    assert.equal(collection.mock.callCount(), 0);
+    assert.equal(media.mock.callCount(), 0);
+    assert.equal(trigger.mock.callCount(), 0);
+  });
+
+  it('reports a sanitized failure instead of an empty successful read', async () => {
+    mock.method(similarCollections, 'read', async () => {
+      throw new Error('sensitive database connection details');
+    });
+    const response = await request(app)
+      .get('/collection/100/similar')
+      .set('x-test-user', 'yes');
+    assert.equal(response.status, 500);
+    assert.deepEqual(response.body, {
+      message: 'Unable to read Similar Collections state.',
+    });
+  });
+
   it('requires authentication before starting discovery', async () => {
     const trigger = mock.method(similarCollections, 'trigger', async () => ({
       started: true,
@@ -64,6 +153,31 @@ describe('Similar Collections routes', () => {
       100,
       '00000000-0000-4000-8000-000000000001',
     ]);
+  });
+
+  it('keeps GET and POST on the same path independent', async () => {
+    const read = mock.method(similarCollections, 'read', async () => ({
+      relatedCollectionIds: [528],
+      completedSeedCount: 1,
+      incompleteSeedCount: 0,
+      discoveryActive: false,
+    }));
+    const trigger = mock.method(similarCollections, 'trigger', async () => ({
+      started: true,
+    }));
+    const get = await request(app)
+      .get('/collection/100/similar')
+      .set('x-test-user', 'yes');
+    const post = await request(app)
+      .post('/collection/100/similar')
+      .set('x-test-user', 'yes')
+      .send({ visitToken: '00000000-0000-4000-8000-000000000001' });
+    assert.equal(get.status, 200);
+    assert.deepEqual(get.body.relatedCollectionIds, [528]);
+    assert.equal(post.status, 202);
+    assert.deepEqual(post.body, { started: true });
+    assert.equal(read.mock.callCount(), 1);
+    assert.equal(trigger.mock.callCount(), 1);
   });
 
   it('preserves the existing details payload and reads persistence without triggering work', async () => {
