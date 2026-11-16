@@ -252,6 +252,88 @@ describe('persistent movie collection membership', () => {
     );
   });
 
+  it('resolves all 20 unique cold recommendations with at most four concurrent detail fallbacks', async () => {
+    let active = 0;
+    let peak = 0;
+    let started = 0;
+    let release!: () => void;
+    let firstFourStarted!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const firstFour = new Promise<void>((resolve) => {
+      firstFourStarted = resolve;
+    });
+    const service = new MovieCollectionMembershipService(undefined, () => ({
+      getMovieForScan: async ({ movieId }) => {
+        active++;
+        peak = Math.max(peak, active);
+        started++;
+        if (started === 4) firstFourStarted();
+        await gate;
+        active--;
+        return { id: movieId, belongs_to_collection: null } as TmdbMovieResult;
+      },
+    }));
+    const identities = Array.from(
+      { length: 20 },
+      (_, index) => movie(400 + index)[0]
+    );
+    const work = service.resolve([...identities, identities[0]], {
+      maxLookups: 20,
+      concurrency: 4,
+      deadlineMs: 60_000,
+    });
+    await firstFour;
+    assert.equal(started, 4);
+    assert.equal(active, 4);
+    release();
+    const result = await work;
+    assert.equal(started, 20);
+    assert.equal(peak, 4);
+    assert.equal(result.stats.tmdbFallbackCalls, 20);
+    assert.equal(result.stats.unresolved, 0);
+    assert.equal(result.results.size, 20);
+    assert.equal(await getRepository(CanonicalMedia).count(), 0);
+  });
+
+  it('reuses 12 confirmed observations and fetches only eight unknown memberships', async () => {
+    const calls: number[] = [];
+    const service = new MovieCollectionMembershipService(undefined, () => ({
+      getMovieForScan: async ({ movieId }) => {
+        calls.push(movieId);
+        return {
+          id: movieId,
+          belongs_to_collection: { id: 900 },
+        } as TmdbMovieResult;
+      },
+    }));
+    for (let id = 500; id < 512; id++)
+      assert.equal(
+        await service.observeMovie(id, {
+          id,
+          belongs_to_collection: null,
+        } as TmdbMovieResult),
+        true
+      );
+    const result = await service.resolve(
+      Array.from({ length: 20 }, (_, index) => movie(500 + index)[0]),
+      { maxLookups: 20, concurrency: 4, deadlineMs: 60_000 }
+    );
+    assert.deepEqual(
+      calls,
+      Array.from({ length: 8 }, (_, index) => 512 + index)
+    );
+    assert.equal(result.stats.observationHits, 20);
+    assert.equal(result.stats.tmdbFallbackCalls, 8);
+    assert.equal(result.stats.unresolved, 0);
+    assert.equal(result.results.get(500)?.membership.kind, 'standalone');
+    assert.deepEqual(result.results.get(519)?.membership, {
+      kind: 'collection',
+      collectionId: 900,
+    });
+  });
+
   it('backs off failed lookups without persisting an unresolved row', async () => {
     let calls = 0;
     const service = new MovieCollectionMembershipService(undefined, () => ({

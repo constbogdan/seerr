@@ -15,8 +15,8 @@ import logger from '@server/logger';
 import { randomUUID } from 'node:crypto';
 import type { DataSource, EntityManager } from 'typeorm';
 
-export const SIMILAR_MAX_PAGES = 3;
-const SIMILAR_MAX_LOOKUPS_PER_PAGE = 4;
+export const SIMILAR_MAX_SEEDS_PER_VISIT = 3;
+const SIMILAR_RECOMMENDATION_PAGE = 1;
 const CLAIM_MS = 5 * 60 * 1000;
 const MAX_RETRY_MS = 60 * 60 * 1000;
 
@@ -48,9 +48,9 @@ const dependencies = (): SimilarCollectionsDependencies => {
       tmdb.getMovieRecommendations({ movieId, page, language: 'en' }),
     resolve: (movies) =>
       movieCollectionMembership.resolve(movies, {
-        maxLookups: SIMILAR_MAX_LOOKUPS_PER_PAGE,
+        maxLookups: movies.length,
         concurrency: 4,
-        deadlineMs: 1_000,
+        deadlineMs: 60_000,
       }),
     now: () => new Date(),
     randomIndex: (size) => Math.floor(Math.random() * size),
@@ -218,7 +218,8 @@ export class SimilarCollectionsService {
   private async chooseSeed(
     manager: EntityManager,
     origin: number,
-    eligible: number[]
+    eligible: number[],
+    attempted: ReadonlySet<number>
   ): Promise<SimilarCollectionSeedProgress | null> {
     if (eligible.length === 0) return null;
     const existing = await manager
@@ -226,22 +227,19 @@ export class SimilarCollectionsService {
       .findBy({ originCollectionId: origin });
     const byId = new Map(existing.map((row) => [row.seedMovieId, row]));
     const now = this.deps.now();
-    const resumable = existing
-      .filter(
-        (row) =>
-          row.seedMovieId > 0 &&
-          eligible.includes(row.seedMovieId) &&
-          !row.completedAt &&
-          (!row.retryAfter || row.retryAfter <= now)
-      )
-      .sort((a, b) => a.nextPage - b.nextPage || a.seedMovieId - b.seedMovieId);
-    if (resumable.length > 0) return resumable[0];
-    const unused = eligible.filter((id) => !byId.has(id));
-    if (unused.length === 0) return null;
-    const index = this.deps.randomIndex(unused.length);
-    if (!Number.isInteger(index) || index < 0 || index >= unused.length)
+    const candidates = eligible.filter((id) => {
+      const progress = byId.get(id);
+      return (
+        !attempted.has(id) &&
+        !progress?.completedAt &&
+        (!progress?.retryAfter || progress.retryAfter <= now)
+      );
+    });
+    if (candidates.length === 0) return null;
+    const index = this.deps.randomIndex(candidates.length);
+    if (!Number.isInteger(index) || index < 0 || index >= candidates.length)
       throw new Error('Invalid seed selection');
-    const seedMovieId = unused[index];
+    const seedMovieId = candidates[index];
     await manager
       .getRepository(SimilarCollectionSeedProgress)
       .createQueryBuilder()
@@ -290,10 +288,6 @@ export class SimilarCollectionsService {
           .execute();
       }
       const failures = completePage ? 0 : seed.failureCount + 1;
-      const finished =
-        completePage &&
-        (page >= SIMILAR_MAX_PAGES ||
-          (reportedTotalPages !== null && page >= reportedTotalPages));
       const updated = {
         ...seed,
         nextPage: completePage ? page + 1 : page,
@@ -303,7 +297,7 @@ export class SimilarCollectionsService {
         retryAfter: completePage
           ? null
           : new Date(now.getTime() + retryDelay(failures)),
-        completedAt: finished ? now : null,
+        completedAt: completePage ? now : null,
       };
       await manager.getRepository(SimilarCollectionSeedProgress).save(updated);
       return updated;
@@ -315,12 +309,16 @@ export class SimilarCollectionsService {
       const collection = await this.deps.collection(origin);
       if (collection.id !== origin || !Array.isArray(collection.parts))
         throw new Error('Collection identity changed');
-      let seed = await this.database.transaction(async (manager) => {
-        if (!(await this.renewClaim(manager, origin, token))) return null;
-        return this.chooseSeed(manager, origin, this.eligibleSeeds(collection));
-      });
-      if (!seed) return;
-      for (let page = seed.nextPage; page <= SIMILAR_MAX_PAGES; page++) {
+      const eligible = this.eligibleSeeds(collection);
+      const attempted = new Set<number>();
+      for (let attempt = 0; attempt < SIMILAR_MAX_SEEDS_PER_VISIT; attempt++) {
+        const seed = await this.database.transaction(async (manager) => {
+          if (!(await this.renewClaim(manager, origin, token))) return null;
+          return this.chooseSeed(manager, origin, eligible, attempted);
+        });
+        if (!seed) return;
+        attempted.add(seed.seedMovieId);
+        const page = SIMILAR_RECOMMENDATION_PAGE;
         let recommendations: TmdbSearchMovieResponse;
         try {
           recommendations = await this.deps.recommendations(
@@ -328,8 +326,11 @@ export class SimilarCollectionsService {
             page
           );
         } catch {
-          await this.commitPage(origin, token, seed, page, null, [], false);
-          return;
+          if (
+            !(await this.commitPage(origin, token, seed, page, null, [], false))
+          )
+            return;
+          continue;
         }
         const total = recommendations.total_pages;
         if (
@@ -338,13 +339,29 @@ export class SimilarCollectionsService {
           total < 0 ||
           !Array.isArray(recommendations.results)
         ) {
-          await this.commitPage(origin, token, seed, page, null, [], false);
-          return;
+          if (
+            !(await this.commitPage(origin, token, seed, page, null, [], false))
+          )
+            return;
+          continue;
         }
-        const ids = recommendations.results.map((movie) => movie.id);
+        const ids = [
+          ...new Set(recommendations.results.map((movie) => movie.id)),
+        ];
         if (ids.some((id) => !validId(id))) {
-          await this.commitPage(origin, token, seed, page, total, [], false);
-          return;
+          if (
+            !(await this.commitPage(
+              origin,
+              token,
+              seed,
+              page,
+              total,
+              [],
+              false
+            ))
+          )
+            return;
+          continue;
         }
         let resolved: MovieCollectionBatch;
         try {
@@ -352,8 +369,19 @@ export class SimilarCollectionsService {
             ids.map((tmdbId) => ({ mediaType: 'movie', tmdbId }))
           );
         } catch {
-          await this.commitPage(origin, token, seed, page, total, [], false);
-          return;
+          if (
+            !(await this.commitPage(
+              origin,
+              token,
+              seed,
+              page,
+              total,
+              [],
+              false
+            ))
+          )
+            return;
+          continue;
         }
         const memberships = ids.map(
           (id) => resolved.results.get(id)?.membership
@@ -367,17 +395,18 @@ export class SimilarCollectionsService {
             (membership?.kind === 'collection' &&
               validId(membership.collectionId))
         );
-        const updated = await this.commitPage(
-          origin,
-          token,
-          seed,
-          page,
-          total,
-          related,
-          completePage
-        );
-        if (!updated || !completePage || updated.completedAt) return;
-        seed = updated;
+        if (
+          !(await this.commitPage(
+            origin,
+            token,
+            seed,
+            page,
+            total,
+            related,
+            completePage
+          ))
+        )
+          return;
       }
     } finally {
       await this.release(origin, token);
