@@ -10734,8 +10734,8 @@ paths:
                 $ref: '#/components/schemas/Collection'
   /collection/{collectionId}/similar:
     post:
-      summary: Start one bounded Similar Collections seed pass
-      description: A duplicate active or most recent visitToken does not restart discovery; work continues asynchronously.
+      summary: Start up to three distinct page-one Similar Collections seed passes
+      description: A duplicate active or most recent visitToken does not restart discovery; work continues asynchronously. Each eligible seed is attempted at most once per visit, and an incomplete seed can be retried after backoff on a later visit.
       tags:
         - collection
       parameters:
