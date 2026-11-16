@@ -406,4 +406,40 @@ describe('persistent movie collection membership', () => {
       kind: 'unresolved',
     });
   });
+
+  it('reports confirmed observations while slower lookups remain pending', async () => {
+    let release!: () => void;
+    let firstPublished!: () => void;
+    const slow = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const published = new Promise<void>((resolve) => {
+      firstPublished = resolve;
+    });
+    const events: number[] = [];
+    const service = new MovieCollectionMembershipService(undefined, () => ({
+      getMovieForScan: async ({ movieId }) => {
+        if (movieId === 702) await slow;
+        return {
+          id: movieId,
+          belongs_to_collection: movieId === 701 ? { id: 901 } : null,
+        } as TmdbMovieResult;
+      },
+    }));
+    const work = service.resolve([movie(701)[0], movie(702)[0]], {
+      maxLookups: 2,
+      concurrency: 2,
+      deadlineMs: 60_000,
+      onConfirmed: async (id) => {
+        events.push(id);
+        if (id === 701) firstPublished();
+      },
+    });
+    await published;
+    assert.deepEqual(events, [701]);
+    release();
+    const result = await work;
+    assert.deepEqual(events.sort(), [701, 702]);
+    assert.equal(result.results.get(702)?.membership.kind, 'standalone');
+  });
 });

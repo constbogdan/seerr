@@ -9,6 +9,7 @@ import { SimilarCollectionSeedProgress } from '@server/entity/SimilarCollectionS
 import {
   movieCollectionMembership,
   type MovieCollectionBatch,
+  type MovieCollectionResolution,
   type TypedMovieIdentity,
 } from '@server/lib/movieCollectionMembership';
 import logger from '@server/logger';
@@ -23,6 +24,7 @@ const MAX_RETRY_MS = 60 * 60 * 1000;
 export interface SimilarCollectionsRead {
   relatedCollectionIds: number[];
   completedSeedCount: number;
+  /** Pending and failed/backoff seeds; the origin claim row is excluded. */
   incompleteSeedCount: number;
   discoveryActive: boolean;
 }
@@ -33,7 +35,13 @@ export interface SimilarCollectionsDependencies {
     movieId: number,
     page: number
   ) => Promise<TmdbSearchMovieResponse>;
-  resolve: (movies: TypedMovieIdentity[]) => Promise<MovieCollectionBatch>;
+  resolve: (
+    movies: TypedMovieIdentity[],
+    onConfirmed: (
+      tmdbId: number,
+      resolution: MovieCollectionResolution
+    ) => Promise<void>
+  ) => Promise<MovieCollectionBatch>;
   now: () => Date;
   randomIndex: (size: number) => number;
   dispatch: (work: () => Promise<void>) => void;
@@ -46,11 +54,12 @@ const dependencies = (): SimilarCollectionsDependencies => {
       tmdb.getCollection({ collectionId: id, language: 'en' }),
     recommendations: (movieId, page) =>
       tmdb.getMovieRecommendations({ movieId, page, language: 'en' }),
-    resolve: (movies) =>
+    resolve: (movies, onConfirmed) =>
       movieCollectionMembership.resolve(movies, {
         maxLookups: movies.length,
         concurrency: 4,
         deadlineMs: 60_000,
+        onConfirmed,
       }),
     now: () => new Date(),
     randomIndex: (size) => Math.floor(Math.random() * size),
@@ -215,6 +224,60 @@ export class SimilarCollectionsService {
     ];
   }
 
+  /** Seed zero's completedAt marks the one-time inventory snapshot. */
+  private async inventory(
+    origin: number,
+    token: string
+  ): Promise<number[] | null> {
+    const progress = this.database.getRepository(SimilarCollectionSeedProgress);
+    const claim = await progress.findOneByOrFail({
+      originCollectionId: origin,
+      seedMovieId: 0,
+    });
+    let eligible: number[] | null = null;
+    if (!claim.completedAt) {
+      const collection = await this.deps.collection(origin);
+      if (collection.id !== origin || !Array.isArray(collection.parts))
+        throw new Error('Collection identity changed');
+      eligible = this.eligibleSeeds(collection);
+    }
+    return this.database.transaction(async (manager) => {
+      if (!(await this.renewClaim(manager, origin, token))) return null;
+      const rows = manager.getRepository(SimilarCollectionSeedProgress);
+      const current = await rows.findOneByOrFail({
+        originCollectionId: origin,
+        seedMovieId: 0,
+      });
+      if (!current.completedAt) {
+        if (eligible === null) throw new Error('Missing seed inventory');
+        if (eligible.length > 0)
+          await rows
+            .createQueryBuilder()
+            .insert()
+            .values(
+              eligible.map((seedMovieId) => ({
+                originCollectionId: origin,
+                seedMovieId,
+              }))
+            )
+            .orIgnore()
+            .execute();
+        await rows
+          .createQueryBuilder()
+          .update()
+          .set({ completedAt: this.deps.now() })
+          .where('"originCollectionId" = :origin AND "seedMovieId" = 0', {
+            origin,
+          })
+          .andWhere('"claimToken" = :token', { token })
+          .execute();
+      }
+      return (await rows.findBy({ originCollectionId: origin }))
+        .filter((row) => row.seedMovieId > 0)
+        .map((row) => row.seedMovieId);
+    });
+  }
+
   private async chooseSeed(
     manager: EntityManager,
     origin: number,
@@ -240,19 +303,39 @@ export class SimilarCollectionsService {
     if (!Number.isInteger(index) || index < 0 || index >= candidates.length)
       throw new Error('Invalid seed selection');
     const seedMovieId = candidates[index];
-    await manager
-      .getRepository(SimilarCollectionSeedProgress)
-      .createQueryBuilder()
-      .insert()
-      .values({ originCollectionId: origin, seedMovieId })
-      .orIgnore()
-      .execute();
     return manager
       .getRepository(SimilarCollectionSeedProgress)
       .findOneByOrFail({
         originCollectionId: origin,
         seedMovieId,
       });
+  }
+
+  /** A relation is visible immediately, but only while this visit owns the claim. */
+  private async publishRelation(
+    origin: number,
+    token: string,
+    seedMovieId: number,
+    relatedCollectionId: number
+  ): Promise<boolean> {
+    return this.database.transaction(async (manager) => {
+      if (!(await this.renewClaim(manager, origin, token))) return false;
+      if (!validId(relatedCollectionId) || relatedCollectionId === origin)
+        return true;
+      await manager
+        .getRepository(SimilarCollectionRelation)
+        .createQueryBuilder()
+        .insert()
+        .values({
+          originCollectionId: origin,
+          seedMovieId,
+          relatedCollectionId,
+          discoveredAt: this.deps.now(),
+        })
+        .orIgnore()
+        .execute();
+      return true;
+    });
   }
 
   /** Each page's confirmed links and cursor update share one claim-guarded transaction. */
@@ -306,10 +389,8 @@ export class SimilarCollectionsService {
 
   private async run(origin: number, token: string): Promise<void> {
     try {
-      const collection = await this.deps.collection(origin);
-      if (collection.id !== origin || !Array.isArray(collection.parts))
-        throw new Error('Collection identity changed');
-      const eligible = this.eligibleSeeds(collection);
+      const eligible = await this.inventory(origin, token);
+      if (!eligible) return;
       const attempted = new Set<number>();
       for (let attempt = 0; attempt < SIMILAR_MAX_SEEDS_PER_VISIT; attempt++) {
         const seed = await this.database.transaction(async (manager) => {
@@ -364,10 +445,31 @@ export class SimilarCollectionsService {
           continue;
         }
         let resolved: MovieCollectionBatch;
+        // Serialize SQLite writes from concurrent membership workers. Each
+        // queued publication still rechecks the origin claim in its transaction.
+        let publication = Promise.resolve();
         try {
           resolved = await this.deps.resolve(
-            ids.map((tmdbId) => ({ mediaType: 'movie', tmdbId }))
+            ids.map((tmdbId) => ({ mediaType: 'movie', tmdbId })),
+            async (_tmdbId, result) => {
+              const membership = result.membership;
+              if (membership.kind !== 'collection') return;
+              const next = publication.then(async () => {
+                if (
+                  !(await this.publishRelation(
+                    origin,
+                    token,
+                    seed.seedMovieId,
+                    membership.collectionId
+                  ))
+                )
+                  throw new Error('Similar Collections claim expired');
+              });
+              publication = next;
+              await next;
+            }
           );
+          await publication;
         } catch {
           if (
             !(await this.commitPage(
