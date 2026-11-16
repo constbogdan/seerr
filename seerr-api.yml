@@ -3624,6 +3624,29 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MovieResult'
+        similarCollections:
+          $ref: '#/components/schemas/SimilarCollectionsRead'
+    SimilarCollectionsRead:
+      type: object
+      required:
+        - relatedCollectionIds
+        - completedSeedCount
+        - incompleteSeedCount
+        - discoveryActive
+      properties:
+        relatedCollectionIds:
+          type: array
+          items:
+            type: integer
+            minimum: 1
+        completedSeedCount:
+          type: integer
+          minimum: 0
+        incompleteSeedCount:
+          type: integer
+          minimum: 0
+        discoveryActive:
+          type: boolean
     SonarrSeries:
       type: object
       properties:
@@ -10709,6 +10732,43 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Collection'
+  /collection/{collectionId}/similar:
+    post:
+      summary: Start one bounded Similar Collections seed pass
+      description: A duplicate active or most recent visitToken does not restart discovery; work continues asynchronously.
+      tags:
+        - collection
+      parameters:
+        - in: path
+          name: collectionId
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - visitToken
+              properties:
+                visitToken:
+                  type: string
+                  format: uuid
+      responses:
+        '202':
+          description: Discovery was started or already claimed
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - started
+                properties:
+                  started:
+                    type: boolean
   /service/radarr:
     get:
       summary: Get non-sensitive Radarr server list

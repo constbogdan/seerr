@@ -1,6 +1,7 @@
 import type { TmdbCollection } from '@server/api/themoviedb/interfaces';
 import { MediaType } from '@server/constants/media';
 import type Media from '@server/entity/Media';
+import type { SimilarCollectionsRead } from '@server/lib/similarCollections';
 import { sortBy } from 'lodash';
 import type { MovieResult } from './Search';
 import { mapMovieResult } from './Search';
@@ -12,6 +13,7 @@ export interface Collection {
   posterPath?: string;
   backdropPath?: string;
   parts: MovieResult[];
+  similarCollections?: SimilarCollectionsRead;
 }
 
 export const mapCollection = (

@@ -47,6 +47,8 @@ import Season from '@server/entity/Season';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { SeriesRelocationExecution } from '@server/entity/SeriesRelocationExecution';
 import { Session } from '@server/entity/Session';
+import { SimilarCollectionRelation } from '@server/entity/SimilarCollectionRelation';
+import { SimilarCollectionSeedProgress } from '@server/entity/SimilarCollectionSeedProgress';
 import { User } from '@server/entity/User';
 import { UserMediaIntentOccurrence } from '@server/entity/UserMediaIntentOccurrence';
 import { UserMediaState } from '@server/entity/UserMediaState';
@@ -104,6 +106,8 @@ const entities = [
   RemovalExecutionClaim,
   RemovalSchedule,
   SeriesRelocationExecution,
+  SimilarCollectionRelation,
+  SimilarCollectionSeedProgress,
   Season,
   SeasonRequest,
   Session,
