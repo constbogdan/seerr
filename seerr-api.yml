@@ -8204,12 +8204,21 @@ paths:
         '409': { description: Schedule has active execution ownership }
   /leaving-soon:
     get:
-      summary: Get active scheduled removals
+      summary: Get current scheduled removals ordered by earliest removal due date
+      description: >-
+        Returns 20-item pages after filtering by media type and ordering each
+        canonical item by its earliest active or deferred schedule's current
+        stored removeAt ascending, then canonical media ID ascending. A deferred
+        schedule's removeAt may be its retry time, not the original removal date.
+        Existing callers default to all media types.
       tags: [library]
       parameters:
         - in: query
           name: page
           schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: mediaType
+          schema: { type: string, enum: [all, movie, series], default: all }
       responses:
         '200':
           description: User-safe paginated Leaving Soon projection
@@ -8218,6 +8227,7 @@ paths:
               schema:
                 { $ref: '#/components/schemas/LeavingSoonResultsResponse' }
         '403': { description: Authentication required }
+        '400': { description: Invalid page or media type }
   /leaving-soon/presentation-status/{batchId}:
     get:
       summary: Get presentation status for the requesting user's Leaving Soon batch

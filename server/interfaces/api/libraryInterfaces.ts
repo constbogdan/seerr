@@ -28,6 +28,7 @@ export type LibrarySort =
   | 'lastActive'
   | 'size'
   | 'removed'
+  | 'removalDue'
   | 'watchedUsers';
 export type LibrarySortDirection = 'asc' | 'desc';
 export type LibraryScheduledFilter = 'any' | 'yes' | 'no';

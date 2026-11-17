@@ -140,9 +140,20 @@ describe('Leaving Soon ordinary-user API', () => {
         take: receivedQuery?.take,
         skip: receivedQuery?.skip,
         scope: receivedQuery?.scope,
+        mediaType: receivedQuery?.mediaType,
         scheduled: receivedQuery?.scheduled,
+        sort: receivedQuery?.sort,
+        sortDirection: receivedQuery?.sortDirection,
       },
-      { take: 20, skip: 0, scope: 'current', scheduled: 'yes' }
+      {
+        take: 20,
+        skip: 0,
+        scope: 'current',
+        mediaType: 'all',
+        scheduled: 'yes',
+        sort: 'removalDue',
+        sortDirection: 'asc',
+      }
     );
     assert.equal(response.body.results[0].title, 'Leaving Movie');
     assert.equal(response.body.results[0].posterPath, null);
@@ -152,6 +163,31 @@ describe('Leaving Soon ordinary-user API', () => {
     assert.equal('watchlistUsers' in response.body.results[0], false);
     assert.equal('watchedUsers' in response.body.results[0], false);
     assert.equal('sourceScope' in response.body.results[0].schedules[0], false);
+  });
+
+  it('passes movie and series filters to the Library query before paging', async () => {
+    for (const mediaType of ['movie', 'series'] as const) {
+      const response = await request(app)
+        .get(`/leaving-soon?page=2&mediaType=${mediaType}`)
+        .set('x-authenticated', 'yes');
+      assert.equal(response.status, 200);
+      assert.equal(receivedQuery?.mediaType, mediaType);
+      assert.equal(receivedQuery?.take, 20);
+      assert.equal(receivedQuery?.skip, 20);
+      assert.equal(receivedQuery?.scheduled, 'yes');
+      assert.equal(receivedQuery?.sort, 'removalDue');
+    }
+  });
+
+  it('rejects invalid page and media filters without querying Library', async () => {
+    for (const query of ['page=0', 'page=abc', 'mediaType=tv', 'mediaType=']) {
+      receivedQuery = undefined;
+      const response = await request(app)
+        .get(`/leaving-soon?${query}`)
+        .set('x-authenticated', 'yes');
+      assert.equal(response.status, 400, query);
+      assert.equal(receivedQuery, undefined, query);
+    }
   });
 
   it('scopes presentation status to the authenticated user who received the batch', async () => {
