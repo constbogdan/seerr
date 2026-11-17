@@ -2567,6 +2567,7 @@ export class LibraryService {
       lastActive: sql.lastActive,
       size: useProjectedPhysicalSort ? '"logicalSizeBytes"' : sql.size,
       removed: useProjectedPhysicalSort ? '"removedAt"' : sql.removed,
+      removalDue: removalDueSql,
       watchedUsers: sql.watchedUserCount,
     };
     return this.buildBase(input, strategy, true)

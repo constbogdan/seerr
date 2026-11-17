@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 const querySchema = z.object({
   page: z.coerce.number().int().positive().default(1),
+  mediaType: z.enum(['all', 'movie', 'series']).default('all'),
 });
 
 export const createLeavingSoonRouter = (
@@ -21,17 +22,17 @@ export const createLeavingSoonRouter = (
   const router = Router();
   router.get('/', isAuthenticated(), async (req, res, next) => {
     try {
-      const { page } = querySchema.parse(req.query);
+      const { page, mediaType } = querySchema.parse(req.query);
       const pageSize = 20;
       const libraryResults = await service.query({
         take: pageSize,
         skip: (page - 1) * pageSize,
         scope: 'current',
-        mediaType: 'all',
+        mediaType,
         watchlist: 'any',
         watched: 'any',
         scheduled: 'yes',
-        sort: 'added',
+        sort: 'removalDue',
         sortDirection: 'asc',
         locale: req.locale ?? 'en',
       });
@@ -58,6 +59,9 @@ export const createLeavingSoonRouter = (
         })),
       });
     } catch (error) {
+      if (error instanceof z.ZodError) {
+        return next({ status: 400, message: 'Invalid Leaving Soon query.' });
+      }
       return next(error);
     }
   });
