@@ -295,6 +295,10 @@ export class MovieCollectionMembershipService {
       maxLookups?: number;
       concurrency?: number;
       deadlineMs?: number;
+      onConfirmed?: (
+        tmdbId: number,
+        resolution: MovieCollectionResolution
+      ) => Promise<void>;
     } = {}
   ): Promise<MovieCollectionBatch> {
     const ids = [
@@ -320,9 +324,18 @@ export class MovieCollectionMembershipService {
         );
       })
       .slice(0, maxLookups);
+    const pendingIds = new Set(pending);
+    const published = new Set<number>();
+    const publish = async (id: number, item: MovieCollectionResolution) => {
+      if (item.membership.kind === 'unresolved' || published.has(id)) return;
+      await options.onConfirmed?.(id, item);
+      published.add(id);
+    };
+    for (const id of ids)
+      if (!pendingIds.has(id)) await publish(id, initial.get(id)!);
     let cursor = 0;
     let tmdbFallbackCalls = 0;
-    await Promise.all(
+    const workers = await Promise.allSettled(
       Array.from(
         { length: Math.min(concurrency, pending.length) },
         async () => {
@@ -331,11 +344,16 @@ export class MovieCollectionMembershipService {
             if (!this.inFlight.has(id)) tmdbFallbackCalls++;
             // Started work is always awaited; the provider's own timeout bounds it.
             await this.loadMovie(id);
+            const current = await this.readKnown([id], false);
+            await publish(id, current.get(id)!);
           }
         }
       )
     );
+    const failed = workers.find((worker) => worker.status === 'rejected');
+    if (failed?.status === 'rejected') throw failed.reason;
     const results = cursor > 0 ? await this.readKnown(ids, true) : initial;
+    for (const id of ids) await publish(id, results.get(id)!);
     return {
       results,
       stats: {

@@ -1,12 +1,16 @@
 import type {
   TmdbCollection,
+  TmdbMovieResult,
   TmdbSearchMovieResponse,
 } from '@server/api/themoviedb/interfaces';
 import dataSource from '@server/datasource';
 import { CanonicalMedia } from '@server/entity/CanonicalMedia';
 import { SimilarCollectionRelation } from '@server/entity/SimilarCollectionRelation';
 import { SimilarCollectionSeedProgress } from '@server/entity/SimilarCollectionSeedProgress';
-import type { MovieCollectionBatch } from '@server/lib/movieCollectionMembership';
+import {
+  MovieCollectionMembershipService,
+  type MovieCollectionBatch,
+} from '@server/lib/movieCollectionMembership';
 import {
   SimilarCollectionsService,
   type SimilarCollectionsDependencies,
@@ -67,12 +71,19 @@ const memberships = (
       unresolved: 0,
     },
   }) as MovieCollectionBatch;
+const confirmed = (collectionId: number) => ({
+  membership: { kind: 'collection' as const, collectionId },
+  observedAt: new Date('2026-11-16T00:00:00Z'),
+  stale: false,
+  source: 'observation' as const,
+});
 
 const fixture = (
   options: {
     seeds?: number[];
     origin?: number;
     pages?: (seed: number, number: number) => TmdbSearchMovieResponse;
+    collection?: SimilarCollectionsDependencies['collection'];
     resolve?: SimilarCollectionsDependencies['resolve'];
     now?: () => Date;
     randomIndex?: (size: number) => number;
@@ -81,8 +92,10 @@ const fixture = (
   const work: (() => Promise<void>)[] = [];
   const calls: [number, number][] = [];
   const service = new SimilarCollectionsService(dataSource, {
-    collection: async () =>
-      collection(options.seeds ?? [1], true, options.origin ?? 100),
+    collection:
+      options.collection ??
+      (async () =>
+        collection(options.seeds ?? [1], true, options.origin ?? 100)),
     recommendations: async (seed, number) => {
       calls.push([seed, number]);
       return (
@@ -113,6 +126,75 @@ const fixture = (
 };
 
 describe('persistent Similar Collections discovery', () => {
+  it('initializes one pending seed per released movie without retry state', async () => {
+    for (const count of [1, 2, 3, 5, 26]) {
+      const test = fixture({
+        seeds: Array.from({ length: count }, (_, index) => index + 1),
+      });
+      await test.runVisit(count);
+      const read = await test.service.read(100);
+      assert.equal(read.completedSeedCount, Math.min(count, 3));
+      assert.equal(read.incompleteSeedCount, Math.max(0, count - 3));
+      const rows = await dataSource
+        .getRepository(SimilarCollectionSeedProgress)
+        .findBy({ originCollectionId: 100 });
+      assert.equal(rows.length, count + 1);
+      assert.ok(rows.find((row) => row.seedMovieId === 0)?.completedAt);
+      for (const row of rows.filter((row) => !row.completedAt)) {
+        assert.equal(row.failureCount, 0);
+        assert.equal(row.retryAfter, null);
+        assert.equal(row.lastAttemptAt, null);
+      }
+      assert.equal(test.calls.length, Math.min(count, 3));
+      await dataSource.getRepository(SimilarCollectionRelation).clear();
+      await dataSource.getRepository(SimilarCollectionSeedProgress).clear();
+    }
+    assert.equal(await dataSource.getRepository(CanonicalMedia).count(), 0);
+  });
+
+  it('takes one released-only snapshot and does not refetch metadata on later visits', async () => {
+    let metadataCalls = 0;
+    const test = fixture({
+      collection: async () => {
+        metadataCalls++;
+        return {
+          ...collection([1, 2]),
+          parts: [...collection([1, 2]).parts, ...collection([3], false).parts],
+        };
+      },
+    });
+    await test.runVisit(1);
+    await test.runVisit(2);
+    assert.equal(metadataCalls, 1);
+    assert.deepEqual(test.calls, [
+      [1, 1],
+      [2, 1],
+    ]);
+    assert.equal((await test.service.read(100)).completedSeedCount, 2);
+    assert.equal((await test.service.read(100)).incompleteSeedCount, 0);
+    assert.equal(
+      await dataSource.getRepository(SimilarCollectionSeedProgress).count(),
+      3
+    );
+  });
+
+  it('marks an empty inventory initialized without trying recommendations', async () => {
+    const test = fixture({ seeds: [] });
+    await test.runVisit(1);
+    await test.runVisit(2);
+    assert.deepEqual(test.calls, []);
+    assert.equal(
+      await dataSource.getRepository(SimilarCollectionSeedProgress).count(),
+      1
+    );
+    assert.deepEqual(await test.service.read(100), {
+      relatedCollectionIds: [],
+      completedSeedCount: 0,
+      incompleteSeedCount: 0,
+      discoveryActive: false,
+    });
+  });
+
   it('uses at most three distinct page-one seeds per visit and eventually covers all released seeds', async () => {
     for (const count of [2, 20]) {
       const test = fixture({
@@ -146,6 +228,143 @@ describe('persistent Similar Collections discovery', () => {
     assert.ok(progress.completedAt);
     await test.runVisit(2);
     assert.equal(test.calls.length, 1);
+  });
+
+  it('extends a legacy partial inventory without resetting completed or backoff seeds', async () => {
+    const rows = dataSource.getRepository(SimilarCollectionSeedProgress);
+    const completedAt = new Date('2026-11-15T00:00:00Z');
+    const retryAfter = new Date('2026-11-16T00:10:00Z');
+    await rows.save({ originCollectionId: 100, seedMovieId: 1, completedAt });
+    await rows.save({
+      originCollectionId: 100,
+      seedMovieId: 2,
+      failureCount: 2,
+      retryAfter,
+    });
+    const test = fixture({ seeds: [1, 2, 3, 4, 5] });
+    await test.runVisit(1);
+    assert.deepEqual(test.calls, [
+      [3, 1],
+      [4, 1],
+      [5, 1],
+    ]);
+    assert.equal((await test.service.read(100)).completedSeedCount, 4);
+    assert.equal((await test.service.read(100)).incompleteSeedCount, 1);
+    assert.equal(
+      (
+        await rows.findOneByOrFail({ originCollectionId: 100, seedMovieId: 1 })
+      ).completedAt?.getTime(),
+      completedAt.getTime()
+    );
+    const failed = await rows.findOneByOrFail({
+      originCollectionId: 100,
+      seedMovieId: 2,
+    });
+    assert.equal(failed.failureCount, 2);
+    assert.equal(failed.retryAfter?.getTime(), retryAfter.getTime());
+  });
+
+  it('publishes confirmed relationships before a page finishes and keeps failure retryable', async () => {
+    let release!: () => void;
+    let firstPublished!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const published = new Promise<void>((resolve) => {
+      firstPublished = resolve;
+    });
+    const test = fixture({
+      pages: () => page([201, 202, 203], 1),
+      resolve: async (_movies, onConfirmed) => {
+        await onConfirmed(201, confirmed(301));
+        firstPublished();
+        await gate;
+        await onConfirmed(202, confirmed(302));
+        return memberships([201, 202, 203], {
+          201: 301,
+          202: 302,
+          203: 'unresolved',
+        });
+      },
+    });
+    await test.service.trigger(100, visit(1));
+    const work = test.work.shift()!();
+    await published;
+    assert.deepEqual(
+      (await test.service.read(100)).relatedCollectionIds,
+      [301]
+    );
+    assert.equal((await test.service.read(100)).incompleteSeedCount, 1);
+    assert.equal(
+      (
+        await dataSource
+          .getRepository(SimilarCollectionSeedProgress)
+          .findOneByOrFail({ originCollectionId: 100, seedMovieId: 1 })
+      ).nextPage,
+      1
+    );
+    release();
+    await work;
+    assert.deepEqual(
+      (await test.service.read(100)).relatedCollectionIds,
+      [301, 302]
+    );
+    assert.equal((await test.service.read(100)).completedSeedCount, 0);
+  });
+
+  it('persists a cold twenty-movie page with four concurrent lookups on SQLite', async () => {
+    let active = 0;
+    let peak = 0;
+    const resolver = new MovieCollectionMembershipService(dataSource, () => ({
+      getMovieForScan: async ({ movieId }) => {
+        active++;
+        peak = Math.max(peak, active);
+        await Promise.resolve();
+        active--;
+        return {
+          id: movieId,
+          belongs_to_collection: { id: movieId + 1000 },
+        } as TmdbMovieResult;
+      },
+    }));
+    const test = fixture({
+      pages: () =>
+        page(
+          Array.from({ length: 20 }, (_, index) => 800 + index),
+          1
+        ),
+      resolve: (movies, onConfirmed) =>
+        resolver.resolve(movies, {
+          maxLookups: 20,
+          concurrency: 4,
+          deadlineMs: 60_000,
+          onConfirmed,
+        }),
+    });
+    await test.runVisit(1);
+    assert.equal(peak, 4);
+    assert.equal(
+      (await test.service.read(100)).relatedCollectionIds.length,
+      20
+    );
+    assert.equal((await test.service.read(100)).completedSeedCount, 1);
+    assert.equal(await dataSource.getRepository(CanonicalMedia).count(), 0);
+  });
+
+  it('rejects an incremental write after the origin claim expires', async () => {
+    let now = new Date('2026-11-16T00:00:00Z');
+    const test = fixture({
+      now: () => now,
+      pages: () => page([201], 1),
+      resolve: async (_movies, onConfirmed) => {
+        now = new Date('2026-11-16T00:05:01Z');
+        await onConfirmed(201, confirmed(301));
+        return memberships([201], { 201: 301 });
+      },
+    });
+    await test.runVisit(1);
+    assert.deepEqual((await test.service.read(100)).relatedCollectionIds, []);
+    assert.equal((await test.service.read(100)).completedSeedCount, 0);
   });
 
   it('does not advance the checkpoint when TMDB returns a different page', async () => {
@@ -231,7 +450,7 @@ describe('persistent Similar Collections discovery', () => {
       [3, 1],
     ]);
     assert.equal((await test.service.read(100)).completedSeedCount, 2);
-    assert.equal((await test.service.read(100)).incompleteSeedCount, 1);
+    assert.equal((await test.service.read(100)).incompleteSeedCount, 2);
     await test.runVisit(2);
     assert.deepEqual(test.calls, [
       [1, 1],
@@ -468,7 +687,7 @@ describe('persistent Similar Collections discovery', () => {
     assert.equal((await restarted.service.read(100)).completedSeedCount, 1);
   });
 
-  it('picks newly released seeds on later visits and ignores future-dated parts', async () => {
+  it('freezes the initial released inventory and ignores future-dated parts', async () => {
     const work: (() => Promise<void>)[] = [];
     let now = new Date('2026-11-16T00:00:00Z');
     const test = new SimilarCollectionsService(dataSource, {
@@ -500,6 +719,6 @@ describe('persistent Similar Collections discovery', () => {
     now = new Date('2026-11-17T00:00:00Z');
     await test.trigger(100, visit(2));
     await work.shift()?.();
-    assert.equal((await test.read(100)).completedSeedCount, 2);
+    assert.equal((await test.read(100)).completedSeedCount, 1);
   });
 });
