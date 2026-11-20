@@ -18,6 +18,50 @@ const at = (day: number) =>
   new Date(`2026-11-${String(day).padStart(2, '0')}T00:00:00Z`);
 
 describe('persistent movie collection membership', () => {
+  it('captures request metadata without replacing an existing newer association', async () => {
+    const service = new MovieCollectionMembershipService();
+    assert.equal(
+      await service.observeMovieIfUnresolved(
+        901,
+        { id: 901, belongs_to_collection: { id: 90 } },
+        at(1)
+      ),
+      true
+    );
+    assert.equal(
+      await service.observeMovieIfUnresolved(
+        902,
+        { id: 902, belongs_to_collection: null },
+        at(1)
+      ),
+      true
+    );
+    await service.observeMovie(
+      901,
+      { id: 901, belongs_to_collection: { id: 91 } },
+      at(2)
+    );
+    assert.equal(
+      await service.observeMovieIfUnresolved(
+        901,
+        { id: 901, belongs_to_collection: { id: 90 } },
+        at(1)
+      ),
+      false
+    );
+    assert.equal(
+      await service.observeMovieIfUnresolved(903, { id: 903 }, at(1)),
+      false
+    );
+    const result = await service.resolve([movie(901)[0], movie(902)[0]]);
+    assert.deepEqual(result.results.get(901)?.membership, {
+      kind: 'collection',
+      collectionId: 91,
+    });
+    assert.deepEqual(result.results.get(902)?.membership, {
+      kind: 'standalone',
+    });
+  });
   it('distinguishes collection, standalone, unresolved and identity mismatch without creating canonical rows', async () => {
     const service = new MovieCollectionMembershipService();
     assert.equal(

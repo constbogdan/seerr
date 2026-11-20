@@ -3624,6 +3624,13 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MovieResult'
+        availableMovies: { type: integer, minimum: 0, nullable: true }
+        totalMovies: { type: integer, minimum: 0, nullable: true }
+        countStatus:
+          type: string
+          enum: [pending, complete, partial, unavailable]
+        countStale: { type: boolean }
+        countRefreshedAt: { type: string, format: date-time, nullable: true }
         similarCollections:
           $ref: '#/components/schemas/SimilarCollectionsRead'
     SimilarCollectionsRead:

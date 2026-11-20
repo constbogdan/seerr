@@ -87,6 +87,7 @@ export interface LibraryTargetedRefreshResult {
   state: 'updated' | 'unchanged';
   providerCalls: number;
   rowsChanged: number;
+  movieTmdbId?: number;
 }
 
 export interface LibraryTargetedRefreshStatus {
@@ -124,6 +125,7 @@ interface TargetedRefreshDependencies {
     target: LibraryTargetedRefreshTarget,
     onProviderRead: (count?: number) => void
   ): Promise<LibraryTargetedRefreshResult>;
+  onConfirmedMovieImport(tmdbId: number): Promise<void>;
   setTimer(callback: () => void, delay: number): NodeJS.Timeout;
   clearTimer(timer: NodeJS.Timeout): void;
   now(): number;
@@ -993,6 +995,9 @@ export class LibraryTargetedRefreshExecutor {
       state: rowsChanged > 0 ? 'updated' : 'unchanged',
       providerCalls: snapshot.provider === 'radarr' ? 1 : 3,
       rowsChanged,
+      ...(snapshot.provider === 'radarr'
+        ? { movieTmdbId: snapshot.movie.tmdbId }
+        : {}),
     };
   }
 
@@ -1155,6 +1160,11 @@ const defaultDependencies: TargetedRefreshDependencies = {
   ...defaultClientDependencies,
   refreshTarget: (target, onProviderRead) =>
     defaultExecutor.refresh(target, onProviderRead),
+  onConfirmedMovieImport: async (tmdbId) => {
+    const { default: libraryCollectionsLifecycle } =
+      await import('@server/lib/libraryCollectionsLifecycle');
+    libraryCollectionsLifecycle.onConfirmedImport(tmdbId);
+  },
   setTimer: setTimeout,
   clearTimer: clearTimeout,
   now: Date.now,
@@ -1397,6 +1407,16 @@ export class LibraryTargetedRefreshService {
         this.rememberCompletedGeneration(generationKey(current, downloadId));
       }
       this.pending.delete(target.key);
+      if (result.rowsChanged > 0 && result.movieTmdbId) {
+        try {
+          await this.dependencies.onConfirmedMovieImport(result.movieTmdbId);
+        } catch {
+          logger.warn('Collection refresh signal unavailable after import', {
+            label: 'Library Collections',
+            tmdbId: result.movieTmdbId,
+          });
+        }
+      }
       logger.info('Targeted Library Foundation refresh completed', {
         label: 'Library Targeted Refresh',
         provider: target.provider,

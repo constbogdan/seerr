@@ -662,6 +662,10 @@ describe('Current Library Hydration', () => {
       dependencies({ jellyfin: localized, metadataFailure: true })
     ).run();
     assert.equal(failed.queryMetadata.failures, 2);
+    assert.deepEqual(failed.collectionMembership, {
+      complete: true,
+      unresolvedCurrentMovies: 0,
+    });
     assert.equal(
       (
         await getRepository(CanonicalMedia).findOneByOrFail({
@@ -678,6 +682,17 @@ describe('Current Library Hydration', () => {
       ).titleSnapshot,
       'Exact Series'
     );
+  });
+
+  it('keeps source hydration complete but marks unresolved current Movie membership incomplete', async () => {
+    const result = await new LibraryHistoryHydrationService(
+      dependencies({ metadataFailure: true })
+    ).run();
+    assert.equal(result.complete, true);
+    assert.deepEqual(result.collectionMembership, {
+      complete: false,
+      unresolvedCurrentMovies: 1,
+    });
   });
 
   it('persists, changes, and clears Movie collection membership while preserving the last good observation on failures', async () => {

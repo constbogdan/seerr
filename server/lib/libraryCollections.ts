@@ -32,9 +32,9 @@ import logger from '@server/logger';
 import { LRUCache } from 'lru-cache';
 import { In, MoreThan } from 'typeorm';
 
-const COLLECTION_SNAPSHOT_TTL_MS = 15 * 60 * 1000;
+const COLLECTION_SNAPSHOT_TTL_MS = 6 * 60 * 60 * 1000;
 const UNAVAILABLE_RETRY_MS = 30 * 1000;
-const MISSING_COLLECTION_RETRY_MS = 6 * 60 * 60 * 1000;
+const MISSING_COLLECTION_RETRY_MS = 5 * 60 * 1000;
 const MEMBERSHIP_RECOVERY_RETRY_MS = 60 * 1000;
 export const COLLECTION_RECOVERY_BATCH_SIZE = 50;
 const COLLECTION_METADATA_CONCURRENCY = 4;
@@ -52,7 +52,9 @@ export interface LibraryCollectionsQuery {
 interface CollectionSnapshot {
   fingerprint: string;
   items: LibraryCollectionItem[];
+  byId: Map<number, LibraryCollectionItem>;
   refreshedAt: Date;
+  generation: number;
 }
 
 interface CollectionRuntime {
@@ -62,6 +64,19 @@ interface CollectionRuntime {
   status: LibraryCollectionHydrationState;
   failedCollections: number;
   lastAttemptAt?: Date;
+  lastAttemptGeneration?: number;
+  lastAttemptFingerprint?: string;
+  generation: number;
+  retryTimer?: NodeJS.Timeout;
+  retryDelayMs?: number;
+}
+
+export interface CollectionCountLookup {
+  availableMovies: number | null;
+  totalMovies: number | null;
+  countStatus: LibraryCollectionHydrationState;
+  countStale: boolean;
+  countRefreshedAt: string | null;
 }
 
 interface CollectionMetadataResult {
@@ -118,6 +133,55 @@ const discoverCurrentCollectionIds = async (): Promise<number[]> => {
     .map((row) => Number(row.tmdbCollectionId))
     .filter((id) => Number.isSafeInteger(id) && id > 0);
 };
+
+/** Detect committed physical-anchor and association changes around hydration. */
+export const currentPhysicalCollectionSignature = async (): Promise<string> => {
+  const rows = await getRepository(CanonicalMedia)
+    .createQueryBuilder('canonical')
+    .select('canonical.id', 'canonicalId')
+    .addSelect('canonical.tmdbCollectionId', 'collectionId')
+    .distinct(true)
+    .innerJoin(
+      LibraryPresence,
+      'presence',
+      `presence.canonicalMediaId = canonical.id AND ${currentLibraryPresenceSql(
+        'presence',
+        ':isCurrent'
+      )}`,
+      { isCurrent: true }
+    )
+    .where('canonical.mediaType = :mediaType', {
+      mediaType: LibraryMediaType.MOVIE,
+    })
+    .andWhere('canonical.tmdbCollectionId IS NOT NULL')
+    .orderBy('canonical.id', 'ASC')
+    .getRawMany<{
+      canonicalId: number | string;
+      collectionId: number | string;
+    }>();
+  return rows.map((row) => `${row.canonicalId}:${row.collectionId}`).join('|');
+};
+
+/** Unknown membership for a current Movie prevents an exhaustive index claim. */
+export const unresolvedCurrentMovieCollectionMembershipCount =
+  async (): Promise<number> =>
+    getRepository(CanonicalMedia)
+      .createQueryBuilder('canonical')
+      .innerJoin(
+        LibraryPresence,
+        'presence',
+        `presence.canonicalMediaId = canonical.id AND ${currentLibraryPresenceSql(
+          'presence',
+          ':isCurrent'
+        )}`,
+        { isCurrent: true }
+      )
+      .where('canonical.mediaType = :mediaType', {
+        mediaType: LibraryMediaType.MOVIE,
+      })
+      .andWhere('canonical.collectionMembershipHydratedAt IS NULL')
+      .distinct(true)
+      .getCount();
 
 const fetchStrictAvailability = async (
   tmdbIds: number[]
@@ -324,8 +388,9 @@ const sortCollections = (
 export class LibraryCollectionsService {
   private readonly dependencies: LibraryCollectionsDependencies;
   private readonly runtimes = new Map<string, CollectionRuntime>();
-  // A missing collection is independent of locale. Bound memory and permit
-  // recovery after six hours; no timers, polling, or durable negative records.
+  private refreshReady: boolean;
+  // A missing collection is independent of locale. Bound memory and retry
+  // after five minutes; no durable negative records.
   private readonly missingCollections = new LRUCache<number, number>({
     max: 1000,
   });
@@ -341,8 +406,28 @@ export class LibraryCollectionsService {
     maxPending: COLLECTION_RECOVERY_BATCH_SIZE,
   });
 
-  constructor(dependencies: Partial<LibraryCollectionsDependencies> = {}) {
+  constructor(
+    dependencies: Partial<LibraryCollectionsDependencies> = {},
+    refreshReady = true
+  ) {
     this.dependencies = { ...defaultDependencies(), ...dependencies };
+    this.refreshReady = refreshReady;
+  }
+
+  /** Hold last-good data while required physical Movie membership is unresolved. */
+  public setRefreshReady(ready: boolean): void {
+    if (this.refreshReady === ready) return;
+    this.refreshReady = ready;
+    for (const [locale, runtime] of this.runtimes) {
+      if (!ready) {
+        runtime.generation++;
+        if (runtime.retryTimer) clearTimeout(runtime.retryTimer);
+        runtime.retryTimer = undefined;
+        runtime.status = runtime.snapshot ? 'partial' : 'pending';
+      } else {
+        this.scheduleQuery(locale);
+      }
+    }
   }
 
   private runtime(locale: string): CollectionRuntime {
@@ -351,6 +436,7 @@ export class LibraryCollectionsService {
     const created: CollectionRuntime = {
       status: 'pending',
       failedCollections: 0,
+      generation: 0,
     };
     this.runtimes.set(locale, created);
     return created;
@@ -506,7 +592,8 @@ export class LibraryCollectionsService {
     locale: string,
     ids: number[],
     fingerprint: string,
-    runtime: CollectionRuntime
+    runtime: CollectionRuntime,
+    generation: number
   ): Promise<void> {
     const startedAt = this.dependencies.now();
     runtime.lastAttemptAt = startedAt;
@@ -552,6 +639,13 @@ export class LibraryCollectionsService {
         }
       );
       await this.recoverMembership(ids);
+      const currentFingerprint = collectionFingerprint(
+        await this.dependencies.discoverCollectionIds()
+      );
+      if (currentFingerprint !== fingerprint) {
+        runtime.desiredFingerprint = currentFingerprint;
+        return;
+      }
       const successful = metadata.filter(
         (
           entry
@@ -562,10 +656,26 @@ export class LibraryCollectionsService {
         metadata.filter((entry) => entry.failed).map((entry) => entry.id)
       );
 
-      if (failedIds.size > 0 && !runtime.snapshot) {
-        if (runtime.desiredFingerprint !== fingerprint) return;
-        runtime.status = 'unavailable';
+      if (failedIds.size > 0) {
+        if (
+          runtime.desiredFingerprint !== fingerprint ||
+          runtime.generation !== generation
+        )
+          return;
+        runtime.status = runtime.snapshot ? 'partial' : 'unavailable';
         runtime.failedCollections = failedIds.size;
+        const missingRetry = [...failedIds].map((id) =>
+          this.missingCollections.get(id)
+        );
+        runtime.retryDelayMs = missingRetry.every(
+          (value) => value !== undefined
+        )
+          ? Math.max(
+              this.dependencies.unavailableRetryMs,
+              Math.min(...(missingRetry as number[])) -
+                this.dependencies.now().getTime()
+            )
+          : this.dependencies.unavailableRetryMs;
         return;
       }
 
@@ -591,14 +701,26 @@ export class LibraryCollectionsService {
                   id,
                   status: (await this.dependencies.fetchMovie(id, locale))
                     .status,
+                  failed: false,
                 };
               } catch {
-                return { id, status: null };
+                return { id, status: null, failed: true };
               }
             }
           ),
         ]
       );
+      if (movieMetadata.some((entry) => entry.failed)) {
+        if (
+          runtime.desiredFingerprint !== fingerprint ||
+          runtime.generation !== generation
+        )
+          return;
+        runtime.status = runtime.snapshot ? 'partial' : 'unavailable';
+        runtime.failedCollections = ids.length;
+        runtime.retryDelayMs = this.dependencies.unavailableRetryMs;
+        return;
+      }
       const visibleMemberIds = new Set(
         movieMetadata
           .filter(
@@ -616,21 +738,22 @@ export class LibraryCollectionsService {
         );
         return item ? [item] : [];
       });
-      const previousById = new Map(
-        (runtime.snapshot?.items ?? []).map((item) => [item.id, item])
-      );
-      const refreshedById = new Map(
-        refreshedItems.map((item) => [item.id, item])
-      );
-      const items = ids.flatMap((id) => {
-        const item = refreshedById.get(id) ?? previousById.get(id);
-        return item ? [item] : [];
-      });
       const refreshedAt = this.dependencies.now();
-      if (runtime.desiredFingerprint !== fingerprint) return;
-      runtime.snapshot = { fingerprint, items, refreshedAt };
-      runtime.failedCollections = failedIds.size;
-      runtime.status = failedIds.size > 0 ? 'partial' : 'complete';
+      if (
+        runtime.desiredFingerprint !== fingerprint ||
+        runtime.generation !== generation
+      )
+        return;
+      runtime.snapshot = {
+        fingerprint,
+        items: refreshedItems,
+        byId: new Map(refreshedItems.map((item) => [item.id, item])),
+        refreshedAt,
+        generation,
+      };
+      runtime.failedCollections = 0;
+      runtime.status = 'complete';
+      runtime.retryDelayMs = undefined;
       logger.info('Library collection snapshot refreshed', {
         label: 'Library Collections',
         discoveredCollections: ids.length,
@@ -638,12 +761,17 @@ export class LibraryCollectionsService {
         durationMs: refreshedAt.getTime() - startedAt.getTime(),
       });
     } catch (error) {
-      if (runtime.desiredFingerprint !== fingerprint) return;
+      if (
+        runtime.desiredFingerprint !== fingerprint ||
+        runtime.generation !== generation
+      )
+        return;
       runtime.status = runtime.snapshot ? 'partial' : 'unavailable';
       runtime.failedCollections = Math.max(
         runtime.failedCollections,
         ids.length
       );
+      runtime.retryDelayMs = this.dependencies.unavailableRetryMs;
       logger.warn('Unable to refresh Library collection snapshot', {
         label: 'Library Collections',
         errorMessage: error instanceof Error ? error.message : String(error),
@@ -659,24 +787,158 @@ export class LibraryCollectionsService {
   ): void {
     if (runtime.active) return;
     runtime.status = 'pending';
-    runtime.active = this.refresh(locale, ids, fingerprint, runtime).finally(
-      () => {
-        runtime.active = undefined;
+    const generation = runtime.generation;
+    runtime.lastAttemptGeneration = generation;
+    runtime.lastAttemptFingerprint = fingerprint;
+    runtime.active = this.refresh(
+      locale,
+      ids,
+      fingerprint,
+      runtime,
+      generation
+    ).finally(() => {
+      runtime.active = undefined;
+      if (
+        runtime.generation !== generation ||
+        runtime.desiredFingerprint !== fingerprint
+      ) {
+        this.scheduleQuery(locale);
+      } else if (
+        runtime.status === 'partial' ||
+        runtime.status === 'unavailable'
+      ) {
+        this.scheduleQuery(
+          locale,
+          runtime.retryDelayMs ?? this.dependencies.unavailableRetryMs
+        );
       }
-    );
+    });
+  }
+
+  private scheduleQuery(locale: string, delayMs = 0): void {
+    if (!this.refreshReady) return;
+    const runtime = this.runtime(locale);
+    if (runtime.retryTimer) clearTimeout(runtime.retryTimer);
+    runtime.retryTimer = setTimeout(() => {
+      runtime.retryTimer = undefined;
+      if (!this.refreshReady) return;
+      void this.query({
+        take: 1,
+        skip: 0,
+        completeness: 'all',
+        sort: 'name',
+        sortDirection: 'asc',
+        locale,
+      }).catch((error) => {
+        logger.warn('Unable to schedule Library collection snapshot refresh', {
+          label: 'Library Collections',
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        this.scheduleQuery(locale, this.dependencies.unavailableRetryMs);
+      });
+    }, delayMs);
+    runtime.retryTimer.unref?.();
+  }
+
+  /** Called after a committed collection-related change, not by card reads. */
+  public invalidate(): void {
+    for (const [locale, runtime] of this.runtimes) {
+      runtime.generation++;
+      if (this.refreshReady) this.scheduleQuery(locale);
+    }
+  }
+
+  /** A cold direct detail visit may initialize its locale without waiting for a build. */
+  public lookupById(
+    id: number,
+    locale: string,
+    allowInitialization = true
+  ): CollectionCountLookup {
+    const runtime = this.runtime(locale);
+    const snapshot = runtime.snapshot;
+    const expired =
+      snapshot !== undefined &&
+      this.dependencies.now().getTime() - snapshot.refreshedAt.getTime() >=
+        this.dependencies.snapshotTtlMs;
+    if (
+      allowInitialization &&
+      (!snapshot || expired || snapshot.generation !== runtime.generation)
+    )
+      if (this.refreshReady && !runtime.active && !runtime.retryTimer)
+        this.scheduleQuery(locale);
+    const item = snapshot?.byId.get(id);
+    return {
+      availableMovies: item?.availableMovies ?? null,
+      totalMovies: item?.totalMovies ?? null,
+      countStatus:
+        !snapshot && !allowInitialization
+          ? 'unavailable'
+          : runtime.active
+            ? 'pending'
+            : runtime.status,
+      countStale:
+        Boolean(snapshot) &&
+        (expired ||
+          Boolean(runtime.active) ||
+          runtime.status === 'partial' ||
+          snapshot?.generation !== runtime.generation),
+      countRefreshedAt: snapshot?.refreshedAt.toISOString() ?? null,
+    };
+  }
+
+  public warm(locale: string): void {
+    if (!this.refreshReady) return;
+    const runtime = this.runtime(locale);
+    if (!runtime.snapshot && !runtime.active && !runtime.retryTimer)
+      this.scheduleQuery(locale);
+  }
+
+  public hasSnapshot(locale: string): boolean {
+    return Boolean(this.runtimes.get(locale)?.snapshot);
   }
 
   public async query(
     input: LibraryCollectionsQuery
   ): Promise<LibraryCollectionsResponse> {
+    if (!this.refreshReady) {
+      const runtime = this.runtime(input.locale);
+      const snapshot = runtime.snapshot;
+      const filtered = (snapshot?.items ?? []).filter(
+        (item) =>
+          input.completeness === 'all' ||
+          item.completeness === input.completeness
+      );
+      const sorted = sortCollections(filtered, input.sort, input.sortDirection);
+      return {
+        pageInfo: {
+          pages: Math.ceil(sorted.length / input.take),
+          page: Math.floor(input.skip / input.take) + 1,
+          results: sorted.length,
+          pageSize: input.take,
+        },
+        results: sorted.slice(input.skip, input.skip + input.take),
+        status: snapshot ? 'partial' : 'pending',
+        stale: Boolean(snapshot),
+        discoveredCollections: snapshot?.items.length ?? 0,
+        failedCollections: runtime.failedCollections,
+        refreshedAt: snapshot?.refreshedAt.toISOString() ?? null,
+      };
+    }
     const ids = await this.dependencies.discoverCollectionIds();
+    if (!this.refreshReady) return this.query(input);
     const fingerprint = collectionFingerprint(ids);
     const runtime = this.runtime(input.locale);
     runtime.desiredFingerprint = fingerprint;
     const now = this.dependencies.now();
 
     if (ids.length === 0) {
-      runtime.snapshot = { fingerprint, items: [], refreshedAt: now };
+      runtime.snapshot = {
+        fingerprint,
+        items: [],
+        byId: new Map(),
+        refreshedAt: now,
+        generation: runtime.generation,
+      };
       runtime.status = 'complete';
       runtime.failedCollections = 0;
     } else {
@@ -685,12 +947,17 @@ export class LibraryCollectionsService {
         now.getTime() - runtime.snapshot.refreshedAt.getTime() >=
           this.dependencies.snapshotTtlMs;
       const unavailableRetryDue =
-        runtime.status !== 'unavailable' ||
+        runtime.status === 'complete' ||
         runtime.lastAttemptAt === undefined ||
+        runtime.lastAttemptGeneration !== runtime.generation ||
+        runtime.lastAttemptFingerprint !== fingerprint ||
         now.getTime() - runtime.lastAttemptAt.getTime() >=
-          this.dependencies.unavailableRetryMs;
+          (runtime.retryDelayMs ?? this.dependencies.unavailableRetryMs);
       const needsRefresh =
-        runtime.snapshot?.fingerprint !== fingerprint || snapshotExpired;
+        runtime.snapshot?.fingerprint !== fingerprint ||
+        snapshotExpired ||
+        runtime.snapshot?.generation !== runtime.generation ||
+        runtime.status === 'partial';
       if (needsRefresh && unavailableRetryDue)
         this.startRefresh(input.locale, ids, fingerprint, runtime);
       // A warm snapshot/long collection-404 TTL must not suppress retries of
@@ -740,6 +1007,6 @@ export class LibraryCollectionsService {
   }
 }
 
-const libraryCollections = new LibraryCollectionsService();
+const libraryCollections = new LibraryCollectionsService({}, false);
 
 export default libraryCollections;

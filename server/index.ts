@@ -11,6 +11,7 @@ import {
   synchronizationPolicy,
 } from '@server/job/synchronizationPolicy';
 import freshService from '@server/lib/fresh/service';
+import libraryCollectionsLifecycle from '@server/lib/libraryCollectionsLifecycle';
 import notificationManager from '@server/lib/notifications';
 import DiscordAgent from '@server/lib/notifications/agents/discord';
 import EmailAgent from '@server/lib/notifications/agents/email';
@@ -321,12 +322,14 @@ app
     let httpServer;
     if (host) {
       httpServer = server.listen(port, host, () => {
+        libraryCollectionsLifecycle.markHttpReady();
         logger.info(`Server ready on ${host} port ${port}`, {
           label: 'Server',
         });
       });
     } else {
       httpServer = server.listen(port, () => {
+        libraryCollectionsLifecycle.markHttpReady();
         logger.info(`Server ready on port ${port}`, {
           label: 'Server',
         });

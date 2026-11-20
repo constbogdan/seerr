@@ -9,6 +9,7 @@ import type {
   MediaResultsResponse,
   MediaWatchDataResponse,
 } from '@server/interfaces/api/mediaInterfaces';
+import libraryCollectionsLifecycle from '@server/lib/libraryCollectionsLifecycle';
 import mediaRemoval, { MediaRemovalError } from '@server/lib/mediaRemoval';
 import { Permission } from '@server/lib/permissions';
 import { getSettings } from '@server/lib/settings';
@@ -116,6 +117,7 @@ mediaRoutes.post<
     }
 
     const is4k = String(req.body.is4k) === 'true';
+    const wasAvailable = media.status === MediaStatus.AVAILABLE;
 
     switch (req.params.status) {
       case 'available':
@@ -161,6 +163,11 @@ mediaRoutes.post<
     }
 
     await mediaRepository.save(media);
+    if (
+      media.mediaType === MediaType.MOVIE &&
+      wasAvailable !== (media.status === MediaStatus.AVAILABLE)
+    )
+      libraryCollectionsLifecycle.onAvailabilityCommitted(media.tmdbId);
 
     return res.status(200).json(media);
   }
@@ -182,6 +189,11 @@ mediaRoutes.delete(
         await mediaRepository.save(media);
       } else {
         await mediaRepository.remove(media);
+        if (
+          media.mediaType === MediaType.MOVIE &&
+          media.status === MediaStatus.AVAILABLE
+        )
+          libraryCollectionsLifecycle.onAvailabilityCommitted(media.tmdbId);
       }
 
       return res.status(204).send();

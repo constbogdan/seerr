@@ -90,6 +90,15 @@ const createApp = (
 const app = createApp();
 
 describe('Library collections API', () => {
+  it('keeps the authorized cold response pending until hydration readiness', async () => {
+    const service = new LibraryCollectionsService({}, false);
+    const response = await request(createApp(service))
+      .get('/library/collections')
+      .set('x-test-role', 'admin');
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, 'pending');
+    assert.deepEqual(response.body.results, []);
+  });
   it('requires administrator permission', async () => {
     const response = await request(app)
       .get('/library/collections')
