@@ -1,14 +1,20 @@
+import ExternalAPI from '@server/api/externalapi';
 import RadarrAPI, { type RadarrMovie } from '@server/api/servarr/radarr';
 import SonarrAPI, {
   type SonarrEpisode,
   type SonarrEpisodeFile,
   type SonarrSeries,
 } from '@server/api/servarr/sonarr';
+import TheMovieDb from '@server/api/themoviedb';
+import type {
+  TmdbCollection,
+  TmdbMovieDetails,
+} from '@server/api/themoviedb/interfaces';
 import {
   LibraryMediaType,
   LibraryRemovalSource,
 } from '@server/constants/libraryHistory';
-import { MediaType } from '@server/constants/media';
+import { MediaStatus, MediaType } from '@server/constants/media';
 import { RemovalTargetType } from '@server/constants/removal';
 import dataSource, { getRepository } from '@server/datasource';
 import {
@@ -23,6 +29,9 @@ import {
 } from '@server/entity/LibraryHistory';
 import { SourceCheckpoint } from '@server/entity/LibraryHydration';
 import Media from '@server/entity/Media';
+import { MediaRequest } from '@server/entity/MediaRequest';
+import { MovieCollectionObservation } from '@server/entity/MovieCollectionObservation';
+import { User } from '@server/entity/User';
 import {
   AcquisitionMonitor,
   fanOutConfirmedImports,
@@ -34,6 +43,12 @@ import {
 } from '@server/lib/downloadtracker';
 import { LibraryService } from '@server/lib/library';
 import { resolveCurrentRemovalTargetsForEligibility } from '@server/lib/libraryBulkEligibilityResolver';
+import libraryCollections, {
+  LibraryCollectionsService,
+} from '@server/lib/libraryCollections';
+import libraryCollectionsLifecycle, {
+  LibraryCollectionsLifecycle,
+} from '@server/lib/libraryCollectionsLifecycle';
 import {
   CurrentLibraryGenerationService,
   LibraryHydrationEpochService,
@@ -45,10 +60,15 @@ import {
   type RadarrSettings,
   type SonarrSettings,
 } from '@server/lib/settings';
+import { similarCollections } from '@server/lib/similarCollections';
 import { classifyMovieLibraryStatusByTmdbIds } from '@server/lib/watchlistLibraryStatus';
+import { isAuthenticated } from '@server/middleware/auth';
+import collectionRoutes from '@server/routes/collection';
 import { setupTestDb } from '@server/test/db';
+import express from 'express';
 import assert from 'node:assert/strict';
 import { describe, it, mock } from 'node:test';
+import httpRequest from 'supertest';
 import {
   LIBRARY_TARGETED_REFRESH_ACTIVE_WINDOW_MS,
   LIBRARY_TARGETED_REFRESH_DEBOUNCE_MS,
@@ -355,6 +375,7 @@ describe('LibraryTargetedRefresh persistence', () => {
       state: 'updated',
       providerCalls: 1,
       rowsChanged: 7,
+      movieTmdbId: 100,
     });
     assert.equal(second.state, 'unchanged');
     assert.equal(second.rowsChanged, 0);
@@ -799,6 +820,76 @@ class FakeClock {
 describe('LibraryTargetedRefresh lifecycle', () => {
   it('flows a real DownloadTracker Movie confirmation through fan-out into Foundation persistence', async () => {
     const clock = new FakeClock();
+    const tmdbGet = mock.method(
+      ExternalAPI.prototype as unknown as {
+        get: (endpoint: string) => Promise<unknown>;
+      },
+      'get',
+      async (endpoint: string) => {
+        assert.ok(endpoint === '/movie/100' || endpoint === '/movie/101');
+        const id = Number(endpoint.slice('/movie/'.length));
+        return {
+          id,
+          belongs_to_collection: id === 100 ? { id: 501 } : null,
+          external_ids: {},
+          videos: { results: [{ type: 'Trailer', key: 'fixture' }] },
+        };
+      }
+    );
+    const requester = await getRepository(User).findOneByOrFail({
+      email: 'demo@seerr.dev',
+    });
+    const request = await MediaRequest.request(
+      { mediaId: 100, mediaType: MediaType.MOVIE, is4k: false },
+      requester
+    );
+    assert.ok(request.id);
+    assert.equal(
+      (
+        await getRepository(MovieCollectionObservation).findOneByOrFail({
+          tmdbId: 100,
+        })
+      ).tmdbCollectionId,
+      501
+    );
+    let collectionFetches = 0;
+    const collections = new LibraryCollectionsService(
+      {
+        fetchCollection: async () => {
+          collectionFetches++;
+          return {
+            id: 501,
+            name: 'Imported Collection',
+            parts: [{ id: 100 }],
+          } as TmdbCollection;
+        },
+        fetchMovie: async () =>
+          ({ id: 100, status: 'Released' }) as TmdbMovieDetails,
+        fetchPhysicalMovieIds: async () => new Set(),
+      },
+      false
+    );
+    const lifecycle = new LibraryCollectionsLifecycle({
+      invalidate: () => collections.invalidate(),
+      warm: () => undefined,
+      setRefreshReady: (ready) => collections.setRefreshReady(ready),
+      hasSnapshot: (locale) => collections.hasSnapshot(locale),
+      defaultLocale: () => 'en',
+      setTimer: clock.setTimer,
+      clearTimer: clock.clearTimer,
+    });
+    lifecycle.onHistoryCommitted(true, false, true);
+    lifecycle.markHttpReady();
+    const collectionQuery = {
+      take: 10,
+      skip: 0,
+      completeness: 'all' as const,
+      sort: 'name' as const,
+      sortDirection: 'asc' as const,
+      locale: 'en',
+    };
+    assert.equal((await collections.query(collectionQuery)).status, 'complete');
+    assert.equal(collections.lookupById(501, 'en').availableMovies, null);
     const settings = getSettings();
     const priorRadarr = settings.radarr;
     const priorSonarr = settings.sonarr;
@@ -839,7 +930,8 @@ describe('LibraryTargetedRefresh lifecycle', () => {
       async () => history
     );
     const tracker = new DownloadTracker({ now: () => clock.now });
-    const targeted = executor({});
+    let currentMovie = movie();
+    const targeted = executor({ currentMovie: () => currentMovie });
     let signalPersisted: (() => void) | undefined;
     const persisted = new Promise<void>((resolve) => {
       signalPersisted = resolve;
@@ -857,6 +949,8 @@ describe('LibraryTargetedRefresh lifecycle', () => {
         signalPersisted?.();
         return result;
       },
+      onConfirmedMovieImport: async (tmdbId) =>
+        lifecycle.onConfirmedImport(tmdbId),
       setTimer: clock.setTimer,
       clearTimer: clock.clearTimer,
       now: () => clock.now,
@@ -930,12 +1024,128 @@ describe('LibraryTargetedRefresh lifecycle', () => {
         1
       );
       assert.equal(await getRepository(SourceCheckpoint).count(), 0);
+      const importedMedia = await getRepository(Media).findOneByOrFail({
+        tmdbId: 100,
+        mediaType: MediaType.MOVIE,
+      });
+      importedMedia.status = MediaStatus.AVAILABLE;
+      await getRepository(Media).save(importedMedia);
+      await clock.runNext();
+      for (let attempt = 0; attempt < 20; attempt++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 5));
+        if (collections.lookupById(501, 'en').availableMovies === 1) break;
+      }
+      assert.equal(collections.lookupById(501, 'en').availableMovies, 1);
+      assert.equal(collections.lookupById(501, 'en').totalMovies, 1);
+      assert.equal(collectionFetches, 1);
+
+      const detailApp = express();
+      detailApp.use((req, _res, next) => {
+        req.user = {
+          hasPermission: () => true,
+        } as unknown as Express.Request['user'];
+        next();
+      });
+      detailApp.use('/collection', isAuthenticated(), collectionRoutes);
+      const getCollection = mock.method(
+        TheMovieDb.prototype,
+        'getCollection',
+        async () =>
+          ({
+            id: 501,
+            name: 'Imported Collection',
+            parts: [{ id: 100 }],
+          }) as never
+      );
+      const relatedMedia = mock.method(
+        Media,
+        'getRelatedMedia',
+        async () => []
+      );
+      const similar = mock.method(similarCollections, 'read', async () => ({
+        relatedCollectionIds: [],
+        completedSeedCount: 0,
+        incompleteSeedCount: 0,
+        discoveryActive: false,
+      }));
+      const lookup = mock.method(
+        libraryCollections,
+        'lookupById',
+        (id: number, locale: string, allowInitialization: boolean) =>
+          collections.lookupById(id, locale, allowInitialization)
+      );
+      const ready = mock.method(
+        libraryCollectionsLifecycle,
+        'ready',
+        () => true
+      );
+      try {
+        const detail = await httpRequest(detailApp).get('/collection/501');
+        assert.equal(detail.status, 200);
+        assert.equal(detail.body.availableMovies, 1);
+        assert.equal(detail.body.totalMovies, 1);
+        assert.equal(lookup.mock.callCount(), 1);
+      } finally {
+        getCollection.mock.restore();
+        relatedMedia.mock.restore();
+        similar.mock.restore();
+        lookup.mock.restore();
+        ready.mock.restore();
+      }
+
+      await MediaRequest.request(
+        { mediaId: 101, mediaType: MediaType.MOVIE, is4k: false },
+        requester
+      );
+      assert.equal(
+        (
+          await getRepository(MovieCollectionObservation).findOneByOrFail({
+            tmdbId: 101,
+          })
+        ).tmdbCollectionId,
+        null
+      );
+      currentMovie = movie({
+        id: 11,
+        tmdbId: 101,
+        imdbId: 'tt0000101',
+        title: 'Standalone Movie',
+        titleSlug: 'standalone-movie',
+        folderName: 'Standalone Movie (2026)',
+        path: '/media/movies/Standalone Movie (2026)',
+        movieFile: {
+          ...movie().movieFile!,
+          id: 21,
+          movieId: 11,
+          relativePath: 'Standalone Movie.mkv',
+        },
+      });
+      const standalone = await targeted.instance.refresh({
+        ...movieTarget(),
+        key: `radarr:${servarrPhysicalServerKey(radarrServer)}:11`,
+        externalId: 11,
+        downloadIds: ['standalone-import'],
+      });
+      assert.ok(standalone.rowsChanged > 0);
+      lifecycle.onConfirmedImport(101);
+      await clock.runNext();
+      assert.equal(
+        await getRepository(LibraryPresence).countBy({
+          sourceSystem: 'radarr',
+          sourceScope: 'service:1',
+          sourceItemId: 'movie:11',
+          isCurrent: true,
+        }),
+        1
+      );
+      assert.equal(collectionFetches, 1);
     } finally {
       settings.radarr = priorRadarr;
       settings.sonarr = priorSonarr;
       refreshDownloads.mock.restore();
       getQueue.mock.restore();
       getHistory.mock.restore();
+      tmdbGet.mock.restore();
     }
   });
 

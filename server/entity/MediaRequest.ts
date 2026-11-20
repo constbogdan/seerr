@@ -6,6 +6,7 @@ import {
 } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import type { MediaRequestBody } from '@server/interfaces/api/requestInterfaces';
+import { movieCollectionMembership } from '@server/lib/movieCollectionMembership';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import overrideRules from '@server/lib/overrideRules';
 import { Permission } from '@server/lib/permissions';
@@ -181,6 +182,7 @@ export class MediaRequest {
       }
     }
 
+    const metadataRequestedAt = new Date();
     const tmdbMedia =
       requestBody.mediaType === MediaType.MOVIE
         ? await tmdb.getMovie({ movieId: requestBody.mediaId })
@@ -401,6 +403,21 @@ export class MediaRequest {
       });
 
       await requestRepository.save(request);
+      try {
+        await movieCollectionMembership.observeMovieIfUnresolved(
+          requestBody.mediaId,
+          tmdbMedia as { id: number; belongs_to_collection?: unknown },
+          metadataRequestedAt
+        );
+      } catch {
+        logger.warn(
+          'Movie request collection membership observation deferred',
+          {
+            label: 'Media Request',
+            tmdbId: requestBody.mediaId,
+          }
+        );
+      }
       return request;
     } else {
       const tmdbMediaShow = tmdbMedia as Awaited<

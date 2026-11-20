@@ -15,8 +15,10 @@ import {
   MediaRequest,
   QuotaRestrictedError,
 } from '@server/entity/MediaRequest';
+import { MovieCollectionObservation } from '@server/entity/MovieCollectionObservation';
 import SeasonRequest from '@server/entity/SeasonRequest';
 import { User } from '@server/entity/User';
+import { movieCollectionMembership } from '@server/lib/movieCollectionMembership';
 import { Permission } from '@server/lib/permissions';
 import { setupTestDb } from '@server/test/db';
 
@@ -35,6 +37,12 @@ const externalApiGetMock = mock.method(
 
     return {
       id: tmdbId,
+      ...(endpoint.startsWith('/movie/') &&
+      (tmdbId === 991001 || tmdbId === 991002)
+        ? {
+            belongs_to_collection: tmdbId === 991001 ? { id: 9191 } : null,
+          }
+        : {}),
       external_ids: {},
       seasons: [0, 1, 2, 3, 4].map((season_number) => ({
         season_number,
@@ -104,6 +112,56 @@ const requestNextSeason = (
   );
 
 describe('MediaRequest.request', () => {
+  it('persists collection and standalone observations from the existing movie-detail request', async () => {
+    const requester = await seedRequester(5);
+    await MediaRequest.request(
+      { mediaId: 991001, mediaType: MediaType.MOVIE, is4k: false },
+      requester
+    );
+    await MediaRequest.request(
+      { mediaId: 991002, mediaType: MediaType.MOVIE, is4k: false },
+      requester
+    );
+    assert.deepEqual(
+      externalApiGetMock.calls.map((call) => call.arguments[0]),
+      ['/movie/991001', '/movie/991002']
+    );
+    const observations = await getRepository(MovieCollectionObservation).find({
+      order: { tmdbId: 'ASC' },
+    });
+    assert.deepEqual(
+      observations.map(({ tmdbId, tmdbCollectionId }) => [
+        tmdbId,
+        tmdbCollectionId,
+      ]),
+      [
+        [991001, 9191],
+        [991002, null],
+      ]
+    );
+    assert.equal(externalApiGetMock.callCount(), 2);
+  });
+
+  it('does not reject a valid movie request when optional membership persistence fails', async () => {
+    const requester = await seedRequester(5);
+    const failure = mock.method(
+      movieCollectionMembership,
+      'observeMovieIfUnresolved',
+      async () => {
+        throw new Error('isolated membership write failure');
+      }
+    );
+    try {
+      await MediaRequest.request(
+        { mediaId: 991003, mediaType: MediaType.MOVIE, is4k: false },
+        requester
+      );
+      assert.equal(await getRepository(MediaRequest).count(), 1);
+      assert.equal(failure.mock.callCount(), 1);
+    } finally {
+      failure.mock.restore();
+    }
+  });
   it('rejects blocked Movies and Series in HD and 4K without creating requests', async () => {
     const requester = await createRequester(
       'blocked-fixture@example.invalid',

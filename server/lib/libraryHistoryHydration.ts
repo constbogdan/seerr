@@ -112,6 +112,10 @@ export interface LibraryHydrationResult {
   complete: boolean;
   sources: HydrationSourceSummary[];
   queryMetadata: QueryMetadataSummary;
+  collectionMembership?: {
+    complete: boolean;
+    unresolvedCurrentMovies: number | null;
+  };
 }
 
 export interface QueryMetadataSummary {
@@ -322,7 +326,77 @@ export class LibraryHistoryHydrationService {
     this.inFlight = backgroundDatabaseWriteCoordinator
       .runExclusive(async () => {
         await this.runCoordinator.recoverExpiredRuns();
-        return this.execute();
+        let before: string | undefined;
+        try {
+          const { currentPhysicalCollectionSignature } =
+            await import('@server/lib/libraryCollections');
+          before = await currentPhysicalCollectionSignature();
+        } catch {
+          logger.warn(
+            'Unable to capture initial collection association state',
+            {
+              label: 'Library Collections',
+            }
+          );
+        }
+        let result: LibraryHydrationResult;
+        try {
+          result = await this.execute();
+        } catch (error) {
+          try {
+            const { default: libraryCollectionsLifecycle } =
+              await import('@server/lib/libraryCollectionsLifecycle');
+            libraryCollectionsLifecycle.onHistoryCommitted(false, false, false);
+          } catch {
+            logger.warn('Unable to publish failed collection hydration state', {
+              label: 'Library Collections',
+            });
+          }
+          throw error;
+        }
+        try {
+          const { unresolvedCurrentMovieCollectionMembershipCount } =
+            await import('@server/lib/libraryCollections');
+          const unresolvedCurrentMovies =
+            await unresolvedCurrentMovieCollectionMembershipCount();
+          result.collectionMembership = {
+            complete: unresolvedCurrentMovies === 0,
+            unresolvedCurrentMovies,
+          };
+        } catch {
+          result.collectionMembership = {
+            complete: false,
+            unresolvedCurrentMovies: null,
+          };
+          logger.warn('Unable to verify current Movie collection membership', {
+            label: 'Library Collections',
+          });
+        }
+        let associationChanged = false;
+        try {
+          const { currentPhysicalCollectionSignature } =
+            await import('@server/lib/libraryCollections');
+          const after = await currentPhysicalCollectionSignature();
+          associationChanged = before !== undefined && before !== after;
+        } catch {
+          logger.warn('Unable to capture final collection association state', {
+            label: 'Library Collections',
+          });
+        }
+        try {
+          const { default: libraryCollectionsLifecycle } =
+            await import('@server/lib/libraryCollectionsLifecycle');
+          libraryCollectionsLifecycle.onHistoryCommitted(
+            result.complete,
+            associationChanged,
+            result.collectionMembership.complete
+          );
+        } catch {
+          logger.warn('Unable to publish collection hydration state', {
+            label: 'Library Collections',
+          });
+        }
+        return result;
       })
       .finally(() => {
         this.inFlight = undefined;

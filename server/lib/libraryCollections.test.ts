@@ -61,11 +61,193 @@ const settle = async (
 ) => {
   const pending = await service.query(input);
   assert.equal(pending.status, 'pending');
-  await new Promise<void>((resolve) => setImmediate(resolve));
-  return service.query(input);
+  for (let attempt = 0; attempt < 20; attempt++) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const result = await service.query(input);
+    if (result.status !== 'pending') return result;
+  }
+  throw new Error('Collection snapshot did not settle');
 };
 
 describe('Library collection discovery', () => {
+  it('does not build a cold snapshot before hydration and retains last-good data while paused', async () => {
+    let discoveries = 0;
+    let collections = 0;
+    const service = new LibraryCollectionsService(
+      {
+        discoverCollectionIds: async () => {
+          discoveries++;
+          return [770];
+        },
+        fetchCollection: async () => {
+          collections++;
+          return collection(770, 'Ready Collection', [771]);
+        },
+        fetchMovie: async (id) =>
+          ({ id, status: 'Released' }) as TmdbMovieDetails,
+        fetchPhysicalMovieIds: async () => new Set(),
+        fetchAvailability: async () => new Map([[771, true]]),
+      },
+      false
+    );
+    assert.equal((await service.query(query)).status, 'pending');
+    assert.equal(service.lookupById(770, 'en').availableMovies, null);
+    assert.equal(discoveries, 0);
+    assert.equal(collections, 0);
+    service.setRefreshReady(true);
+    assert.equal((await settle(service)).results[0].availableMovies, 1);
+    service.setRefreshReady(false);
+    const held = await service.query(query);
+    assert.equal(held.status, 'partial');
+    assert.equal(held.stale, true);
+    assert.equal(held.results[0].availableMovies, 1);
+    assert.equal(service.lookupById(770, 'en').countStale, true);
+    assert.equal(collections, 1);
+  });
+  it('looks up authoritative counts by ID without rebuilding a warm snapshot', async () => {
+    let collectionCalls = 0;
+    const service = createService({
+      discoverCollectionIds: async () => [770],
+      fetchCollection: async () => {
+        collectionCalls++;
+        return collection(770, 'Lookup Collection', [771, 772]);
+      },
+      fetchAvailability: async () =>
+        new Map([
+          [771, true],
+          [772, false],
+        ]),
+    });
+    assert.equal(service.lookupById(770, 'en', false).availableMovies, null);
+    await settle(service);
+    const found = service.lookupById(770, 'en');
+    assert.equal(found.availableMovies, 1);
+    assert.equal(found.totalMovies, 2);
+    assert.equal(found.countStatus, 'complete');
+    assert.equal(found.countStale, false);
+    assert.equal(service.lookupById(999, 'en').availableMovies, null);
+    assert.equal(service.lookupById(770, 'ro', false).availableMovies, null);
+    assert.equal(collectionCalls, 1);
+  });
+
+  it('reuses a snapshot before six hours and refreshes after the safety TTL', async () => {
+    let now = new Date('2026-11-19T00:00:00.000Z');
+    let collectionCalls = 0;
+    const service = createService({
+      discoverCollectionIds: async () => [775],
+      fetchCollection: async () => {
+        collectionCalls++;
+        return collection(775, 'TTL Collection', [776]);
+      },
+      fetchAvailability: async () => new Map([[776, true]]),
+      now: () => now,
+      snapshotTtlMs: 6 * 60 * 60 * 1000,
+    });
+    await settle(service);
+    now = new Date('2026-11-19T05:59:59.000Z');
+    assert.equal((await service.query(query)).status, 'complete');
+    assert.equal(collectionCalls, 1);
+    now = new Date('2026-11-19T06:00:00.000Z');
+    assert.equal((await service.query(query)).status, 'pending');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(collectionCalls, 2);
+  });
+
+  it('retains last-good counts when a member-status request fails after invalidation', async () => {
+    let failMovie = false;
+    const service = createService({
+      discoverCollectionIds: async () => [780],
+      fetchCollection: async () =>
+        collection(780, 'Retained Collection', [781]),
+      fetchMovie: async (id) => {
+        if (failMovie) throw new Error('TMDb member failure');
+        return { id, status: 'Released' } as TmdbMovieDetails;
+      },
+      fetchAvailability: async () => new Map([[781, true]]),
+    });
+    await settle(service);
+    failMovie = true;
+    service.invalidate();
+    assert.equal(service.lookupById(780, 'en').availableMovies, 1);
+    assert.equal(service.lookupById(780, 'en').countStale, true);
+    for (let attempt = 0; attempt < 20; attempt++) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const state = await service.query(query);
+      if (state.status === 'partial') {
+        assert.equal(state.results[0].availableMovies, 1);
+        assert.equal(service.lookupById(780, 'en').countStale, true);
+        return;
+      }
+    }
+    throw new Error('Partial collection refresh did not settle');
+  });
+
+  it('retries a missing collection without waiting for the six-hour snapshot TTL', async () => {
+    let calls = 0;
+    const service = createService({
+      discoverCollectionIds: async () => [785],
+      fetchCollection: async () => {
+        calls++;
+        if (calls === 1)
+          throw Object.assign(new Error('missing collection'), {
+            response: { status: 404 },
+          });
+        return collection(785, 'Recovered Collection', [786]);
+      },
+      fetchAvailability: async () => new Map([[786, true]]),
+      missingCollectionRetryMs: 30,
+      unavailableRetryMs: 10,
+      snapshotTtlMs: 6 * 60 * 60 * 1000,
+    });
+    assert.equal((await settle(service)).status, 'unavailable');
+    for (let attempt = 0; attempt < 50; attempt++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      const state = await service.query(query);
+      if (state.status === 'complete') {
+        assert.equal(calls, 2);
+        assert.equal(state.results[0].availableMovies, 1);
+        return;
+      }
+    }
+    throw new Error('Missing collection retry did not settle');
+  });
+
+  it('does not publish an older in-flight build after a new generation is requested', async () => {
+    let releaseFirst!: (value: TmdbCollection) => void;
+    const first = new Promise<TmdbCollection>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let fetches = 0;
+    const service = createService({
+      discoverCollectionIds: async () => [790],
+      fetchCollection: async () => {
+        fetches++;
+        return fetches === 1
+          ? first
+          : collection(790, 'Current Collection', [791, 792]);
+      },
+      fetchAvailability: async () =>
+        new Map([
+          [791, true],
+          [792, false],
+        ]),
+    });
+    assert.equal((await service.query(query)).status, 'pending');
+    service.invalidate();
+    releaseFirst(collection(790, 'Old Collection', [791]));
+    for (let attempt = 0; attempt < 30; attempt++) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 5));
+      const state = await service.query(query);
+      if (state.status === 'complete') {
+        assert.equal(fetches, 2);
+        assert.equal(state.results[0].totalMovies, 2);
+        assert.equal(service.lookupById(790, 'en').totalMovies, 2);
+        return;
+      }
+    }
+    throw new Error('Generation-safe collection refresh did not settle');
+  });
+
   it('counts only Released or physically historical Movies and keeps one eligible member', async () => {
     const metadata = new Map([
       [40, collection(40, 'Mixed Collection', [401, 402, 403, 404])],

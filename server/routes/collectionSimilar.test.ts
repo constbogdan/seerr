@@ -1,5 +1,7 @@
 import TheMovieDb from '@server/api/themoviedb';
 import Media from '@server/entity/Media';
+import libraryCollections from '@server/lib/libraryCollections';
+import libraryCollectionsLifecycle from '@server/lib/libraryCollectionsLifecycle';
 import { similarCollections } from '@server/lib/similarCollections';
 import { isAuthenticated } from '@server/middleware/auth';
 import collectionRoutes from '@server/routes/collection';
@@ -196,6 +198,14 @@ describe('Similar Collections routes', () => {
     const trigger = mock.method(similarCollections, 'trigger', async () => ({
       started: true,
     }));
+    const counts = mock.method(libraryCollections, 'lookupById', () => ({
+      availableMovies: 10,
+      totalMovies: 26,
+      countStatus: 'complete' as const,
+      countStale: false,
+      countRefreshedAt: '2026-11-19T00:00:00.000Z',
+    }));
+    mock.method(libraryCollectionsLifecycle, 'ready', () => true);
     const response = await request(app)
       .get('/collection/100')
       .set('x-test-user', 'yes');
@@ -203,11 +213,23 @@ describe('Similar Collections routes', () => {
     assert.equal(response.body.id, 100);
     assert.equal(response.body.name, 'Origin');
     assert.deepEqual(response.body.parts, []);
+    assert.equal(response.body.availableMovies, 10);
+    assert.equal(response.body.totalMovies, 26);
+    assert.deepEqual(counts.mock.calls[0].arguments, [100, 'en', true]);
     assert.deepEqual(
       response.body.similarCollections.relatedCollectionIds,
       [200]
     );
     assert.equal(read.mock.callCount(), 1);
     assert.equal(trigger.mock.callCount(), 0);
+  });
+
+  it('does not expose detail counts to unauthenticated callers', async () => {
+    const lookup = mock.method(libraryCollections, 'lookupById', () => {
+      throw new Error('must not read snapshot');
+    });
+    const response = await request(app).get('/collection/100');
+    assert.equal(response.status, 403);
+    assert.equal(lookup.mock.callCount(), 0);
   });
 });

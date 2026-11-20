@@ -11,6 +11,7 @@ import {
   persistCanonicalMovieMembershipObservation,
   type TmdbCollectionMembershipObservation,
 } from '@server/lib/libraryCollectionMembership';
+import logger from '@server/logger';
 import { In, type DataSource } from 'typeorm';
 
 export const MOVIE_COLLECTION_FRESHNESS_MS = 30 * 24 * 60 * 60 * 1000;
@@ -77,12 +78,18 @@ export class MovieCollectionMembershipService {
   private readonly retryAt = new Map<number, number>();
 
   constructor(
-    private readonly database: DataSource = dataSource,
+    private readonly injectedDatabase?: DataSource,
     private readonly provider: () => Pick<TheMovieDb, 'getMovieForScan'> = () =>
       new TheMovieDb(),
     private readonly now: () => Date = () => new Date(),
     private readonly freshnessMs = MOVIE_COLLECTION_FRESHNESS_MS
   ) {}
+
+  // MediaRequest is registered by the datasource itself. Resolve the default
+  // lazily so this shared service does not capture an incomplete import cycle.
+  private get database(): DataSource {
+    return this.injectedDatabase ?? dataSource;
+  }
 
   private async convergeCanonical(
     tmdbId: number,
@@ -105,6 +112,30 @@ export class MovieCollectionMembershipService {
         collectionMembership: observation,
       }
     );
+  }
+
+  private async signalChangedCollectionMembership(
+    tmdbId: number,
+    previous: MovieCollectionResolution
+  ): Promise<void> {
+    const current = (await this.readKnown([tmdbId], false)).get(tmdbId)!;
+    if (
+      JSON.stringify(previous.membership) ===
+        JSON.stringify(current.membership) ||
+      (previous.membership.kind !== 'collection' &&
+        current.membership.kind !== 'collection')
+    )
+      return;
+    try {
+      const { default: libraryCollectionsLifecycle } =
+        await import('@server/lib/libraryCollectionsLifecycle');
+      await libraryCollectionsLifecycle.onMembershipObserved(tmdbId);
+    } catch {
+      logger.warn('Collection membership refresh signal deferred', {
+        label: 'Library Collections',
+        tmdbId,
+      });
+    }
   }
 
   /** Returns false for an absent, malformed or identity-mismatched TMDB field. */
@@ -130,6 +161,57 @@ export class MovieCollectionMembershipService {
     return true;
   }
 
+  /** A cached request-detail response may establish an unknown association, but
+   * must not replace an association learned by a newer metadata observation. */
+  public async observeMovieIfUnresolved(
+    tmdbId: number,
+    movie: { id: number; belongs_to_collection?: unknown },
+    observedAt: Date
+  ): Promise<boolean> {
+    if (
+      !positiveId(tmdbId) ||
+      movie.id !== tmdbId ||
+      !validDate(observedAt) ||
+      !Object.prototype.hasOwnProperty.call(movie, 'belongs_to_collection')
+    )
+      return false;
+    const membership = parseTmdbCollectionMembership(
+      movie.belongs_to_collection,
+      observedAt
+    );
+    if (!membership) return false;
+    const known = (await this.readKnown([tmdbId], false)).get(tmdbId)!;
+    if (known.membership.kind !== 'unresolved') return false;
+
+    const repository = this.database.getRepository(MovieCollectionObservation);
+    const insertion = repository
+      .createQueryBuilder()
+      .insert()
+      .into(MovieCollectionObservation)
+      .values({
+        mediaType: LibraryMediaType.MOVIE,
+        tmdbId,
+        tmdbCollectionId: membership.tmdbCollectionId,
+        observedAt,
+      });
+    const [sql, parameters] = insertion.getQueryAndParameters();
+    await repository.query(
+      `${sql} ON CONFLICT ("mediaType", "tmdbId") DO NOTHING`,
+      parameters
+    );
+    const stored = await repository.findOneBy({
+      mediaType: LibraryMediaType.MOVIE,
+      tmdbId,
+    });
+    if (
+      stored?.tmdbCollectionId !== membership.tmdbCollectionId ||
+      stored.observedAt.getTime() !== observedAt.getTime()
+    )
+      return false;
+    await this.convergeCanonical(tmdbId, membership);
+    return true;
+  }
+
   public async observeValidated(
     tmdbId: number,
     membership: TmdbCollectionMembershipObservation
@@ -141,6 +223,8 @@ export class MovieCollectionMembershipService {
         !positiveId(membership.tmdbCollectionId))
     )
       throw new Error('Invalid movie collection observation');
+
+    const previous = (await this.readKnown([tmdbId], false)).get(tmdbId)!;
 
     const repository = this.database.getRepository(MovieCollectionObservation);
     const existing = await repository.findOneBy({
@@ -157,6 +241,7 @@ export class MovieCollectionMembershipService {
         tmdbCollectionId: existing.tmdbCollectionId,
         observedAt: existing.observedAt,
       });
+      await this.signalChangedCollectionMembership(tmdbId, previous);
       return;
     }
 
@@ -189,6 +274,7 @@ export class MovieCollectionMembershipService {
       tmdbCollectionId: winner.tmdbCollectionId,
       observedAt: winner.observedAt,
     });
+    await this.signalChangedCollectionMembership(tmdbId, previous);
   }
 
   private async readKnown(

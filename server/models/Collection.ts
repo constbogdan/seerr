@@ -13,6 +13,11 @@ export interface Collection {
   posterPath?: string;
   backdropPath?: string;
   parts: MovieResult[];
+  availableMovies?: number | null;
+  totalMovies?: number | null;
+  countStatus?: 'pending' | 'complete' | 'partial' | 'unavailable';
+  countStale?: boolean;
+  countRefreshedAt?: string | null;
   similarCollections?: SimilarCollectionsRead;
 }
 

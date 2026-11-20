@@ -1,6 +1,8 @@
 import TheMovieDb from '@server/api/themoviedb';
 import { MediaType } from '@server/constants/media';
 import Media from '@server/entity/Media';
+import libraryCollections from '@server/lib/libraryCollections';
+import libraryCollectionsLifecycle from '@server/lib/libraryCollectionsLifecycle';
 import {
   similarCollections,
   validSimilarVisitToken,
@@ -62,9 +64,10 @@ collectionRoutes.get<{ id: string }>('/:id', async (req, res, next) => {
   const tmdb = new TheMovieDb();
 
   try {
+    const locale = (req.query.language as string) ?? req.locale ?? 'en';
     const collection = await tmdb.getCollection({
       collectionId: Number(req.params.id),
-      language: (req.query.language as string) ?? req.locale,
+      language: locale,
     });
 
     const media = await Media.getRelatedMedia(
@@ -85,7 +88,14 @@ collectionRoutes.get<{ id: string }>('/:id', async (req, res, next) => {
         collectionId: collection.id,
       });
     }
-    return res.status(200).json(result);
+    return res.status(200).json({
+      ...result,
+      ...libraryCollections.lookupById(
+        collection.id,
+        locale,
+        libraryCollectionsLifecycle.ready()
+      ),
+    });
   } catch (e) {
     logger.debug('Something went wrong retrieving collection', {
       label: 'API',

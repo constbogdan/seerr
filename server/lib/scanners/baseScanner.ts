@@ -8,6 +8,7 @@ import { getRepository } from '@server/datasource';
 import Media from '@server/entity/Media';
 import MediaRequest from '@server/entity/MediaRequest';
 import Season from '@server/entity/Season';
+import libraryCollectionsLifecycle from '@server/lib/libraryCollectionsLifecycle';
 import {
   settleAvailableMovieRequests,
   settleSonarrRequests,
@@ -126,6 +127,7 @@ class BaseScanner<T> {
       const existing = await this.getExisting(tmdbId, MediaType.MOVIE);
 
       if (existing) {
+        const wasAvailable = existing.status === MediaStatus.AVAILABLE;
         let changedExisting = false;
 
         if (existing[is4k ? 'status4k' : 'status'] !== MediaStatus.AVAILABLE) {
@@ -212,6 +214,11 @@ class BaseScanner<T> {
         if (changedExisting) {
           this.processingGuard?.();
           await mediaRepository.save(existing);
+          if (wasAvailable !== (existing.status === MediaStatus.AVAILABLE))
+            libraryCollectionsLifecycle.onPhysicalChangePending(
+              tmdbId,
+              existing.status === MediaStatus.AVAILABLE
+            );
           this.log(
             `Media for ${title} exists. Changes were detected and the title will be updated.`,
             'info'
@@ -272,6 +279,8 @@ class BaseScanner<T> {
 
         this.processingGuard?.();
         await mediaRepository.save(newMedia);
+        if (newMedia.status === MediaStatus.AVAILABLE)
+          libraryCollectionsLifecycle.onPhysicalChangePending(tmdbId, true);
         this.log(`Saved new media: ${title}`);
         if (!processing && hasFile) {
           this.processingGuard?.();

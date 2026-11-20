@@ -854,6 +854,10 @@ describe('Library collection 404 recovery', () => {
     assert.equal((await settle(instance)).status, 'complete');
     assert.equal(movies, 0); // Valid collection behavior does not invoke recovery.
     now = new Date(now.getTime() + 15 * 60_000);
+    assert.equal((await settle(instance)).status, 'complete');
+    assert.equal(collections, 1);
+    assert.equal(movies, 0);
+    now = new Date(observed.getTime() + 6 * 60 * 60_000);
     assert.equal((await settle(instance)).status, 'partial');
     assert.equal(collections, 2);
     assert.equal(movies, 1);
