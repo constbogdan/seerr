@@ -11,6 +11,7 @@ import {
   CanonicalMedia,
   CanonicalMediaIdentity,
 } from '@server/entity/CanonicalMedia';
+import { LibraryPresence } from '@server/entity/LibraryHistory';
 import Media from '@server/entity/Media';
 import {
   BlocklistedMediaError,
@@ -22,8 +23,14 @@ import {
   RequestPermissionError,
 } from '@server/entity/MediaRequest';
 import type { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import type { LibrarySeriesDetailResponse } from '@server/interfaces/api/libraryInterfaces';
 import acquisitionMonitor from '@server/lib/acquisitionMonitor';
+import {
+  jellyfinPreferenceScope,
+  logicalJellyfinPreference,
+  preferenceItemIds,
+} from '@server/lib/jellyfinPreferences';
 import library from '@server/lib/library';
 import { currentLibraryPresenceSql } from '@server/lib/libraryActivity';
 import { Permission } from '@server/lib/permissions';
@@ -149,6 +156,10 @@ export interface NextSeasonDependencies {
   loadSeriesProgress: (
     canonicalMediaId: number
   ) => Promise<LibrarySeriesDetailResponse | null>;
+  loadDislikedViewerIds: (
+    detail: LibrarySeriesDetailResponse,
+    tmdbId: number
+  ) => Promise<ReadonlySet<number>>;
   loadTvMetadata: (tmdbId: number) => Promise<TmdbTvDetails>;
   refreshAcquisitions: () => Promise<{ authoritative: boolean }>;
   inspectSeason: (
@@ -239,6 +250,69 @@ export const loadActiveNextSeasonSeries = async (
   });
 };
 
+/** One source-bound preference read per Series, never one Jellyfin call per viewer. */
+export const loadNextSeasonDislikedViewerIds = async (
+  detail: LibrarySeriesDetailResponse,
+  tmdbId: number
+): Promise<ReadonlySet<number>> => {
+  const viewerIds = [
+    ...new Set(
+      detail.seasons.flatMap((season) =>
+        season.users
+          .filter((user) => user.watchedEpisodeCount > 0)
+          .map((user) => user.userId)
+          .filter(
+            (id): id is number =>
+              Number.isSafeInteger(id) && id !== null && id > 0
+          )
+      )
+    ),
+  ];
+  const sourceScope = jellyfinPreferenceScope();
+  if (!viewerIds.length || !sourceScope) return new Set<number>();
+
+  const presences = await getRepository(LibraryPresence).findBy({
+    canonicalMediaId: detail.canonicalMediaId,
+    sourceSystem: 'jellyfin',
+    sourceScope,
+    isCurrent: true,
+    jellyfinVisible: true,
+  });
+  const currentItemIds = preferenceItemIds(
+    presences
+      .filter((presence) => presence.sourceItemId.startsWith('series:'))
+      .map((presence) => presence.sourceItemId.slice('series:'.length))
+  );
+  if (!currentItemIds.length) return new Set<number>();
+
+  const states = await getRepository(UserMediaState)
+    .createQueryBuilder('state')
+    .innerJoinAndSelect('state.user', 'user')
+    .addSelect([
+      'state.jellyfinPreferenceSourceScope',
+      'state.jellyfinPreferenceUserId',
+      'state.jellyfinPreferenceItemIds',
+    ])
+    .where('state.mediaType = :mediaType', { mediaType: MediaType.TV })
+    .andWhere('state.tmdbId = :tmdbId', { tmdbId })
+    .andWhere('user.id IN (:...viewerIds)', { viewerIds })
+    .andWhere('state.jellyfinLikes = :rating', { rating: false })
+    .getMany();
+  return new Set(
+    states
+      .filter(
+        (state) =>
+          logicalJellyfinPreference(
+            state,
+            state.user.jellyfinUserId,
+            sourceScope,
+            currentItemIds
+          ).disliked === true
+      )
+      .map((state) => state.user.id)
+  );
+};
+
 const defaultInspectSeason = async (
   tmdbId: number,
   seasonNumber: number
@@ -303,6 +377,7 @@ const defaultDependencies: NextSeasonDependencies = {
   loadActiveSeries: loadActiveNextSeasonSeries,
   loadSeriesProgress: (canonicalMediaId) =>
     library.seriesDetail(canonicalMediaId),
+  loadDislikedViewerIds: loadNextSeasonDislikedViewerIds,
   loadTvMetadata: (tmdbId) => new TheMovieDb().getTvShow({ tvId: tmdbId }),
   refreshAcquisitions: () => acquisitionMonitor.refresh('background'),
   inspectSeason: defaultInspectSeason,
@@ -374,16 +449,19 @@ const qualifyingViewersForSeason = (
   detail: LibrarySeriesDetailResponse,
   seasonNumber: number,
   totalEpisodeCount: number,
-  now: Date
+  now: Date,
+  dislikedViewerIds: ReadonlySet<number>
 ): NextSeasonQualifyingViewer[] =>
   detail.seasons
     .find((season) => season.seasonNumber === seasonNumber)
     ?.users.filter(
       (user) =>
+        (user.userId === null || !dislikedViewerIds.has(user.userId)) &&
         isNextSeasonProgressEligible(
           user.watchedEpisodeCount,
           totalEpisodeCount
-        ) && isNextSeasonViewingActivityEligible(user.lastViewedAt, now)
+        ) &&
+        isNextSeasonViewingActivityEligible(user.lastViewedAt, now)
     )
     .map((user) => ({
       key: viewerKey(user),
@@ -399,7 +477,8 @@ const qualifyingViewersForSeason = (
 export const evaluateNextSeasonProgress = (
   detail: LibrarySeriesDetailResponse,
   totalEpisodesBySeason: ReadonlyMap<number, number>,
-  now: Date
+  now: Date,
+  dislikedViewerIds: ReadonlySet<number> = new Set<number>()
 ): NextSeasonProgressEvaluation => {
   const triggers = new Map<
     number,
@@ -432,6 +511,7 @@ export const evaluateNextSeasonProgress = (
     }
     for (const user of season.users) {
       if (
+        (user.userId !== null && dislikedViewerIds.has(user.userId)) ||
         !isNextSeasonProgressEligible(
           user.watchedEpisodeCount,
           Number(totalEpisodeCount)
@@ -805,6 +885,25 @@ export class NextSeasonService {
         continue;
       }
 
+      let dislikedViewerIds: ReadonlySet<number>;
+      try {
+        dislikedViewerIds = await this.dependencies.loadDislikedViewerIds(
+          detail,
+          candidate.tmdbId
+        );
+      } catch {
+        summary.failed += 1;
+        summary.candidates.push({
+          canonicalMediaId: candidate.canonicalMediaId,
+          tmdbId: candidate.tmdbId,
+          seasonNumber: null,
+          outcome: 'failed',
+          reason: 'progress-failure',
+        });
+        completeCandidate();
+        continue;
+      }
+
       const progress = evaluateNextSeasonProgress(
         detail,
         new Map(
@@ -812,7 +911,8 @@ export class NextSeasonService {
             .filter((season) => season.season_number > 0)
             .map((season) => [season.season_number, season.episode_count])
         ),
-        this.dependencies.now()
+        this.dependencies.now(),
+        dislikedViewerIds
       );
       for (const sourceSeasonNumber of progress.missingEpisodeCountSeasons) {
         summary.skipped += 1;
@@ -884,7 +984,8 @@ export class NextSeasonService {
                   detail,
                   trigger.seasonNumber,
                   totalEpisodes,
-                  this.dependencies.now()
+                  this.dependencies.now(),
+                  dislikedViewerIds
                 )
               : [];
             if (viewers.length === 0) return {};
@@ -1093,6 +1194,23 @@ export class NextSeasonService {
           });
           continue;
         }
+        let currentDislikedViewerIds: ReadonlySet<number>;
+        try {
+          currentDislikedViewerIds = currentProgress
+            ? await this.dependencies.loadDislikedViewerIds(
+                currentProgress,
+                candidate.tmdbId
+              )
+            : new Set<number>();
+        } catch {
+          summary.failed += 1;
+          summary.candidates.push({
+            ...resultBase,
+            outcome: 'failed',
+            reason: 'progress-failure',
+          });
+          continue;
+        }
         const stillQualifies =
           currentProgress &&
           evaluateNextSeasonProgress(
@@ -1102,7 +1220,8 @@ export class NextSeasonService {
                 .filter((season) => season.season_number > 0)
                 .map((season) => [season.season_number, season.episode_count])
             ),
-            this.dependencies.now()
+            this.dependencies.now(),
+            currentDislikedViewerIds
           ).triggers.some(
             (currentTrigger) =>
               currentTrigger.seasonNumber === trigger.seasonNumber &&
