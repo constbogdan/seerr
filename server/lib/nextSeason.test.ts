@@ -1,5 +1,6 @@
 import type { TmdbTvDetails } from '@server/api/themoviedb/interfaces';
 import { LibraryMediaType } from '@server/constants/libraryHistory';
+import { MediaType } from '@server/constants/media';
 import { getRepository } from '@server/datasource';
 import {
   CanonicalMedia,
@@ -10,17 +11,21 @@ import {
   QuotaRestrictedError,
   RequestPermissionError,
 } from '@server/entity/MediaRequest';
-import type { User } from '@server/entity/User';
+import { User } from '@server/entity/User';
+import { UserMediaState } from '@server/entity/UserMediaState';
 import type { LibrarySeriesDetailResponse } from '@server/interfaces/api/libraryInterfaces';
 import {
   NextSeasonService,
   deriveNextSeasonTriggers,
+  evaluateNextSeasonProgress,
   isNextSeasonProgressEligible,
   isNextSeasonViewingActivityEligible,
   loadActiveNextSeasonSeries,
+  loadNextSeasonDislikedViewerIds,
   type NextSeasonDependencies,
   type SeasonInspection,
 } from '@server/lib/nextSeason';
+import { getSettings } from '@server/lib/settings';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
@@ -101,6 +106,7 @@ const dependencies = (
     { canonicalMediaId: 1, tmdbId: 101, title: 'Series' },
   ],
   loadSeriesProgress: async () => qualifyingDetail,
+  loadDislikedViewerIds: async () => new Set<number>(),
   loadTvMetadata: async () =>
     metadata([{ seasonNumber: 1 }, { seasonNumber: 2 }]),
   refreshAcquisitions: async () => ({ authoritative: true }),
@@ -145,6 +151,157 @@ const seedActiveSeries = async (tmdbId: number) => {
   );
   return canonical;
 };
+
+describe('Next Season per-user Series Dislike', () => {
+  const watched = (
+    users: {
+      key: string;
+      userId: number | null;
+      watchedEpisodeCount: number;
+      lastViewedAt?: string | null;
+    }[]
+  ) => detail([{ seasonNumber: 1, availableEpisodeCount: 10, users }]);
+  const triggers = (
+    users: Parameters<typeof watched>[0],
+    dislikedViewerIds: ReadonlySet<number>
+  ) =>
+    evaluateNextSeasonProgress(
+      watched(users),
+      new Map([[1, 10]]),
+      now,
+      dislikedViewerIds
+    ).triggers;
+
+  it('excludes a qualifying disliked viewer while preserving an unknown preference', () => {
+    const users = [{ key: 'A', userId: 1, watchedEpisodeCount: 7 }];
+    assert.deepEqual(triggers(users, new Set([1])), []);
+    assert.deepEqual(triggers(users, new Set()), [
+      { seasonNumber: 1, nextSeasonNumber: 2, qualifyingViewers: 1 },
+    ]);
+  });
+
+  it('preserves an independently qualifying viewer and never combines activity', () => {
+    const independentlyQualifying = [
+      { key: 'A', userId: 1, watchedEpisodeCount: 7 },
+      { key: 'B', userId: 2, watchedEpisodeCount: 8 },
+    ];
+    assert.deepEqual(triggers(independentlyQualifying, new Set([1])), [
+      { seasonNumber: 1, nextSeasonNumber: 2, qualifyingViewers: 1 },
+    ]);
+    assert.deepEqual(triggers(independentlyQualifying, new Set([1, 2])), []);
+    assert.deepEqual(
+      triggers(
+        [
+          independentlyQualifying[0],
+          { key: 'B', userId: 2, watchedEpisodeCount: 6 },
+        ],
+        new Set([1])
+      ),
+      []
+    );
+    assert.deepEqual(
+      triggers(
+        [
+          independentlyQualifying[0],
+          {
+            key: 'B',
+            userId: 2,
+            watchedEpisodeCount: 8,
+            lastViewedAt: '2026-10-20T11:59:59.999Z',
+          },
+        ],
+        new Set([1])
+      ),
+      []
+    );
+  });
+
+  it('uses current Series item, server and Jellyfin-user bindings in one batched lookup', async () => {
+    const scope = 'next-season-preference-fixture';
+    const sourceUserA = '11111111111111111111111111111111';
+    const sourceUserB = '22222222222222222222222222222222';
+    const itemId = '33333333333333333333333333333333';
+    const previousScope = getSettings().jellyfin.serverId;
+    getSettings().jellyfin.serverId = scope;
+    try {
+      const canonical = await seedActiveSeries(101);
+      const presence = await getRepository(LibraryPresence).save(
+        new LibraryPresence({
+          canonicalMediaId: canonical.id,
+          sourceSystem: 'jellyfin',
+          sourceScope: scope,
+          sourceItemId: `series:${itemId}`,
+          isCurrent: true,
+          jellyfinVisible: true,
+        })
+      );
+      await getRepository(User).update(1, { jellyfinUserId: sourceUserA });
+      await getRepository(User).update(2, { jellyfinUserId: sourceUserB });
+      const userA = await getRepository(User).findOneByOrFail({ id: 1 });
+      const userB = await getRepository(User).findOneByOrFail({ id: 2 });
+      const states = getRepository(UserMediaState);
+      const disliked = await states.save(
+        new UserMediaState({
+          user: userA,
+          mediaType: MediaType.TV,
+          tmdbId: 101,
+          jellyfinLikes: false,
+          jellyfinPreferenceObservedAt: now,
+          jellyfinPreferenceSourceScope: scope,
+          jellyfinPreferenceUserId: sourceUserA,
+          jellyfinPreferenceItemIds: itemId,
+        })
+      );
+      await states.save(
+        new UserMediaState({
+          user: userB,
+          mediaType: MediaType.TV,
+          tmdbId: 101,
+          jellyfinLikes: true,
+          jellyfinPreferenceObservedAt: now,
+          jellyfinPreferenceSourceScope: scope,
+          jellyfinPreferenceUserId: sourceUserB,
+          jellyfinPreferenceItemIds: itemId,
+        })
+      );
+      const series = {
+        ...watched([
+          { key: 'A', userId: 1, watchedEpisodeCount: 7 },
+          { key: 'B', userId: 2, watchedEpisodeCount: 8 },
+          { key: 'unlinked', userId: null, watchedEpisodeCount: 7 },
+        ]),
+        canonicalMediaId: canonical.id,
+      };
+      const read = () => loadNextSeasonDislikedViewerIds(series, 101);
+      assert.deepEqual([...(await read())], [1]);
+      disliked.jellyfinLikes = null;
+      await states.save(disliked);
+      assert.deepEqual([...(await read())], []);
+      disliked.jellyfinLikes = true;
+      await states.save(disliked);
+      assert.deepEqual([...(await read())], []);
+      disliked.jellyfinLikes = false;
+      await states.save(disliked);
+      disliked.jellyfinPreferenceObservedAt = null;
+      await states.save(disliked);
+      assert.deepEqual([...(await read())], []);
+      disliked.jellyfinPreferenceObservedAt = now;
+      await states.save(disliked);
+      presence.sourceItemId = 'series:44444444444444444444444444444444';
+      await getRepository(LibraryPresence).save(presence);
+      assert.deepEqual([...(await read())], []);
+      presence.sourceItemId = `series:${itemId}`;
+      await getRepository(LibraryPresence).save(presence);
+      await getRepository(User).update(1, { jellyfinUserId: sourceUserB });
+      assert.deepEqual([...(await read())], []);
+      await getRepository(User).update(1, { jellyfinUserId: sourceUserA });
+      getSettings().jellyfin.serverId = 'other-server';
+      assert.deepEqual([...(await read())], []);
+    } finally {
+      getSettings().jellyfin.serverId = previousScope;
+    }
+  });
+});
 
 describe('Next Season progress selection', () => {
   it('uses an inclusive 70 percent threshold with a valid authoritative denominator', () => {
@@ -510,6 +667,139 @@ describe('Next Season active Library population', () => {
 });
 
 describe('Next Season execution safety', () => {
+  it('submits nothing when every independently qualifying viewer Dislikes', async () => {
+    let submissions = 0;
+    const result = await new NextSeasonService(
+      dependencies({
+        loadSeriesProgress: async () =>
+          detail([
+            {
+              seasonNumber: 1,
+              availableEpisodeCount: 8,
+              users: [
+                { key: 'A', userId: 1, watchedEpisodeCount: 6 },
+                { key: 'B', userId: 2, watchedEpisodeCount: 7 },
+              ],
+            },
+          ]),
+        loadDislikedViewerIds: async () => new Set([1, 2]),
+        submitSeason: async () => {
+          submissions++;
+          return { id: 1 };
+        },
+      })
+    ).run();
+    assert.equal(result.requested, 0);
+    assert.equal(submissions, 0);
+  });
+
+  it('does not submit when the preference lookup fails', async () => {
+    let submissions = 0;
+    const result = await new NextSeasonService(
+      dependencies({
+        loadDislikedViewerIds: async () => {
+          throw new Error('Synthetic database failure');
+        },
+        submitSeason: async () => {
+          submissions++;
+          return { id: 1 };
+        },
+      })
+    ).run();
+    assert.equal(result.candidates[0].reason, 'progress-failure');
+    assert.equal(result.requested, 0);
+    assert.equal(submissions, 0);
+  });
+
+  it('excludes a disliked sole viewer from Upcoming and scheduled requests', async () => {
+    let submissions = 0;
+    const service = new NextSeasonService(
+      dependencies({
+        loadDislikedViewerIds: async () => new Set([1]),
+        submitSeason: async () => {
+          submissions++;
+          return { id: 1 };
+        },
+      })
+    );
+    const upcoming = await service.run({ dryRun: true });
+    const scheduled = await service.run();
+    assert.equal(
+      upcoming.candidates.some((item) => item.outcome === 'would-request'),
+      false
+    );
+    assert.equal(scheduled.requested, 0);
+    assert.equal(submissions, 0);
+  });
+
+  it('lets another viewer qualify independently and excludes the disliked viewer from preview', async () => {
+    let lookups = 0;
+    let submissions = 0;
+    const service = new NextSeasonService(
+      dependencies({
+        loadSeriesProgress: async () =>
+          detail([
+            {
+              seasonNumber: 1,
+              availableEpisodeCount: 8,
+              users: [
+                { key: 'A', userId: 1, watchedEpisodeCount: 6 },
+                { key: 'B', userId: 2, watchedEpisodeCount: 7 },
+              ],
+            },
+          ]),
+        loadDislikedViewerIds: async () => {
+          lookups++;
+          return new Set([1, owner.id]);
+        },
+        submitSeason: async () => {
+          submissions++;
+          return { id: 2 };
+        },
+      })
+    );
+    const upcoming = await service.run({ dryRun: true });
+    assert.equal(upcoming.candidates[0].outcome, 'would-request');
+    assert.equal(upcoming.candidates[0].qualifyingViewer, 'B');
+    assert.equal(
+      lookups,
+      1,
+      'one batched lookup for Upcoming, not one per viewer'
+    );
+    const scheduled = await service.run();
+    assert.equal(scheduled.requested, 1);
+    assert.equal(submissions, 1);
+    assert.equal(lookups, 3, 'one initial and one fresh final lookup');
+  });
+
+  it('rechecks a newly observed Dislike before submitting and restores eligibility after reversal', async () => {
+    let lookups = 0;
+    let submissions = 0;
+    let disliked = true;
+    const service = new NextSeasonService(
+      dependencies({
+        loadDislikedViewerIds: async () => {
+          lookups++;
+          if (lookups === 2) disliked = true;
+          return disliked ? new Set([1]) : new Set<number>();
+        },
+        submitSeason: async () => {
+          submissions++;
+          return { id: submissions };
+        },
+      })
+    );
+    disliked = false;
+    const beforeReversal = await service.run();
+    assert.equal(beforeReversal.requested, 0);
+    assert.equal(beforeReversal.candidates[0].reason, 'below-threshold');
+    assert.equal(submissions, 0);
+    disliked = false;
+    const afterReversal = await service.run();
+    assert.equal(afterReversal.requested, 1);
+    assert.equal(submissions, 1);
+  });
+
   it('performs a read-only dry run and reports the requestable Season', async () => {
     let submissions = 0;
     const service = new NextSeasonService(
