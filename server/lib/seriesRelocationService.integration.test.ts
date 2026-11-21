@@ -413,10 +413,11 @@ describe('Series relocation candidate preview', () => {
         moveCalls += 1;
       },
     } as unknown as SonarrAPI;
+    let currentDiscovery = previewDiscovery();
     const service = new SeriesRelocationService(
       dependencies(test.connection, {
         settings: () => settings,
-        discover: async () => previewDiscovery(),
+        discover: async () => currentDiscovery,
         createSonarr: () => api,
       })
     );
@@ -439,6 +440,36 @@ describe('Series relocation candidate preview', () => {
         await test.connection.getRepository(SeriesRelocationExecution).count(),
         0
       );
+
+      const duplicate = {
+        ...currentDiscovery.locations[1],
+        id: 'sonarr:2:root:22',
+        rootFolderId: 22,
+        name: 'Docuseries External',
+        path: '/volume9/docuseries',
+      };
+      currentDiscovery = {
+        ...currentDiscovery,
+        locations: [...currentDiscovery.locations, duplicate],
+        volumes: currentDiscovery.volumes.map((volume) =>
+          volume.id === 'physical:volume9'
+            ? { ...volume, locationIds: [...volume.locationIds, duplicate.id] }
+            : volume
+        ),
+      };
+      assert.deepEqual(await service.previewNextCandidate(), {
+        status: 'unavailable',
+        candidate: null,
+        reason: 'configuration-incomplete',
+      });
+      settings.overflow.seriesRootPreferences = [
+        {
+          sourceLocationId: 'sonarr:2:root:20',
+          destinationVolumeId: 'physical:volume9',
+          destinationLocationId: 'sonarr:2:root:21',
+        },
+      ];
+      assert.equal((await service.previewNextCandidate()).status, 'eligible');
 
       settings.overflow.seriesSeasonThreshold = 3;
       assert.deepEqual(await service.previewNextCandidate(), {
@@ -641,6 +672,89 @@ describe('Series relocation operational lifecycle', () => {
       assert.equal(execution.activeKey, null);
       assert.equal(execution.providerStartedAt, null);
       assert.equal(execution.failureCode, 'insufficient-capacity');
+    } finally {
+      await test.close();
+    }
+  });
+
+  it('releases a claim if the selected Series root changes before provider invocation', async () => {
+    const test = await fixture();
+    const settings = relocationSettings();
+    const canonical = await seedEligibleSeries(test.connection);
+    let discoveryCalls = 0;
+    let moveCalls = 0;
+    const api = {
+      getSeriesById: async () =>
+        ({
+          id: 20,
+          title: 'Eligible Series',
+          path: '/volume3/media-shows/Eligible Series',
+          rootFolderPath: '/volume3/media-shows',
+        }) as SonarrSeries,
+      getEpisodeFiles: async () => [
+        {
+          id: 11,
+          seriesId: 20,
+          seasonNumber: 1,
+          size: 100,
+          dateAdded: '2026-10-01T00:00:00.000Z',
+          path: '/volume3/media-shows/Eligible Series/S01E01.mkv',
+        } as SonarrEpisodeFile,
+      ],
+      getSeriesQueue: async () => [],
+      getSeriesHistory: async () => [
+        {
+          id: 1,
+          seriesId: 20,
+          episodeId: 1,
+          sourceTitle: 'release',
+          eventType: 'downloadFolderImported',
+          date: '2026-10-01T00:00:00.000Z',
+          data: { FileId: '11', DownloadClient: 'SABnzbd' },
+        } as SonarrHistoryRecord,
+      ],
+      moveSeries: async () => {
+        moveCalls += 1;
+      },
+    } as unknown as SonarrAPI;
+    const service = new SeriesRelocationService(
+      dependencies(test.connection, {
+        settings: () => settings,
+        discover: async () => {
+          discoveryCalls += 1;
+          const discovery = previewDiscovery();
+          if (discoveryCalls > 1) {
+            const otherRoot = {
+              ...discovery.locations[1],
+              id: 'sonarr:2:root:22',
+              rootFolderId: 22,
+              path: '/volume9/docuseries',
+            };
+            discovery.locations.push(otherRoot);
+            discovery.volumes[1].locationIds.push(otherRoot.id);
+            settings.overflow.seriesRootPreferences = [
+              {
+                sourceLocationId: 'sonarr:2:root:20',
+                destinationVolumeId: 'physical:volume9',
+                destinationLocationId: otherRoot.id,
+              },
+            ];
+          }
+          return discovery;
+        },
+        createSonarr: () => api,
+      })
+    );
+    try {
+      const result = await service.run(1);
+      assert.equal(result.results[0].reason, 'verification-failed');
+      assert.equal(moveCalls, 0);
+      const execution = await test.connection
+        .getRepository(SeriesRelocationExecution)
+        .findOneByOrFail({ canonicalMediaId: canonical.id });
+      assert.equal(execution.state, SeriesRelocationState.COMPLETED);
+      assert.equal(execution.activeKey, null);
+      assert.equal(execution.providerStartedAt, null);
     } finally {
       await test.close();
     }

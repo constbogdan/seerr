@@ -195,6 +195,10 @@ describe('OpenAPI runtime schema', () => {
       minimum: 1,
       default: 50,
     });
+    assert.equal(
+      (overflowRoute.properties?.rootMappings as { type?: string })?.type,
+      'array'
+    );
     assert.ok(spec.paths['/settings/storage/series-relocation/next-candidate']);
     assert.ok(spec.paths['/settings/watchlist-roulette']);
     assert.ok(spec.components.schemas.WatchlistRouletteSettings);

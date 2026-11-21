@@ -20,12 +20,15 @@ import {
   BYTES_PER_OVERFLOW_GB,
   DEFAULT_OVERFLOW_THRESHOLD_GB,
   FREE_SPACE_THRESHOLDS,
+  compatibleOverflowRoots,
   isFreeSpaceThreshold,
   isOverflowThresholdGb,
   isSeriesSeasonThreshold,
   isTorrentRelocationDelayHours,
   overflowRouteKey,
-  resolveOverflowRoot,
+  resolveSeriesPreferredRoot,
+  validateOverflowRouteRootMappings,
+  validateSeriesRootPreferenceEntries,
 } from '@server/constants/overflow';
 import type { SeriesRelocationPreviewResult } from '@server/lib/seriesRelocation';
 import type {
@@ -141,8 +144,17 @@ const messages = defineMessages('components.Settings.SettingsStorage', {
   destination: 'Target volume',
   chooseSource: 'Choose a source',
   chooseDestination: 'Choose a target',
+  chooseDestinationRoot: 'Choose a destination root',
+  seriesRootMapping: 'Root for {source} on {volume}',
+  seriesRootMappingRequired:
+    'Choose a destination root for each ambiguous Series route before enabling it.',
+  clearSeriesRootSelections: 'Clear saved Series root selections',
   noCompatibleDestinations:
-    'No compatible target volume has exactly one matching root for each source root. Check the Servarr instance and root Animation settings.',
+    'No target volume has a compatible root for every source root. Check the Servarr instance and root Animation settings.',
+  rootMappingRequired:
+    'Select a destination root for each ambiguous source root before adding the route.',
+  savedRootMappingInvalid:
+    'This route has a missing or ambiguous root mapping. Remove and re-add it before saving.',
   unknownVolume: 'Unknown volume',
   addRoute: 'Add route',
   removeRoute: 'Remove route from {source} to {destination}',
@@ -215,6 +227,9 @@ const SettingsStorage = () => {
   const [savedValues, setSavedValues] = useState<OverflowSettings | null>(null);
   const [sourceVolumeId, setSourceVolumeId] = useState('');
   const [destinationVolumeId, setDestinationVolumeId] = useState('');
+  const [routeRootSelections, setRouteRootSelections] = useState<
+    Record<string, string>
+  >({});
   const [routeThresholdInput, setRouteThresholdInput] = useState(
     String(DEFAULT_OVERFLOW_THRESHOLD_GB)
   );
@@ -255,14 +270,16 @@ const SettingsStorage = () => {
   const sourceVolume = routableVolumes.find(
     (volume) => volume.id === sourceVolumeId
   );
+  const sourceLocations = sourceVolume
+    ? sourceVolume.locationIds
+        .map((id) => locationById.get(id))
+        .filter((location): location is StorageLocation =>
+          Boolean(location?.routable)
+        )
+    : [];
   const destinations = sourceVolume
     ? routableVolumes.filter((volume) => {
         if (volume.id === sourceVolume.id) return false;
-        const sourceLocations = sourceVolume.locationIds
-          .map((id) => locationById.get(id))
-          .filter((location): location is StorageLocation =>
-            Boolean(location?.routable)
-          );
         const destinationLocations = volume.locationIds
           .map((id) => locationById.get(id))
           .filter((location): location is StorageLocation =>
@@ -270,14 +287,38 @@ const SettingsStorage = () => {
           );
         return sourceLocations.every(
           (sourceLocation) =>
-            resolveOverflowRoot(sourceLocation, destinationLocations).status ===
-            'resolved'
+            compatibleOverflowRoots(sourceLocation, destinationLocations)
+              .length > 0
         );
       })
     : [];
   const selectedDestination = routableVolumes.find(
     (volume) => volume.id === destinationVolumeId
   );
+  const destinationLocations = selectedDestination
+    ? selectedDestination.locationIds
+        .map((id) => locationById.get(id))
+        .filter((location): location is StorageLocation =>
+          Boolean(location?.routable)
+        )
+    : [];
+  const ambiguousSources = sourceLocations.flatMap((source) => {
+    const candidates = compatibleOverflowRoots(source, destinationLocations);
+    return candidates.length > 1 ? [{ source, candidates }] : [];
+  });
+  const rootMappings = ambiguousSources.flatMap(({ source, candidates }) => {
+    const selectedId = routeRootSelections[source.id];
+    return candidates.some((candidate) => candidate.id === selectedId)
+      ? [{ sourceLocationId: source.id, destinationLocationId: selectedId }]
+      : [];
+  });
+  const pendingRootMappingsValid =
+    selectedDestination !== undefined &&
+    validateOverflowRouteRootMappings(
+      sourceLocations,
+      destinationLocations,
+      rootMappings
+    ) === 'resolved';
   const parsedRouteThreshold = Number(routeThresholdInput);
   const sourceMaximumGb = sourceVolume?.totalSpace
     ? Math.floor(sourceVolume.totalSpace / BYTES_PER_OVERFLOW_GB)
@@ -287,12 +328,16 @@ const SettingsStorage = () => {
     sourceMaximumGb !== null &&
     parsedRouteThreshold <= sourceMaximumGb;
   const pendingRoute: OverflowVolumeRoute | null =
-    sourceVolume && selectedDestination && routeThresholdValid
+    sourceVolume &&
+    selectedDestination &&
+    routeThresholdValid &&
+    pendingRootMappingsValid
       ? {
           sourceVolumeId: sourceVolume.id,
           destinationVolumeId: selectedDestination.id,
           thresholdGb: parsedRouteThreshold,
           enabled: true,
+          ...(rootMappings.length ? { rootMappings } : {}),
         }
       : null;
   const duplicateRoute = Boolean(
@@ -320,6 +365,29 @@ const SettingsStorage = () => {
         (!route.enabled || (maximum !== null && route.thresholdGb <= maximum))
       );
     }) ?? false;
+  const existingRootMappingsValid =
+    values?.routes.every((route) => {
+      const source = volumes.find(
+        (volume) => volume.id === route.sourceVolumeId
+      );
+      const destination = volumes.find(
+        (volume) => volume.id === route.destinationVolumeId
+      );
+      if (!source || !destination) return false;
+      const rootsFor = (volume: PhysicalVolume) =>
+        volume.locationIds
+          .map((id) => locationById.get(id))
+          .filter((location): location is StorageLocation =>
+            Boolean(location?.routable)
+          );
+      return (
+        validateOverflowRouteRootMappings(
+          rootsFor(source),
+          rootsFor(destination),
+          route.rootMappings
+        ) === 'resolved'
+      );
+    }) ?? false;
   const overflowRoutingActivationValid =
     values !== null && isOverflowRoutingActivationValid(values);
   const sonarrVolumes = routableVolumes.filter((volume) =>
@@ -338,11 +406,78 @@ const SettingsStorage = () => {
       values,
       new Set(sonarrVolumes.map((volume) => volume.id))
     );
+  const seriesRootsFor = (volumeId: string | null): StorageLocation[] => {
+    const volume = volumes.find((candidate) => candidate.id === volumeId);
+    return (volume?.locationIds ?? [])
+      .map((id) => locationById.get(id))
+      .filter((location): location is StorageLocation =>
+        Boolean(location?.routable && location.provider === 'sonarr')
+      );
+  };
+  const defaultSeriesRoots = seriesRootsFor(
+    values?.defaultSeriesVolumeId ?? null
+  );
+  const seriesDestinationVolumes = [
+    values?.defaultSeriesVolumeId,
+    values?.expansionSeriesVolumeId,
+  ].filter((id): id is string => Boolean(id));
+  const seriesDestinations = new Map(
+    seriesDestinationVolumes.map((volumeId) => [
+      volumeId,
+      seriesRootsFor(volumeId),
+    ])
+  );
+  const seriesRootSelectionsValid =
+    values !== null &&
+    validateSeriesRootPreferenceEntries(
+      defaultSeriesRoots,
+      seriesDestinations,
+      values.seriesRootPreferences
+    );
+  const seriesMappingValid = (mode: 'placement' | 'relocation') =>
+    selectedSeriesVolumesValid &&
+    seriesRootSelectionsValid &&
+    defaultSeriesRoots.every((source) =>
+      (mode === 'relocation'
+        ? [values!.expansionSeriesVolumeId!]
+        : seriesDestinationVolumes
+      ).every(
+        (volumeId) =>
+          resolveSeriesPreferredRoot(
+            source,
+            seriesDestinations.get(volumeId) ?? [],
+            volumeId,
+            values!.seriesRootPreferences
+          ).status === 'resolved'
+      )
+    );
+  const seriesRelocationMappingValid = seriesMappingValid('relocation');
+  const automaticSeriesMappingValid = seriesMappingValid('placement');
+  const ambiguousSeriesRoots = defaultSeriesRoots.flatMap((source) =>
+    seriesDestinationVolumes.flatMap((volumeId) => {
+      const candidates = compatibleOverflowRoots(
+        source,
+        seriesDestinations.get(volumeId) ?? []
+      );
+      const selected = values?.seriesRootPreferences?.find(
+        (preference) =>
+          preference.sourceLocationId === source.id &&
+          preference.destinationVolumeId === volumeId
+      );
+      return candidates.length > 1 ||
+        (selected &&
+          !candidates.some(
+            (candidate) => candidate.id === selected.destinationLocationId
+          ))
+        ? [{ source, volumeId, candidates }]
+        : [];
+    })
+  );
   const automaticSeriesPlacementVolumesValid =
     values !== null &&
-    (!values.automaticSeriesPlacement || selectedSeriesVolumesValid);
+    (!values.automaticSeriesPlacement || automaticSeriesMappingValid);
   const seriesRelocationVolumesValid =
-    !seriesRelocationJob?.enabled || selectedSeriesVolumesValid;
+    !seriesRelocationJob?.enabled || seriesRelocationMappingValid;
   const seriesPreferencesValid =
     seriesRelocationPolicyValid &&
     automaticSeriesPlacementVolumesValid &&
@@ -363,6 +498,7 @@ const SettingsStorage = () => {
       !values ||
       !freeSpaceThresholdValid ||
       !routeThresholdsValid ||
+      !existingRootMappingsValid ||
       !overflowRoutingActivationValid ||
       !seriesPreferencesValid ||
       savingRef.current
@@ -447,7 +583,7 @@ const SettingsStorage = () => {
       savingSeriesRelocationRef.current
     )
       return;
-    if (enabled && !selectedSeriesVolumesValid) {
+    if (enabled && !seriesRelocationMappingValid) {
       addToast(
         intl.formatMessage(messages.seriesRelocationConfigurationInvalid),
         { appearance: 'error', autoDismiss: true }
@@ -515,7 +651,7 @@ const SettingsStorage = () => {
     if (
       refreshingSeriesRelocationPreviewRef.current ||
       seriesRelocationPreviewStale ||
-      !selectedSeriesVolumesValid
+      !seriesRelocationMappingValid
     )
       return;
     refreshingSeriesRelocationPreviewRef.current = true;
@@ -1062,6 +1198,7 @@ const SettingsStorage = () => {
                       const nextSourceId = event.target.value;
                       setSourceVolumeId(nextSourceId);
                       setDestinationVolumeId('');
+                      setRouteRootSelections({});
                       setRouteThresholdInput(
                         String(DEFAULT_OVERFLOW_THRESHOLD_GB)
                       );
@@ -1094,9 +1231,10 @@ const SettingsStorage = () => {
                     id="overflow-destination"
                     className="h-10 w-full"
                     value={destinationVolumeId}
-                    onChange={(event) =>
-                      setDestinationVolumeId(event.target.value)
-                    }
+                    onChange={(event) => {
+                      setDestinationVolumeId(event.target.value);
+                      setRouteRootSelections({});
+                    }}
                     disabled={!sourceVolume}
                   >
                     <option value="">
@@ -1159,6 +1297,7 @@ const SettingsStorage = () => {
                     });
                     setSourceVolumeId('');
                     setDestinationVolumeId('');
+                    setRouteRootSelections({});
                     setRouteThresholdInput(
                       String(DEFAULT_OVERFLOW_THRESHOLD_GB)
                     );
@@ -1168,6 +1307,44 @@ const SettingsStorage = () => {
                   {intl.formatMessage(messages.addRoute)}
                 </Button>
               </div>
+              {selectedDestination && ambiguousSources.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  {ambiguousSources.map(({ source, candidates }) => (
+                    <div key={source.id}>
+                      <label htmlFor={`overflow-root-${source.id}`}>
+                        {source.provider} · {source.name} (root #
+                        {source.rootFolderId})
+                      </label>
+                      <select
+                        id={`overflow-root-${source.id}`}
+                        className="mt-1 h-10 w-full"
+                        value={routeRootSelections[source.id] ?? ''}
+                        onChange={(event) =>
+                          setRouteRootSelections((current) => ({
+                            ...current,
+                            [source.id]: event.target.value,
+                          }))
+                        }
+                      >
+                        <option value="">
+                          {intl.formatMessage(messages.chooseDestinationRoot)}
+                        </option>
+                        {candidates.map((candidate) => (
+                          <option key={candidate.id} value={candidate.id}>
+                            {candidate.provider} · {candidate.name} (root #
+                            {candidate.rootFolderId})
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                  ))}
+                  {!pendingRootMappingsValid && (
+                    <p className="text-sm text-yellow-200" role="status">
+                      {intl.formatMessage(messages.rootMappingRequired)}
+                    </p>
+                  )}
+                </div>
+              )}
               {sourceVolume && destinations.length === 0 && (
                 <p className="mt-2 text-xs text-yellow-200" role="status">
                   {intl.formatMessage(messages.noCompatibleDestinations)}
@@ -1195,6 +1372,28 @@ const SettingsStorage = () => {
                     isOverflowThresholdGb(route.thresholdGb) &&
                     (maximumThreshold === null ||
                       route.thresholdGb <= maximumThreshold);
+                  const mappingsValid = (() => {
+                    const source = volumes.find(
+                      (volume) => volume.id === route.sourceVolumeId
+                    );
+                    const destination = volumes.find(
+                      (volume) => volume.id === route.destinationVolumeId
+                    );
+                    if (!source || !destination) return false;
+                    const rootsFor = (volume: PhysicalVolume) =>
+                      volume.locationIds
+                        .map((id) => locationById.get(id))
+                        .filter((location): location is StorageLocation =>
+                          Boolean(location?.routable)
+                        );
+                    return (
+                      validateOverflowRouteRootMappings(
+                        rootsFor(source),
+                        rootsFor(destination),
+                        route.rootMappings
+                      ) === 'resolved'
+                    );
+                  })();
                   return (
                     <div
                       key={key}
@@ -1273,6 +1472,26 @@ const SettingsStorage = () => {
                           <TrashIcon className="h-4 w-4" aria-hidden />
                         </Button>
                       </div>
+                      {route.rootMappings?.map((mapping) => (
+                        <p
+                          key={mapping.sourceLocationId}
+                          className="col-span-full text-xs text-gray-400"
+                        >
+                          {locationById.get(mapping.sourceLocationId)?.name ??
+                            mapping.sourceLocationId}
+                          {' → '}
+                          {locationById.get(mapping.destinationLocationId)
+                            ?.name ?? mapping.destinationLocationId}
+                        </p>
+                      ))}
+                      {!mappingsValid && (
+                        <p
+                          className="col-span-full text-sm text-yellow-200"
+                          role="alert"
+                        >
+                          {intl.formatMessage(messages.savedRootMappingInvalid)}
+                        </p>
+                      )}
                     </div>
                   );
                 })}
@@ -1319,6 +1538,7 @@ const SettingsStorage = () => {
                         setValues({
                           ...values,
                           [field]: event.target.value || null,
+                          seriesRootPreferences: [],
                         })
                       }
                     >
@@ -1333,6 +1553,76 @@ const SettingsStorage = () => {
                     </select>
                   </div>
                 ))}
+                {ambiguousSeriesRoots.map(
+                  ({ source, volumeId, candidates }) => {
+                    const selected = values.seriesRootPreferences?.find(
+                      (preference) =>
+                        preference.sourceLocationId === source.id &&
+                        preference.destinationVolumeId === volumeId
+                    );
+                    return (
+                      <div
+                        key={`${source.id}|${volumeId}`}
+                        className="min-w-0 md:col-span-2 xl:col-span-4"
+                      >
+                        <label htmlFor={`series-root-${source.id}-${volumeId}`}>
+                          {intl.formatMessage(messages.seriesRootMapping, {
+                            source: `${source.serviceName} — ${source.name}`,
+                            volume: volumeLabel(volumeId),
+                          })}
+                        </label>
+                        <select
+                          id={`series-root-${source.id}-${volumeId}`}
+                          className="mt-1 block h-10 max-w-full"
+                          value={selected?.destinationLocationId ?? ''}
+                          onChange={(event) => {
+                            const remaining = (
+                              values.seriesRootPreferences ?? []
+                            ).filter(
+                              (preference) =>
+                                preference.sourceLocationId !== source.id ||
+                                preference.destinationVolumeId !== volumeId
+                            );
+                            setValues({
+                              ...values,
+                              seriesRootPreferences: event.target.value
+                                ? [
+                                    ...remaining,
+                                    {
+                                      sourceLocationId: source.id,
+                                      destinationVolumeId: volumeId,
+                                      destinationLocationId: event.target.value,
+                                    },
+                                  ]
+                                : remaining,
+                            });
+                          }}
+                        >
+                          <option value="">
+                            {intl.formatMessage(messages.chooseDestinationRoot)}
+                          </option>
+                          {candidates.map((candidate) => (
+                            <option key={candidate.id} value={candidate.id}>
+                              {candidate.serviceName} — {candidate.name}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    );
+                  }
+                )}
+                {!seriesRootSelectionsValid &&
+                  Boolean(values.seriesRootPreferences?.length) && (
+                    <button
+                      type="button"
+                      className="text-left text-sm text-red-300 underline md:col-span-2 xl:col-span-4"
+                      onClick={() =>
+                        setValues({ ...values, seriesRootPreferences: [] })
+                      }
+                    >
+                      {intl.formatMessage(messages.clearSeriesRootSelections)}
+                    </button>
+                  )}
                 <div className="min-w-0">
                   <label
                     htmlFor="seriesSeasonThreshold"
@@ -1390,7 +1680,11 @@ const SettingsStorage = () => {
                     className="text-sm text-red-400 md:col-span-2 xl:col-span-4"
                     role="alert"
                   >
-                    {intl.formatMessage(messages.seriesPreferencesInvalid)}
+                    {intl.formatMessage(
+                      selectedSeriesVolumesValid
+                        ? messages.seriesRootMappingRequired
+                        : messages.seriesPreferencesInvalid
+                    )}
                   </p>
                 )}
                 {!seriesRelocationVolumesValid && (
@@ -1399,7 +1693,9 @@ const SettingsStorage = () => {
                     role="alert"
                   >
                     {intl.formatMessage(
-                      messages.seriesRelocationConfigurationInvalid
+                      selectedSeriesVolumesValid
+                        ? messages.seriesRootMappingRequired
+                        : messages.seriesRelocationConfigurationInvalid
                     )}
                   </p>
                 )}
@@ -1523,7 +1819,7 @@ const SettingsStorage = () => {
                       disabled={
                         refreshingSeriesRelocationPreview ||
                         seriesRelocationPreviewStale ||
-                        !selectedSeriesVolumesValid
+                        !seriesRelocationMappingValid
                       }
                       onClick={() => void refreshSeriesRelocationPreview()}
                     >
@@ -1538,7 +1834,7 @@ const SettingsStorage = () => {
                       {intl.formatMessage(messages.refreshCandidate)}
                     </Button>
                   </div>
-                  {!selectedSeriesVolumesValid ? (
+                  {!seriesRelocationMappingValid ? (
                     <p className="mt-1.5 text-sm text-yellow-200" role="status">
                       {intl.formatMessage(
                         messages.candidateConfigurationIncomplete
@@ -1611,6 +1907,7 @@ const SettingsStorage = () => {
                 !dirty ||
                 !freeSpaceThresholdValid ||
                 !routeThresholdsValid ||
+                !existingRootMappingsValid ||
                 !overflowRoutingActivationValid ||
                 !seriesPreferencesValid ||
                 saving

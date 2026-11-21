@@ -54,4 +54,7 @@ export const seriesRelocationConfigurationChanged = (
   current.defaultSeriesVolumeId !== persisted.defaultSeriesVolumeId ||
   current.expansionSeriesVolumeId !== persisted.expansionSeriesVolumeId ||
   current.seriesSeasonThreshold !== persisted.seriesSeasonThreshold ||
-  current.torrentRelocationDelayHours !== persisted.torrentRelocationDelayHours;
+  current.torrentRelocationDelayHours !==
+    persisted.torrentRelocationDelayHours ||
+  JSON.stringify(current.seriesRootPreferences ?? []) !==
+    JSON.stringify(persisted.seriesRootPreferences ?? []);

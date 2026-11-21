@@ -7,7 +7,7 @@ import SonarrAPI, {
   type SonarrSeriesMoveCommand,
 } from '@server/api/servarr/sonarr';
 import { MediaRequestStatus } from '@server/constants/media';
-import { resolveOverflowRoot } from '@server/constants/overflow';
+import { resolveSeriesPreferredRoot } from '@server/constants/overflow';
 import { RemovalScheduleStatus } from '@server/constants/removal';
 import {
   ACTIVE_SERIES_RELOCATION_STATES,
@@ -564,7 +564,8 @@ export class SeriesRelocationService {
     const configuration = validateSeriesPlacementVolumes(
       settings.overflow,
       discovery,
-      true
+      true,
+      'relocation'
     );
     if (!configuration.valid) {
       return {
@@ -695,7 +696,8 @@ export class SeriesRelocationService {
     const configuration = validateSeriesPlacementVolumes(
       settings.overflow,
       discovery,
-      true
+      true,
+      'relocation'
     );
     if (!configuration.valid) {
       results.push({
@@ -847,7 +849,12 @@ export class SeriesRelocationService {
       .map((id) => locations.get(id))
       .filter((location): location is StorageLocation => Boolean(location));
     const rootResolution = sourceLocation
-      ? resolveOverflowRoot(sourceLocation, destinationLocations)
+      ? resolveSeriesPreferredRoot(
+          sourceLocation,
+          destinationLocations,
+          destinationVolume?.id ?? '',
+          settings.overflow.seriesRootPreferences
+        )
       : { status: 'destination-root-missing' as const };
     if (
       !sourceLocation ||

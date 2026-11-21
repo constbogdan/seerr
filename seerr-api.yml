@@ -540,6 +540,26 @@ components:
           { type: string, pattern: '^(physical|location):[^\s]+$' }
         thresholdGb: { type: integer, minimum: 1, default: 50 }
         enabled: { type: boolean }
+        rootMappings:
+          type: array
+          description: >
+            Explicit source-to-destination root choices for ambiguous Overflow
+            routes. Omitted entries continue to use unique automatic matching.
+          items:
+            type: object
+            additionalProperties: false
+            required: [sourceLocationId, destinationLocationId]
+            properties:
+              sourceLocationId:
+                {
+                  type: string,
+                  pattern: '^(radarr|sonarr):[0-9]+:root:[0-9]+$',
+                }
+              destinationLocationId:
+                {
+                  type: string,
+                  pattern: '^(radarr|sonarr):[0-9]+:root:[0-9]+$',
+                }
     OverflowSettings:
       type: object
       additionalProperties: false
@@ -574,6 +594,27 @@ components:
         routes:
           type: array
           items: { $ref: '#/components/schemas/OverflowRoute' }
+        seriesRootPreferences:
+          type: array
+          description: Explicit source root and preferred volume to destination root selections for Series Routing.
+          items:
+            type: object
+            additionalProperties: false
+            required:
+              [sourceLocationId, destinationVolumeId, destinationLocationId]
+            properties:
+              sourceLocationId:
+                {
+                  type: string,
+                  pattern: '^(radarr|sonarr):[0-9]+:root:[0-9]+$',
+                }
+              destinationVolumeId:
+                { type: string, pattern: '^(physical|location):[^\s]+$' }
+              destinationLocationId:
+                {
+                  type: string,
+                  pattern: '^(radarr|sonarr):[0-9]+:root:[0-9]+$',
+                }
     StorageLocation:
       type: object
       additionalProperties: false
