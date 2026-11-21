@@ -34,12 +34,15 @@ describe('Storage settings presentation', () => {
     );
     assert.match(
       component,
-      /!values\.automaticSeriesPlacement \|\| selectedSeriesVolumesValid/
+      /!values\.automaticSeriesPlacement \|\| automaticSeriesMappingValid/
     );
     assert.match(
       component,
-      /!seriesRelocationJob\?\.enabled \|\| selectedSeriesVolumesValid/
+      /!seriesRelocationJob\?\.enabled \|\| seriesRelocationMappingValid/
     );
+    assert.match(component, /ambiguousSeriesRoots\.map/);
+    assert.match(component, /seriesRootPreferences: event\.target\.value/);
+    assert.match(component, /seriesRootPreferences: \[\]/);
     assert.doesNotMatch(
       component,
       /values\.automaticSeriesPlacement \|\| seriesRelocationJob\?\.enabled/
@@ -304,7 +307,13 @@ describe('Storage settings presentation', () => {
       /Choose where media should be stored based on remaining volume capacity\./
     );
     assert.doesNotMatch(component, /routeThreshold: 'Overflow threshold'/);
-    assert.doesNotMatch(component, /Choose a destination/);
+    assert.doesNotMatch(component, /chooseDestination: 'Choose a destination'/);
+    assert.match(
+      component,
+      /chooseDestinationRoot: 'Choose a destination root'/
+    );
+    assert.match(overflowMarkup, /ambiguousSources\.map/);
+    assert.match(overflowMarkup, /routeRootSelections\[source\.id\]/);
     assert.doesNotMatch(component, /rounded-r-none/);
     assert.doesNotMatch(component, />\s*GB\s*<\/span>/);
     assert.match(

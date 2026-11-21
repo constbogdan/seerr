@@ -66,6 +66,73 @@ describe('Storage settings route validation', () => {
     );
   });
 
+  it('accepts an explicit root choice while preserving legacy routes', () => {
+    assert.equal(
+      overflowSettingsSchema.safeParse({
+        ...settings,
+        routes: [
+          {
+            ...route,
+            rootMappings: [
+              {
+                sourceLocationId: 'radarr:0:root:9',
+                destinationLocationId: 'radarr:0:root:12',
+              },
+            ],
+          },
+        ],
+      }).success,
+      true
+    );
+    for (const rootMappings of [
+      [{ sourceLocationId: 'bad', destinationLocationId: 'radarr:0:root:12' }],
+      [{ sourceLocationId: 'radarr:0:root:9', destinationLocationId: 'bad' }],
+      [
+        {
+          sourceLocationId: 'radarr:0:root:9',
+          destinationLocationId: 'radarr:0:root:12',
+          extra: true,
+        },
+      ],
+    ]) {
+      assert.equal(
+        overflowSettingsSchema.safeParse({
+          ...settings,
+          routes: [{ ...route, rootMappings }],
+        }).success,
+        false
+      );
+    }
+  });
+
+  it('accepts scoped Series root preferences and rejects duplicate or unsafe choices', () => {
+    const preference = {
+      sourceLocationId: 'sonarr:0:root:7',
+      destinationVolumeId: 'physical:volume9',
+      destinationLocationId: 'sonarr:0:root:9',
+    };
+    assert.equal(
+      overflowSettingsSchema.safeParse({
+        ...settings,
+        seriesRootPreferences: [preference],
+      }).success,
+      true
+    );
+    for (const seriesRootPreferences of [
+      [preference, preference],
+      [{ ...preference, destinationLocationId: 'bad' }],
+      [{ ...preference, extra: true }],
+    ]) {
+      assert.equal(
+        overflowSettingsSchema.safeParse({
+          ...settings,
+          seriesRootPreferences,
+        }).success,
+        false
+      );
+    }
+  });
+
   it('allows no enabled routes only while Overflow Routing is disabled', () => {
     for (const routes of [[], [{ ...route, enabled: false }]]) {
       assert.equal(

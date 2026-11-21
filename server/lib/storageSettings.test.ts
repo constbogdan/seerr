@@ -370,6 +370,99 @@ describe('Storage settings discovery', () => {
       }
     );
   });
+
+  it('requires an explicit production-shaped choice when a target has two matching Movie roots', async () => {
+    const result = await discoverStorageLocations(
+      { radarr: [radarr], sonarr: [sonarr] },
+      dependencies()
+    );
+    const destination = result.locations.find(
+      (location) => location.id === 'radarr:1:root:11'
+    );
+    assert.ok(destination);
+    const documentary = {
+      ...destination,
+      id: 'radarr:1:root:14',
+      rootFolderId: 14,
+      name: 'Documentaries',
+      path: '/volume4/documentaries',
+    };
+    const ambiguous = {
+      ...result,
+      locations: [...result.locations, documentary],
+      volumes: result.volumes.map((volume) =>
+        volume.id === 'physical:volume4'
+          ? {
+              ...volume,
+              locationIds: [...volume.locationIds, documentary.id],
+            }
+          : volume
+      ),
+    };
+    const route: OverflowVolumeRoute = {
+      sourceVolumeId: 'physical:volume1',
+      destinationVolumeId: 'physical:volume4',
+      thresholdGb: 50,
+      enabled: true,
+    };
+    assert.equal(
+      validateOverflowRouteLocations([route], ambiguous).valid,
+      false
+    );
+    const selected = {
+      ...route,
+      rootMappings: [
+        {
+          sourceLocationId: 'radarr:1:root:10',
+          destinationLocationId: destination.id,
+        },
+      ],
+    };
+    assert.deepEqual(validateOverflowRouteLocations([selected], ambiguous), {
+      valid: true,
+    });
+    for (const destinationLocationId of [
+      'radarr:1:root:99',
+      'sonarr:2:root:21',
+      'radarr:1:root:10',
+    ]) {
+      assert.equal(
+        validateOverflowRouteLocations(
+          [
+            {
+              ...selected,
+              rootMappings: [
+                { ...selected.rootMappings[0], destinationLocationId },
+              ],
+            },
+          ],
+          ambiguous
+        ).valid,
+        false
+      );
+    }
+    assert.equal(
+      validateOverflowRouteLocations(
+        [
+          {
+            ...selected,
+            rootMappings: [
+              ...selected.rootMappings,
+              {
+                sourceLocationId: 'radarr:1:root:99',
+                destinationLocationId: destination.id,
+              },
+            ],
+          },
+        ],
+        ambiguous
+      ).valid,
+      false
+    );
+    assert.deepEqual(validateOverflowRouteLocations([route], result), {
+      valid: true,
+    });
+  });
 });
 
 describe('Overflow threshold validation', () => {
@@ -487,6 +580,53 @@ describe('Automatic Series Placement volume validation', () => {
         message:
           'A preferred Series volume has multiple matching Sonarr roots.',
       }
+    );
+    const ambiguousDiscovery = {
+      ...result,
+      locations: [...result.locations, duplicate],
+      volumes: result.volumes.map((volume) =>
+        volume.id === expansion.id
+          ? { ...volume, locationIds: [...volume.locationIds, duplicate.id] }
+          : volume
+      ),
+    };
+    const source = result.locations.find(
+      (location) =>
+        location.provider === 'sonarr' && location.path.startsWith('/volume3/')
+    );
+    assert.ok(source);
+    assert.deepEqual(
+      validateSeriesPlacementVolumes(
+        {
+          ...settings,
+          seriesRootPreferences: [
+            {
+              sourceLocationId: source.id,
+              destinationVolumeId: expansion.id,
+              destinationLocationId: external.id,
+            },
+          ],
+        },
+        ambiguousDiscovery
+      ),
+      { valid: true }
+    );
+    assert.equal(
+      validateSeriesPlacementVolumes(
+        {
+          ...settings,
+          seriesRootPreferences: [
+            {
+              sourceLocationId: source.id,
+              destinationVolumeId: expansion.id,
+              destinationLocationId: 'sonarr:2:root:99',
+            },
+          ],
+        },
+        ambiguousDiscovery
+      ).valid,
+      false,
+      'stale preferred roots fail closed'
     );
   });
 });

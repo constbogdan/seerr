@@ -19,6 +19,7 @@ import { Router, type RequestHandler } from 'express';
 import { z } from 'zod';
 
 const volumeId = z.string().regex(/^(physical|location):[^\s]+$/);
+const rootLocationId = z.string().regex(/^(radarr|sonarr):\d+:root:\d+$/);
 export const OVERFLOW_ROUTE_REQUIRED_MESSAGE =
   'Configure at least one enabled storage route before enabling Overflow Routing.';
 const overflowRouteSchema = z
@@ -27,6 +28,16 @@ const overflowRouteSchema = z
     destinationVolumeId: volumeId,
     thresholdGb: z.number().int().min(MIN_OVERFLOW_THRESHOLD_GB),
     enabled: z.boolean(),
+    rootMappings: z
+      .array(
+        z
+          .object({
+            sourceLocationId: rootLocationId,
+            destinationLocationId: rootLocationId,
+          })
+          .strict()
+      )
+      .optional(),
   })
   .strict()
   .refine((route) => route.sourceVolumeId !== route.destinationVolumeId, {
@@ -51,6 +62,17 @@ export const overflowSettingsSchema = z
       .int()
       .min(MIN_TORRENT_RELOCATION_DELAY_HOURS),
     routes: z.array(overflowRouteSchema),
+    seriesRootPreferences: z
+      .array(
+        z
+          .object({
+            sourceLocationId: rootLocationId,
+            destinationVolumeId: volumeId,
+            destinationLocationId: rootLocationId,
+          })
+          .strict()
+      )
+      .optional(),
   })
   .strict()
   .superRefine((settings, context) => {
@@ -84,6 +106,19 @@ export const overflowSettingsSchema = z
         });
       }
       seenSources.add(route.sourceVolumeId);
+    });
+    const seenSeriesPreferences = new Set<string>();
+    settings.seriesRootPreferences?.forEach((preference, index) => {
+      const key = `${preference.sourceLocationId}|${preference.destinationVolumeId}`;
+      if (seenSeriesPreferences.has(key)) {
+        context.addIssue({
+          code: 'custom',
+          path: ['seriesRootPreferences', index],
+          message:
+            'A source root may have only one destination per preferred volume.',
+        });
+      }
+      seenSeriesPreferences.add(key);
     });
   });
 
@@ -152,17 +187,22 @@ storageRoutes.post('/', async (req, res, next) => {
         message: thresholdValidation.message,
       });
     }
-    const seriesValidation = validateSeriesPlacementVolumes(
-      parsed.data,
-      discovery,
-      parsed.data.automaticSeriesPlacement ||
-        settings.jobs['series-relocation'].enabled === true
-    );
-    if (!seriesValidation.valid) {
-      return next({
-        status: seriesValidation.status,
-        message: seriesValidation.message,
-      });
+    for (const [required, mode] of [
+      [parsed.data.automaticSeriesPlacement, 'placement'],
+      [settings.jobs['series-relocation'].enabled === true, 'relocation'],
+    ] as const) {
+      const seriesValidation = validateSeriesPlacementVolumes(
+        parsed.data,
+        discovery,
+        required,
+        mode
+      );
+      if (!seriesValidation.valid) {
+        return next({
+          status: seriesValidation.status,
+          message: seriesValidation.message,
+        });
+      }
     }
 
     const previous = settings.overflow;

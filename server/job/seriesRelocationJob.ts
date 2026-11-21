@@ -68,7 +68,8 @@ const seriesRelocationJobControl = createSeriesRelocationJobControl({
     const validation = validateSeriesPlacementVolumes(
       settings.overflow,
       discovery,
-      true
+      true,
+      'relocation'
     );
     if (!validation.valid) {
       throw Object.assign(new Error(validation.message), {

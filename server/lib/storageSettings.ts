@@ -8,7 +8,9 @@ import type {
 } from '@server/constants/overflow';
 import {
   BYTES_PER_OVERFLOW_GB,
-  resolveOverflowRoot,
+  resolveSeriesPreferredRoot,
+  validateOverflowRouteRootMappings,
+  validateSeriesRootPreferenceEntries,
 } from '@server/constants/overflow';
 import {
   RemovalExecutionState,
@@ -1030,35 +1032,42 @@ export const validateOverflowRouteLocations = (
         message: 'A referenced physical volume has no available Servarr roots.',
       };
     }
-    for (const sourceLocation of sourceLocations) {
-      const resolution = resolveOverflowRoot(
-        sourceLocation,
-        destinationLocations
-      );
-      if (resolution.status === 'source-classification-missing') {
-        return {
-          valid: false,
-          status: 400,
-          message:
-            'An Overflow source root is missing Animation classification metadata.',
-        };
-      }
-      if (resolution.status === 'destination-root-missing') {
-        return {
-          valid: false,
-          status: 400,
-          message:
-            'An Overflow volume mapping has no compatible destination root.',
-        };
-      }
-      if (resolution.status === 'destination-root-ambiguous') {
-        return {
-          valid: false,
-          status: 400,
-          message:
-            'An Overflow volume mapping has multiple compatible destination roots.',
-        };
-      }
+    const resolution = validateOverflowRouteRootMappings(
+      sourceLocations,
+      destinationLocations,
+      route.rootMappings
+    );
+    if (resolution === 'invalid-root-mapping') {
+      return {
+        valid: false,
+        status: 400,
+        message:
+          'An Overflow root mapping is missing, stale, duplicated, or outside the selected volumes.',
+      };
+    }
+    if (resolution === 'source-classification-missing') {
+      return {
+        valid: false,
+        status: 400,
+        message:
+          'An Overflow source root is missing Animation classification metadata.',
+      };
+    }
+    if (resolution === 'destination-root-missing') {
+      return {
+        valid: false,
+        status: 400,
+        message:
+          'An Overflow volume mapping has no compatible destination root.',
+      };
+    }
+    if (resolution === 'destination-root-ambiguous') {
+      return {
+        valid: false,
+        status: 400,
+        message:
+          'An Overflow volume mapping has multiple compatible destination roots.',
+      };
     }
   }
   return { valid: true };
@@ -1112,9 +1121,11 @@ export const validateSeriesPlacementVolumes = (
     | 'automaticSeriesPlacement'
     | 'defaultSeriesVolumeId'
     | 'expansionSeriesVolumeId'
+    | 'seriesRootPreferences'
   >,
   discovery: StorageDiscoveryResult,
-  required = settings.automaticSeriesPlacement
+  required = settings.automaticSeriesPlacement,
+  mode: 'placement' | 'relocation' = 'placement'
 ): { valid: true } | { valid: false; status: 400 | 503; message: string } => {
   if (!required) return { valid: true };
   if (
@@ -1161,9 +1172,37 @@ export const validateSeriesPlacementVolumes = (
       message: 'A preferred Series volume has no available Sonarr root.',
     };
   }
+  const destinationsByVolume = new Map([
+    [settings.defaultSeriesVolumeId, defaultRoots],
+    [settings.expansionSeriesVolumeId, expansionRoots],
+  ]);
+  if (
+    !validateSeriesRootPreferenceEntries(
+      defaultRoots,
+      destinationsByVolume,
+      settings.seriesRootPreferences
+    )
+  ) {
+    return {
+      valid: false,
+      status: 400,
+      message:
+        'A preferred Series root mapping is invalid or no longer routable.',
+    };
+  }
   for (const source of defaultRoots) {
-    for (const destinations of [defaultRoots, expansionRoots]) {
-      const resolution = resolveOverflowRoot(source, destinations);
+    for (const [volumeId, destinations] of mode === 'relocation'
+      ? [[settings.expansionSeriesVolumeId, expansionRoots] as const]
+      : ([
+          [settings.defaultSeriesVolumeId, defaultRoots],
+          [settings.expansionSeriesVolumeId, expansionRoots],
+        ] as const)) {
+      const resolution = resolveSeriesPreferredRoot(
+        source,
+        destinations,
+        volumeId,
+        settings.seriesRootPreferences
+      );
       if (resolution.status === 'source-classification-missing') {
         return {
           valid: false,
@@ -1185,6 +1224,14 @@ export const validateSeriesPlacementVolumes = (
           status: 400,
           message:
             'A preferred Series volume has multiple matching Sonarr roots.',
+        };
+      }
+      if (resolution.status === 'invalid-root-mapping') {
+        return {
+          valid: false,
+          status: 400,
+          message:
+            'A preferred Series root mapping is invalid or no longer routable.',
         };
       }
     }

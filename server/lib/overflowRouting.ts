@@ -2,6 +2,9 @@ import type { Tag } from '@server/api/servarr/base';
 import {
   BYTES_PER_OVERFLOW_GB,
   resolveOverflowRoot,
+  resolveOverflowRouteRoot,
+  resolveSeriesPreferredRoot,
+  validateOverflowRouteRootMappings,
   type OverflowProvider,
   type OverflowSettings,
 } from '@server/constants/overflow';
@@ -142,7 +145,8 @@ export const evaluateOverflowPlacement = (
   if (!sourceVolume) return noSelection('missing-root');
 
   const resolveRoot = (
-    volume: PhysicalVolume | undefined
+    volume: PhysicalVolume | undefined,
+    useRouteMapping = false
   ):
     | { location: StorageLocation; reason?: never }
     | {
@@ -155,12 +159,17 @@ export const evaluateOverflowPlacement = (
       .filter((location): location is StorageLocation =>
         Boolean(location?.routable)
       );
-    const resolution = resolveOverflowRoot(source, candidates);
+    const resolution =
+      useRouteMapping && route
+        ? resolveOverflowRouteRoot(source, candidates, route.rootMappings)
+        : resolveOverflowRoot(source, candidates);
     switch (resolution.status) {
       case 'resolved':
         return { location: resolution.location };
       case 'destination-root-ambiguous':
         return { reason: 'ambiguous-destination-root' };
+      case 'invalid-root-mapping':
+        return { reason: 'missing-root' };
       case 'source-classification-missing':
       case 'destination-root-missing':
         return { reason: 'missing-root' };
@@ -248,6 +257,24 @@ export const evaluateOverflowPlacement = (
     if (thresholdBytes > mappedSource!.totalSpace!) {
       return noSelection('threshold-exceeds-source-capacity');
     }
+    const rootsFor = (volume: PhysicalVolume) =>
+      volume.locationIds
+        .map((locationId) => locations.get(locationId))
+        .filter((candidate): candidate is StorageLocation =>
+          Boolean(candidate?.routable)
+        );
+    const mappingStatus = validateOverflowRouteRootMappings(
+      rootsFor(mappedSource!),
+      mappedDestination ? rootsFor(mappedDestination) : [],
+      movieRoute.rootMappings
+    );
+    if (mappingStatus !== 'resolved') {
+      return noSelection(
+        mappingStatus === 'destination-root-ambiguous'
+          ? 'ambiguous-destination-root'
+          : 'missing-root'
+      );
+    }
     if (mappedSource!.freeSpace! > thresholdBytes) {
       placement = 'internal';
       const resolved = resolveRoot(mappedSource);
@@ -261,7 +288,7 @@ export const evaluateOverflowPlacement = (
         return noSelection('destination-capacity-unavailable');
       }
       placement = 'external';
-      const resolved = resolveRoot(mappedDestination);
+      const resolved = resolveRoot(mappedDestination, true);
       if (!resolved.location) return noSelection(resolved.reason);
       location = resolved.location;
     }
@@ -281,7 +308,29 @@ export const evaluateOverflowPlacement = (
     if (!volumeSuitable(selectedVolume)) {
       return noSelection('destination-capacity-unavailable');
     }
-    const resolved = resolveRoot(selectedVolume);
+    const resolved = (() => {
+      if (!selectedVolume) return { reason: 'missing-root' as const };
+      const candidates = selectedVolume.locationIds
+        .map((locationId) => locations.get(locationId))
+        .filter((candidate): candidate is StorageLocation =>
+          Boolean(candidate?.routable)
+        );
+      const resolution = resolveSeriesPreferredRoot(
+        source,
+        candidates,
+        selectedVolume.id,
+        input.settings.seriesRootPreferences
+      );
+      return resolution.status === 'resolved'
+        ? { location: resolution.location }
+        : {
+            reason: (resolution.status === 'destination-root-ambiguous'
+              ? 'ambiguous-destination-root'
+              : 'missing-root') as
+              | 'ambiguous-destination-root'
+              | 'missing-root',
+          };
+    })();
     if (!resolved.location) return noSelection(resolved.reason);
     location = resolved.location;
     placement =

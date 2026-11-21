@@ -157,6 +157,124 @@ describe('Overflow routing evaluation', () => {
     });
   }
 
+  it('routes the Volume 1 Movie root to the explicitly selected Volume 9 root', () => {
+    const movieSource = {
+      ...source,
+      id: 'radarr:0:root:9',
+      serviceId: 0,
+      rootFolderId: 9,
+      path: '/volume1/media-movies/movies',
+    };
+    const movieTarget = {
+      ...destination,
+      id: 'radarr:0:root:12',
+      serviceId: 0,
+      rootFolderId: 12,
+      path: '/volume9/media-movies/movies',
+    };
+    const documentary = {
+      ...movieTarget,
+      id: 'radarr:0:root:14',
+      rootFolderId: 14,
+      path: '/volume9/media-movies/documentaries',
+    };
+    const base = discovery(movieSource, movieTarget);
+    const ambiguous = {
+      ...base,
+      locations: [...base.locations, documentary],
+      volumes: [
+        base.volumes[0],
+        {
+          ...base.volumes[1],
+          locationIds: [movieTarget.id, documentary.id],
+        },
+      ],
+    };
+    const mappedSettings: OverflowSettings = {
+      ...settings,
+      routes: [
+        {
+          ...settings.routes[0],
+          rootMappings: [
+            {
+              sourceLocationId: movieSource.id,
+              destinationLocationId: movieTarget.id,
+            },
+          ],
+        },
+      ],
+    };
+    const input = movieInput({
+      discovery: ambiguous,
+      settings: mappedSettings,
+      serviceId: 0,
+      configuredRootPath: movieSource.path,
+    });
+    assert.equal(evaluateOverflowPlacement(input).location?.id, movieTarget.id);
+    assert.equal(
+      evaluateOverflowPlacement(
+        movieInput({
+          ...input,
+          settings: { ...mappedSettings, routes: settings.routes },
+        })
+      ).reason,
+      'ambiguous-destination-root'
+    );
+    assert.equal(
+      evaluateOverflowPlacement(
+        movieInput({
+          ...input,
+          settings: {
+            ...mappedSettings,
+            routes: [
+              {
+                ...mappedSettings.routes[0],
+                rootMappings: [
+                  {
+                    sourceLocationId: movieSource.id,
+                    destinationLocationId: documentary.id,
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      ).location?.id,
+      documentary.id,
+      'the destination is chosen by the saved ID, not by a name or path guess'
+    );
+    assert.equal(
+      evaluateOverflowPlacement(
+        movieInput({
+          ...input,
+          settings: {
+            ...mappedSettings,
+            routes: [
+              {
+                ...mappedSettings.routes[0],
+                rootMappings: [
+                  {
+                    sourceLocationId: movieSource.id,
+                    destinationLocationId: 'radarr:0:root:99',
+                  },
+                ],
+              },
+            ],
+          },
+        })
+      ).selected,
+      false,
+      'a stale saved ID cannot fall back to the remaining compatible root'
+    );
+    assert.equal(
+      evaluateOverflowPlacement(
+        movieInput({ ...input, existingMediaHasFiles: true })
+      ).selected,
+      false,
+      'configuration alone must not relocate an existing Movie'
+    );
+  });
+
   it('evaluates the Overflow threshold against the minimum shared-volume free-space reading', () => {
     const regularSource = {
       ...source,
@@ -471,6 +589,71 @@ describe('Overflow routing evaluation', () => {
       'internal'
     );
     const missingExpansion = discovery(sonarrSource, sonarrDestination);
+    const alternate = {
+      ...sonarrDestination,
+      id: 'sonarr:2:root:22',
+      rootFolderId: 22,
+      path: '/volume9/docuseries',
+    };
+    const ambiguousDiscovery = discovery(sonarrSource, sonarrDestination);
+    ambiguousDiscovery.locations.push(alternate);
+    ambiguousDiscovery.volumes[1].locationIds.push(alternate.id);
+    const expansionInput = {
+      ...base,
+      discovery: ambiguousDiscovery,
+      requestedRegularSeasonNumbers: [1, 2, 3],
+    };
+    assert.equal(
+      evaluateOverflowPlacement(expansionInput).reason,
+      'ambiguous-destination-root'
+    );
+    assert.equal(
+      evaluateOverflowPlacement({
+        ...expansionInput,
+        settings: {
+          ...seriesSettings,
+          seriesRootPreferences: [
+            {
+              sourceLocationId: sonarrSource.id,
+              destinationVolumeId: 'physical:volume9',
+              destinationLocationId: sonarrDestination.id,
+            },
+          ],
+        },
+      }).location?.id,
+      sonarrDestination.id
+    );
+    const defaultAlternative = {
+      ...sonarrSource,
+      id: 'sonarr:2:root:23',
+      rootFolderId: 23,
+      path: '/volume3/docuseries',
+    };
+    const ambiguousDefault = discovery(sonarrSource, sonarrDestination);
+    ambiguousDefault.locations.push(defaultAlternative);
+    ambiguousDefault.volumes[0].locationIds.push(defaultAlternative.id);
+    assert.equal(
+      evaluateOverflowPlacement({ ...base, discovery: ambiguousDefault })
+        .reason,
+      'ambiguous-destination-root'
+    );
+    assert.equal(
+      evaluateOverflowPlacement({
+        ...base,
+        discovery: ambiguousDefault,
+        settings: {
+          ...seriesSettings,
+          seriesRootPreferences: [
+            {
+              sourceLocationId: sonarrSource.id,
+              destinationVolumeId: 'physical:volume1',
+              destinationLocationId: sonarrSource.id,
+            },
+          ],
+        },
+      }).location?.id,
+      sonarrSource.id
+    );
     missingExpansion.locations = [sonarrSource];
     missingExpansion.volumes = [missingExpansion.volumes[0]];
     assert.equal(

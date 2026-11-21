@@ -183,5 +183,22 @@ describe('Storage feature toggle state', () => {
       ),
       true
     );
+    assert.equal(
+      seriesRelocationConfigurationChanged(
+        {
+          ...persisted,
+          seriesRootPreferences: [
+            {
+              sourceLocationId: 'sonarr:0:root:7',
+              destinationVolumeId: 'physical:volume9',
+              destinationLocationId: 'sonarr:0:root:9',
+            },
+          ],
+        },
+        persisted
+      ),
+      true,
+      'changing a destination root invalidates preview and requires a save'
+    );
   });
 });
