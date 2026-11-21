@@ -19,7 +19,7 @@ export type OverflowPlacement = 'internal' | 'external';
 export type OverflowDecisionReason =
   | 'selected'
   | 'disabled'
-  | 'explicit-root'
+  | 'source-root-not-eligible'
   | 'existing-media-with-files'
   | 'existing-media-acquisition-active-or-unknown'
   | 'existing-series'
@@ -49,7 +49,7 @@ interface BaseEvaluationInput {
   provider: OverflowProvider;
   serviceId: number;
   configuredRootPath: string;
-  explicitRoot: boolean;
+  regularSourceRootPath: string;
 }
 
 export interface MovieOverflowEvaluationInput extends BaseEvaluationInput {
@@ -97,6 +97,22 @@ export const requestedRegularSeasonCount = (seasons: number[]): number =>
     seasons.filter((season) => Number.isSafeInteger(season) && season > 0)
   ).size;
 
+export const findUniqueStorageRoot = (
+  discovery: StorageDiscoveryResult,
+  provider: OverflowProvider,
+  serviceId: number,
+  path: string
+): StorageLocation | null => {
+  const normalizedPath = normalizedRootPath(path);
+  const matches = discovery.locations.filter(
+    (location) =>
+      location.provider === provider &&
+      location.serviceId === serviceId &&
+      normalizedRootPath(location.path) === normalizedPath
+  );
+  return matches.length === 1 ? matches[0] : null;
+};
+
 export const evaluateOverflowPlacement = (
   input: OverflowEvaluationInput
 ): OverflowPlacementDecision => {
@@ -109,7 +125,6 @@ export const evaluateOverflowPlacement = (
   ) {
     return noSelection('series-placement-disabled');
   }
-  if (input.explicitRoot) return noSelection('explicit-root');
   if (input.mediaType === 'movie' && input.existingMediaHasFiles) {
     return noSelection('existing-media-with-files');
   }
@@ -130,17 +145,21 @@ export const evaluateOverflowPlacement = (
       volume.locationIds.map((locationId) => [locationId, volume] as const)
     )
   );
-  const configuredPath = normalizedRootPath(input.configuredRootPath);
-  const configuredRoots = input.discovery.locations.filter(
-    (location) =>
-      location.provider === input.provider &&
-      location.serviceId === input.serviceId &&
-      normalizedRootPath(location.path) === configuredPath
+  const source = findUniqueStorageRoot(
+    input.discovery,
+    input.provider,
+    input.serviceId,
+    input.configuredRootPath
   );
-  if (configuredRoots.length !== 1) {
+  if (!source) {
     return noSelection('configured-root-not-found');
   }
-  const source = configuredRoots[0];
+  const regularSource = findUniqueStorageRoot(
+    input.discovery,
+    input.provider,
+    input.serviceId,
+    input.regularSourceRootPath
+  );
   const sourceVolume = volumeByLocation.get(source.id);
   if (!sourceVolume) return noSelection('missing-root');
 
@@ -194,6 +213,13 @@ export const evaluateOverflowPlacement = (
     if (!defaultId || !expansionId) {
       return noSelection('preferred-volume-not-configured');
     }
+    if (
+      source.id !== regularSource?.id ||
+      source.isAnimation !== false ||
+      sourceVolume.id !== defaultId
+    ) {
+      return noSelection('source-root-not-eligible');
+    }
     if (defaultId === expansionId) {
       return noSelection('same-physical-volume');
     }
@@ -219,6 +245,17 @@ export const evaluateOverflowPlacement = (
 
   if (input.mediaType === 'movie' && !route) {
     return noSelection('missing-route');
+  }
+  if (
+    input.mediaType === 'movie' &&
+    !(
+      (source.id === regularSource?.id && source.isAnimation === false) ||
+      route?.rootMappings?.some(
+        (mapping) => mapping.sourceLocationId === source.id
+      )
+    )
+  ) {
+    return noSelection('source-root-not-eligible');
   }
   if (
     input.mediaType === 'movie' &&
@@ -263,8 +300,16 @@ export const evaluateOverflowPlacement = (
         .filter((candidate): candidate is StorageLocation =>
           Boolean(candidate?.routable)
         );
+    const eligibleSources = rootsFor(mappedSource!).filter(
+      (candidate) =>
+        (candidate.id === regularSource?.id &&
+          candidate.isAnimation === false) ||
+        movieRoute.rootMappings?.some(
+          (mapping) => mapping.sourceLocationId === candidate.id
+        )
+    );
     const mappingStatus = validateOverflowRouteRootMappings(
-      rootsFor(mappedSource!),
+      eligibleSources,
       mappedDestination ? rootsFor(mappedDestination) : [],
       movieRoute.rootMappings
     );
@@ -277,9 +322,7 @@ export const evaluateOverflowPlacement = (
     }
     if (mappedSource!.freeSpace! > thresholdBytes) {
       placement = 'internal';
-      const resolved = resolveRoot(mappedSource);
-      if (!resolved.location) return noSelection(resolved.reason);
-      location = resolved.location;
+      location = source;
     } else {
       if (
         !usableVolume(mappedDestination) ||

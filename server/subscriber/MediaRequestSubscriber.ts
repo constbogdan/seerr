@@ -26,6 +26,7 @@ import acquisitionMonitor from '@server/lib/acquisitionMonitor';
 import notificationManager, { Notification } from '@server/lib/notifications';
 import {
   evaluateOverflowPlacement,
+  findUniqueStorageRoot,
   resolveOverflowRoutingTags,
 } from '@server/lib/overflowRouting';
 import {
@@ -92,17 +93,13 @@ export const updateRequestStatus = async (
 };
 
 export const shouldEvaluateMovieOverflow = (
-  overflow: Pick<OverflowSettings, 'enabled' | 'routes'>,
-  explicitRoot: boolean
+  overflow: Pick<OverflowSettings, 'enabled' | 'routes'>
 ): boolean =>
-  overflow.enabled &&
-  overflow.routes.some((route) => route.enabled) &&
-  !explicitRoot;
+  overflow.enabled && overflow.routes.some((route) => route.enabled);
 
 export const shouldEvaluateAutomaticSeriesPlacement = (
-  overflow: Pick<OverflowSettings, 'automaticSeriesPlacement'>,
-  explicitRoot: boolean
-): boolean => overflow.automaticSeriesPlacement && !explicitRoot;
+  overflow: Pick<OverflowSettings, 'automaticSeriesPlacement'>
+): boolean => overflow.automaticSeriesPlacement;
 
 @EventSubscriber()
 export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRequest> {
@@ -411,13 +408,9 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
         let existingRadarrMovie: RadarrMovie | undefined;
         let radarrTags: Awaited<ReturnType<RadarrAPI['getTags']>> | undefined;
         let applyRootFolderAndTagsToExisting = false;
+        const effectiveSourceRootPath = rootFolder;
 
-        if (
-          shouldEvaluateMovieOverflow(
-            settings.overflow,
-            Boolean(entity.rootFolder)
-          )
-        ) {
+        if (shouldEvaluateMovieOverflow(settings.overflow)) {
           try {
             const [discovery, existingMovie, providerTags] = await Promise.all([
               discoverStorageLocations(settings),
@@ -438,8 +431,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
               discovery,
               provider: 'radarr',
               serviceId: radarrSettings.id,
-              configuredRootPath: rootFolder,
-              explicitRoot: false,
+              configuredRootPath: effectiveSourceRootPath,
+              regularSourceRootPath: radarrSettings.activeDirectory,
               existingMediaHasFiles: existingMovie.hasFile,
               existingMediaAcquisitionActiveOrUnknown:
                 activeQueue.some((item) => item.movieId === existingMovie.id) ||
@@ -452,24 +445,38 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
                   decision.placement!
                 )
               : null;
-            logger.info('Evaluated Movie Overflow placement', {
-              label: 'Overflow',
-              requestId: entity.id,
-              mediaId: entity.media.id,
-              selected: decision.selected,
-              reason: decision.reason,
-              placement: decision.placement,
-              routeKey: decision.routeKey,
-              rootFolderPath: decision.location?.path,
-              tagResolution: tagResolution?.valid
-                ? 'resolved'
-                : tagResolution?.reason,
-            });
             if (decision.selected && tagResolution?.valid) {
               rootFolder = decision.location!.path;
               tags = tagResolution.tags;
               applyRootFolderAndTagsToExisting = true;
             }
+            logger.info('Evaluated Movie Overflow placement', {
+              label: 'Overflow',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+              mediaType: 'movie',
+              sourceRootId: findUniqueStorageRoot(
+                discovery,
+                'radarr',
+                radarrSettings.id,
+                effectiveSourceRootPath
+              )?.id,
+              effectiveSourceRootPath,
+              featureEnabled: settings.overflow.enabled,
+              evaluationAttempted: true,
+              selected: decision.selected && tagResolution?.valid === true,
+              reason: decision.reason,
+              placement: decision.placement,
+              routeKey: decision.routeKey,
+              destinationRootId:
+                decision.selected && tagResolution?.valid
+                  ? decision.location?.id
+                  : null,
+              finalRootFolderPath: rootFolder,
+              tagResolution: tagResolution?.valid
+                ? 'resolved'
+                : tagResolution?.reason,
+            });
           } catch (error) {
             logger.warn(
               'Movie Overflow evaluation failed; preserving existing request placement',
@@ -477,11 +484,30 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
                 label: 'Overflow',
                 requestId: entity.id,
                 mediaId: entity.media.id,
+                mediaType: 'movie',
+                effectiveSourceRootPath,
+                evaluationAttempted: true,
+                finalRootFolderPath: rootFolder,
                 errorMessage:
                   error instanceof Error ? error.message : String(error),
               }
             );
           }
+        } else {
+          logger.debug('Skipped Movie Overflow placement', {
+            label: 'Overflow',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+            mediaType: 'movie',
+            featureEnabled: settings.overflow.enabled,
+            effectiveSourceRootPath,
+            evaluationAttempted: false,
+            reason: settings.overflow.enabled
+              ? 'no-enabled-route'
+              : 'feature-disabled',
+            sourceRootId: null,
+            finalRootFolderPath: rootFolder,
+          });
         }
 
         if (radarrSettings.tagRequests) {
@@ -575,6 +601,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           label: 'Media Request',
           requestId: entity.id,
           mediaId: entity.media.id,
+          rootFolderPath: radarrMovieOptions.rootFolderPath,
         });
       } catch {
         await this.failRequest(manager, identity);
@@ -767,12 +794,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
 
         let existingSonarrSeries: SonarrSeries | undefined;
         let sonarrTags: Awaited<ReturnType<SonarrAPI['getTags']>> | undefined;
-        if (
-          shouldEvaluateAutomaticSeriesPlacement(
-            settings.overflow,
-            Boolean(entity.rootFolder)
-          )
-        ) {
+        const effectiveSourceRootPath = rootFolder;
+        if (shouldEvaluateAutomaticSeriesPlacement(settings.overflow)) {
           try {
             const [discovery, existingSeries, providerTags] = await Promise.all(
               [
@@ -789,8 +812,8 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
               discovery,
               provider: 'sonarr',
               serviceId: sonarrSettings.id,
-              configuredRootPath: rootFolder,
-              explicitRoot: false,
+              configuredRootPath: effectiveSourceRootPath,
+              regularSourceRootPath: sonarrSettings.activeDirectory,
               existingSeries: Boolean(existingSeries.id),
               requestedRegularSeasonNumbers: entity.seasons.map(
                 (season) => season.seasonNumber
@@ -805,23 +828,37 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
                   decision.placement!
                 )
               : null;
-            logger.info('Evaluated automatic Series placement', {
-              label: 'Series Placement',
-              requestId: entity.id,
-              mediaId: entity.media.id,
-              selected: decision.selected,
-              reason: decision.reason,
-              placement: decision.placement,
-              routeKey: decision.routeKey,
-              rootFolderPath: decision.location?.path,
-              tagResolution: tagResolution?.valid
-                ? 'resolved'
-                : tagResolution?.reason,
-            });
             if (decision.selected && tagResolution?.valid) {
               rootFolder = decision.location!.path;
               tags = tagResolution.tags;
             }
+            logger.info('Evaluated automatic Series placement', {
+              label: 'Series Placement',
+              requestId: entity.id,
+              mediaId: entity.media.id,
+              mediaType: 'series',
+              sourceRootId: findUniqueStorageRoot(
+                discovery,
+                'sonarr',
+                sonarrSettings.id,
+                effectiveSourceRootPath
+              )?.id,
+              effectiveSourceRootPath,
+              featureEnabled: settings.overflow.automaticSeriesPlacement,
+              evaluationAttempted: true,
+              selected: decision.selected && tagResolution?.valid === true,
+              reason: decision.reason,
+              placement: decision.placement,
+              routeKey: decision.routeKey,
+              destinationRootId:
+                decision.selected && tagResolution?.valid
+                  ? decision.location?.id
+                  : null,
+              finalRootFolderPath: rootFolder,
+              tagResolution: tagResolution?.valid
+                ? 'resolved'
+                : tagResolution?.reason,
+            });
           } catch (error) {
             logger.warn(
               'Automatic Series placement failed; preserving existing request placement',
@@ -829,11 +866,28 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
                 label: 'Series Placement',
                 requestId: entity.id,
                 mediaId: entity.media.id,
+                mediaType: 'series',
+                effectiveSourceRootPath,
+                evaluationAttempted: true,
+                finalRootFolderPath: rootFolder,
                 errorMessage:
                   error instanceof Error ? error.message : String(error),
               }
             );
           }
+        } else {
+          logger.debug('Skipped automatic Series placement', {
+            label: 'Series Placement',
+            requestId: entity.id,
+            mediaId: entity.media.id,
+            mediaType: 'series',
+            featureEnabled: settings.overflow.automaticSeriesPlacement,
+            effectiveSourceRootPath,
+            evaluationAttempted: false,
+            reason: 'feature-disabled',
+            sourceRootId: null,
+            finalRootFolderPath: rootFolder,
+          });
         }
 
         if (sonarrSettings.tagRequests) {
@@ -929,6 +983,7 @@ export class MediaRequestSubscriber implements EntitySubscriberInterface<MediaRe
           label: 'Media Request',
           requestId: entity.id,
           mediaId: entity.media.id,
+          rootFolderPath: sonarrSeriesOptions.rootFolderPath,
         });
       } catch {
         await this.failRequest(manager, identity);

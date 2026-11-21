@@ -42,12 +42,12 @@ describe('MediaRequestSubscriber Storage feature activation', () => {
           ],
         };
         assert.equal(
-          shouldEvaluateMovieOverflow(overflow, false),
+          shouldEvaluateMovieOverflow(overflow),
           enabled,
           `Movie gate for enabled=${enabled}, placement=${automaticSeriesPlacement}`
         );
         assert.equal(
-          shouldEvaluateAutomaticSeriesPlacement(overflow, false),
+          shouldEvaluateAutomaticSeriesPlacement(overflow),
           automaticSeriesPlacement,
           `Series gate for enabled=${enabled}, placement=${automaticSeriesPlacement}`
         );
@@ -55,15 +55,14 @@ describe('MediaRequestSubscriber Storage feature activation', () => {
     }
   });
 
-  it('keeps explicit root overrides authoritative and requires an enabled Movie route', () => {
+  it('requires an enabled Movie route without gating on persisted roots', () => {
     const overflow = {
       ...DEFAULT_OVERFLOW_SETTINGS,
       enabled: true,
       automaticSeriesPlacement: true,
       routes: [],
     };
-    assert.equal(shouldEvaluateMovieOverflow(overflow, false), false);
-    assert.equal(shouldEvaluateMovieOverflow(overflow, true), false);
-    assert.equal(shouldEvaluateAutomaticSeriesPlacement(overflow, true), false);
+    assert.equal(shouldEvaluateMovieOverflow(overflow), false);
+    assert.equal(shouldEvaluateAutomaticSeriesPlacement(overflow), true);
   });
 });

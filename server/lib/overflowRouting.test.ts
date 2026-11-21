@@ -116,7 +116,7 @@ const movieInput = (overrides = {}) => ({
   provider: 'radarr' as const,
   serviceId: 1,
   configuredRootPath: '/volume1/movies',
-  explicitRoot: false,
+  regularSourceRootPath: '/volume1/movies',
   existingMediaHasFiles: false,
   existingMediaAcquisitionActiveOrUnknown: false,
   ...overrides,
@@ -209,6 +209,7 @@ describe('Overflow routing evaluation', () => {
       settings: mappedSettings,
       serviceId: 0,
       configuredRootPath: movieSource.path,
+      regularSourceRootPath: movieSource.path,
     });
     assert.equal(evaluateOverflowPlacement(input).location?.id, movieTarget.id);
     assert.equal(
@@ -327,7 +328,7 @@ describe('Overflow routing evaluation', () => {
     assert.equal(decision.location?.id, destination.id);
   });
 
-  it('resolves the matching media classification without merging roots on a shared volume', () => {
+  it('keeps independent roots off-scope unless explicitly mapped', () => {
     const lowSource = { ...source, freeSpace: 49 * gib };
     const animationDestination = {
       ...destination,
@@ -381,8 +382,36 @@ describe('Overflow routing evaluation', () => {
           discovery: classifiedDiscovery,
           configuredRootPath: animationSource.path,
         })
+      ).reason,
+      'source-root-not-eligible'
+    );
+    assert.equal(
+      evaluateOverflowPlacement(
+        movieInput({
+          discovery: classifiedDiscovery,
+          configuredRootPath: animationSource.path,
+          settings: {
+            ...settings,
+            routes: [
+              {
+                ...settings.routes[0],
+                rootMappings: [
+                  {
+                    sourceLocationId: lowSource.id,
+                    destinationLocationId: destination.id,
+                  },
+                  {
+                    sourceLocationId: animationSource.id,
+                    destinationLocationId: animationDestination.id,
+                  },
+                ],
+              },
+            ],
+          },
+        })
       ).location?.id,
-      animationDestination.id
+      animationDestination.id,
+      'an independent root requires an explicit source mapping'
     );
 
     const duplicateRegular = {
@@ -416,11 +445,95 @@ describe('Overflow routing evaluation', () => {
     );
   });
 
-  it('fails closed for explicit roots, existing files, missing roots, and unknown capacity', () => {
+  it('routes only the configured Movie source when a same-volume Documentary root is independent', () => {
+    const documentarySource = {
+      ...source,
+      id: 'radarr:1:root:15',
+      rootFolderId: 15,
+      path: '/volume1/documentaries',
+    };
+    const documentaryTarget = {
+      ...destination,
+      id: 'radarr:1:root:16',
+      rootFolderId: 16,
+      path: '/volume9/documentaries',
+    };
+    const base = discovery({ ...source, freeSpace: 49 * gib });
+    const mixed = {
+      ...base,
+      locations: [...base.locations, documentarySource, documentaryTarget],
+      volumes: base.volumes.map((candidate) =>
+        candidate.id === 'physical:volume1'
+          ? {
+              ...candidate,
+              locationIds: [...candidate.locationIds, documentarySource.id],
+            }
+          : {
+              ...candidate,
+              locationIds: [...candidate.locationIds, documentaryTarget.id],
+            }
+      ),
+    };
+    const mapped = {
+      ...settings,
+      routes: [
+        {
+          ...settings.routes[0],
+          rootMappings: [
+            {
+              sourceLocationId: source.id,
+              destinationLocationId: destination.id,
+            },
+          ],
+        },
+      ],
+    };
     assert.equal(
-      evaluateOverflowPlacement(movieInput({ explicitRoot: true })).reason,
-      'explicit-root'
+      evaluateOverflowPlacement(
+        movieInput({ discovery: mixed, settings: mapped })
+      ).location?.id,
+      destination.id
     );
+    assert.equal(
+      evaluateOverflowPlacement(
+        movieInput({
+          discovery: mixed,
+          settings: mapped,
+          configuredRootPath: documentarySource.path,
+        })
+      ).reason,
+      'source-root-not-eligible'
+    );
+    assert.equal(
+      evaluateOverflowPlacement(
+        movieInput({
+          discovery: mixed,
+          settings: {
+            ...mapped,
+            routes: [
+              {
+                ...mapped.routes[0],
+                rootMappings: [
+                  {
+                    sourceLocationId: source.id,
+                    destinationLocationId: destination.id,
+                  },
+                  {
+                    sourceLocationId: documentarySource.id,
+                    destinationLocationId: documentaryTarget.id,
+                  },
+                ],
+              },
+            ],
+          },
+          configuredRootPath: documentarySource.path,
+        })
+      ).location?.id,
+      documentaryTarget.id
+    );
+  });
+
+  it('fails closed for existing files, missing roots, and unknown capacity', () => {
     assert.equal(
       evaluateOverflowPlacement(movieInput({ existingMediaHasFiles: true }))
         .reason,
@@ -517,7 +630,7 @@ describe('Overflow routing evaluation', () => {
       provider: 'sonarr' as const,
       serviceId: 2,
       configuredRootPath: '/volume3/shows',
-      explicitRoot: false,
+      regularSourceRootPath: '/volume3/shows',
       existingSeries: false,
       requestedRegularSeasonNumbers: [0, 1, 2],
     };
@@ -571,8 +684,11 @@ describe('Overflow routing evaluation', () => {
       'existing-series'
     );
     assert.equal(
-      evaluateOverflowPlacement({ ...base, explicitRoot: true }).reason,
-      'explicit-root'
+      evaluateOverflowPlacement({
+        ...base,
+        configuredRootPath: '/volume9/shows',
+      }).reason,
+      'source-root-not-eligible'
     );
     const unavailableExternal = {
       ...sonarrDestination,
@@ -623,6 +739,23 @@ describe('Overflow routing evaluation', () => {
       }).location?.id,
       sonarrDestination.id
     );
+    assert.equal(
+      evaluateOverflowPlacement({
+        ...expansionInput,
+        settings: {
+          ...seriesSettings,
+          seriesRootPreferences: [
+            {
+              sourceLocationId: sonarrSource.id,
+              destinationVolumeId: 'physical:volume9',
+              destinationLocationId: 'sonarr:2:root:999',
+            },
+          ],
+        },
+      }).reason,
+      'missing-root',
+      'a stale preference must not pick another Sonarr root'
+    );
     const defaultAlternative = {
       ...sonarrSource,
       id: 'sonarr:2:root:23',
@@ -632,6 +765,15 @@ describe('Overflow routing evaluation', () => {
     const ambiguousDefault = discovery(sonarrSource, sonarrDestination);
     ambiguousDefault.locations.push(defaultAlternative);
     ambiguousDefault.volumes[0].locationIds.push(defaultAlternative.id);
+    assert.equal(
+      evaluateOverflowPlacement({
+        ...base,
+        discovery: ambiguousDefault,
+        configuredRootPath: defaultAlternative.path,
+      }).reason,
+      'source-root-not-eligible',
+      'another regular Sonarr root on the default volume is off-scope'
+    );
     assert.equal(
       evaluateOverflowPlacement({ ...base, discovery: ambiguousDefault })
         .reason,
@@ -688,7 +830,7 @@ describe('Overflow routing evaluation', () => {
       provider: 'sonarr' as const,
       serviceId: 2,
       configuredRootPath: sonarrSource.path,
-      explicitRoot: false,
+      regularSourceRootPath: sonarrSource.path,
       existingSeries: false,
       requestedRegularSeasonNumbers: [1, 2, 3],
     };
