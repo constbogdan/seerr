@@ -19,6 +19,7 @@ import {
 import { classifyMovieLibraryStatusByTmdbIds } from '@server/lib/watchlistLibraryStatus';
 import { setupTestDb } from '@server/test/db';
 import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
 import { describe, it } from 'node:test';
 
 setupTestDb();
@@ -67,6 +68,26 @@ const settle = async (
     if (result.status !== 'pending') return result;
   }
   throw new Error('Collection snapshot did not settle');
+};
+
+const waitForCompleteSnapshot = async (
+  service: LibraryCollectionsService,
+  timeoutMs = 2_000
+) => {
+  const startedAt = performance.now();
+  const deadline = startedAt + timeoutMs;
+  let result = await service.query(query);
+  while (result.status === 'pending' && performance.now() < deadline) {
+    // A timer turn permits SQLite I/O callbacks to run before checking again.
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    result = await service.query(query);
+  }
+  assert.equal(
+    result.status,
+    'complete',
+    `Collection snapshot did not complete within ${Math.round(performance.now() - startedAt)}ms (limit ${timeoutMs}ms); last response: ${JSON.stringify(result)}`
+  );
+  return result;
 };
 
 describe('Library collection discovery', () => {
@@ -337,19 +358,49 @@ describe('Library collection discovery', () => {
       fetchAvailability: async () => new Map(),
     });
 
-    let result = await service.query(query);
-    for (
-      let attempt = 0;
-      result.status === 'pending' && attempt < 20;
-      attempt++
-    ) {
-      await new Promise<void>((resolve) => setImmediate(resolve));
-      result = await service.query(query);
-    }
+    const result = await waitForCompleteSnapshot(service);
     assert.equal(result.status, 'complete', JSON.stringify(result));
     assert.deepEqual(
       result.results.map((item) => [item.id, item.totalMovies]),
       [[99, 1]]
+    );
+  });
+
+  it('does not accept a discovery that remains pending past its deadline', async () => {
+    const service = createService({
+      discoverCollectionIds: async () => [99],
+      fetchCollection: async () => new Promise<TmdbCollection>(() => {}),
+    });
+
+    await assert.rejects(
+      waitForCompleteSnapshot(service, 25),
+      /last response: .*"status":"pending"/
+    );
+  });
+
+  it('does not accept unavailable or partial collection snapshots as complete', async () => {
+    let failCollection = true;
+    const service = createService({
+      discoverCollectionIds: async () => [99],
+      fetchCollection: async () => {
+        if (failCollection) throw new Error('Fixture collection failure');
+        return collection(99, 'Recovered Collection', [991]);
+      },
+      fetchAvailability: async () => new Map([[991, true]]),
+    });
+
+    await assert.rejects(
+      waitForCompleteSnapshot(service),
+      /last response: .*"status":"unavailable"/
+    );
+    failCollection = false;
+    service.invalidate();
+    await waitForCompleteSnapshot(service);
+    failCollection = true;
+    service.invalidate();
+    await assert.rejects(
+      waitForCompleteSnapshot(service),
+      /last response: .*"status":"partial"/
     );
   });
 
