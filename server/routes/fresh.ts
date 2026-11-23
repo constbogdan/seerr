@@ -18,11 +18,12 @@ import {
 } from '@server/lib/fresh/filterSnapshot';
 import {
   freshPresentationKey,
-  resolveFreshPagePresentation,
+  resolveFreshPresentationOutcomes,
 } from '@server/lib/fresh/presentation';
 import freshService from '@server/lib/fresh/service';
 import type { FreshSort } from '@server/lib/fresh/types';
 import { getSettings } from '@server/lib/settings';
+import logger from '@server/logger';
 import { mapMovieResult, mapTvResult } from '@server/models/Search';
 import { Router } from 'express';
 
@@ -30,12 +31,13 @@ export const createFreshRoutes = ({
   database = dataSource,
   settings: readSettings = () => getSettings().fresh,
   status: readStatus = () => freshService.status(),
-  presentation: present = resolveFreshPagePresentation,
+  presentation: present = resolveFreshPresentationOutcomes,
   related: relatedMedia = Media.getRelatedMedia.bind(Media),
 } = {}) => {
   const freshRoutes = Router();
   const snapshots = new FreshFilterSnapshots();
   freshRoutes.get('/', async (req, res, next) => {
+    let stage = 'settings';
     const category = req.query.category;
     if (
       category !== undefined &&
@@ -45,6 +47,7 @@ export const createFreshRoutes = ({
       return next({ status: 400, message: 'Invalid Fresh category.' });
     try {
       const settings = readSettings();
+      stage = 'status';
       const status = await readStatus();
       const page = Math.max(
         1,
@@ -59,6 +62,7 @@ export const createFreshRoutes = ({
           status,
         });
       const now = new Date();
+      stage = 'population_count';
       const query = database
         .getRepository(FreshDiscovery)
         .createQueryBuilder('discovery')
@@ -115,6 +119,7 @@ export const createFreshRoutes = ({
         hasFreshContentFilters(settings) || isFreshMetricSort(sort);
       if (requiresSnapshot && totalResults > FRESH_FILTER_MAX_ITEMS)
         throw new Error('fresh_filter_population_limit');
+      stage = 'population_query';
       const population = await query
         .orderBy('"discoveredAt"', sort === 'oldest' ? 'ASC' : 'DESC')
         .addOrderBy('discovery.mediaType', 'ASC')
@@ -130,6 +135,7 @@ export const createFreshRoutes = ({
       let rows = population;
       let snapshotPresentation;
       if (requiresSnapshot) {
+        stage = 'snapshot';
         if (population.length !== totalResults)
           throw new Error('fresh_filter_population_changed');
         const snapshot = await snapshots.evaluate(
@@ -146,14 +152,19 @@ export const createFreshRoutes = ({
         );
         snapshotPresentation = snapshot.presentations;
       }
+      stage = 'presentation_and_related';
       const [related, presentations] = await Promise.all([
         relatedMedia(
           req.user,
           rows.map(({ tmdbId, mediaType }) => ({ tmdbId, mediaType })),
           { includeActiveRequest: true }
         ),
-        snapshotPresentation ?? present(rows, req.locale ?? 'en'),
+        snapshotPresentation ??
+          present(rows, req.locale ?? 'en').then(
+            (outcome) => outcome.presentations
+          ),
       ]);
+      stage = 'response_mapping';
       const results = rows.map((item) => {
         const media = related.find(
           (value) =>
@@ -210,7 +221,23 @@ export const createFreshRoutes = ({
         results,
         status,
       });
-    } catch {
+    } catch (error) {
+      const code = error instanceof Error ? error.message : '';
+      logger.warn('Fresh request unavailable', {
+        label: 'Fresh',
+        stage,
+        reason: [
+          'fresh_filter_population_limit',
+          'fresh_filter_population_changed',
+          'fresh_filter_metadata_unavailable',
+          'fresh_filter_metadata_conflict',
+          'fresh_filter_metadata_budget',
+          'fresh_filter_evaluation_busy',
+        ].includes(code)
+          ? code
+          : 'unexpected',
+        errorType: error instanceof Error ? error.name : 'UnknownError',
+      });
       return next({ status: 503, message: 'Unable to retrieve Fresh media.' });
     }
   });
