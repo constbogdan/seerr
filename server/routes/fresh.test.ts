@@ -3,7 +3,9 @@ import FreshDiscovery from '@server/entity/FreshDiscovery';
 import Media from '@server/entity/Media';
 import { freshSourceKey } from '@server/lib/fresh/engine';
 import {
+  FreshPermanentAbsenceCache,
   freshPresentationKey,
+  resolveFreshPresentationOutcomes,
   type FreshProviderPresentation,
   type resolveFreshPagePresentation,
 } from '@server/lib/fresh/presentation';
@@ -21,6 +23,11 @@ import {
   createFixtureDatabase,
   fixtureSettings,
 } from '@server/test/freshFixtures';
+import {
+  AxiosError,
+  type AxiosResponse,
+  type InternalAxiosRequestConfig,
+} from 'axios';
 import express from 'express';
 import * as OpenApiValidator from 'express-openapi-validator';
 import assert from 'node:assert/strict';
@@ -72,8 +79,9 @@ describe('Fresh V2 API contract', () => {
   let configured: FreshSettings;
   let referenceNow: number;
   let presentation: typeof resolveFreshPagePresentation;
+  let permanentlyUnavailable: Set<string>;
   const currentSettings = () => configured;
-  const app = () => {
+  const app = (typedPresentation?: typeof resolveFreshPresentationOutcomes) => {
     const server = express();
     server.use(express.json());
     server.use((req, _res, next) => {
@@ -110,7 +118,12 @@ describe('Fresh V2 API contract', () => {
         database,
         settings: currentSettings,
         status: async () => status,
-        presentation: (...args) => presentation(...args),
+        presentation:
+          typedPresentation ??
+          (async (rows, locale) => ({
+            presentations: await presentation(rows, locale),
+            permanentlyUnavailable,
+          })),
         related: async (_user, identities, options) => {
           assert.equal(options?.includeActiveRequest, true);
           return identities
@@ -181,6 +194,7 @@ describe('Fresh V2 API contract', () => {
     referenceNow = Date.now();
     configured = { ...fixtureSettings };
     presentation = async () => new Map();
+    permanentlyUnavailable = new Set();
   });
   afterEach(async () => {
     mock.restoreAll();
@@ -670,6 +684,121 @@ describe('Fresh V2 API contract', () => {
       .set('x-test-role', 'user');
     assert.equal(response.status, 503);
     assert.equal(response.body.totalResults, undefined);
+  });
+  it('excludes confirmed off-page absence without losing stable totals, pages or typed identities', async () => {
+    const suspect = 1828781;
+    for (let index = 1; index <= 25; index++)
+      await add(index === 22 ? suspect : index, 'movie', index / 100);
+    await add(suspect, 'tv', 0.26);
+    configured.minimumTmdbScore = 7;
+    permanentlyUnavailable.add(`movie:${suspect}`);
+    presentation = async (rows) =>
+      new Map(
+        rows
+          .filter(
+            (row) => !(row.mediaType === 'movie' && row.tmdbId === suspect)
+          )
+          .map((row) => [
+            freshPresentationKey(row),
+            {
+              id: row.tmdbId,
+              vote_average: 8,
+              vote_count: 100,
+            } as FreshProviderPresentation,
+          ])
+      );
+    const server = app();
+    const get = (query = '') =>
+      request(server)
+        .get('/api/v1/fresh' + query)
+        .set('x-test-role', 'user');
+    const first = await get('?mediaType=movie');
+    const second = await get('?mediaType=movie&page=2');
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.totalResults, 24);
+    assert.equal(first.body.totalPages, 2);
+    assert.equal(first.body.results.length, 20);
+    assert.equal(second.body.totalResults, 24);
+    assert.equal(second.body.results.length, 4);
+    const ids = [...first.body.results, ...second.body.results].map(
+      (row) => row.id
+    );
+    assert.equal(new Set(ids).size, 24);
+    assert.ok(!ids.includes(suspect));
+    const sorted = await get('?mediaType=movie&sort=vote_count');
+    assert.equal(sorted.status, 200);
+    assert.equal(sorted.body.totalResults, 24);
+    assert.deepEqual(
+      sorted.body.results.map((row: { id: number }) => row.id),
+      ids.slice(0, 20)
+    );
+    const series = await get('?mediaType=tv');
+    assert.equal(series.status, 200);
+    assert.equal(series.body.totalResults, 1);
+    assert.equal(series.body.results[0].id, suspect);
+    configured.minimumTmdbScore = 9;
+    const empty = await get('?mediaType=movie');
+    assert.equal(empty.status, 200);
+    assert.equal(empty.body.totalResults, 0);
+    assert.equal(empty.body.totalPages, 0);
+    configured = { ...fixtureSettings };
+    const unfiltered = await get('?mediaType=movie');
+    assert.equal(unfiltered.status, 200);
+    assert.equal(unfiltered.body.totalResults, 25);
+  });
+  it('uses the real outcome resolver to exclude only a confirmed TMDb detail 404', async () => {
+    for (let index = 1; index <= 25; index++)
+      await add(index === 22 ? 1828781 : index, 'movie', index / 100);
+    configured.minimumTmdbScore = 7;
+    let lookups = 0;
+    const provider = {
+      getMovie: async ({ movieId }: { movieId: number }) => {
+        lookups++;
+        if (movieId === 1828781) {
+          const config = {
+            url: '/movie/1828781',
+            headers: {},
+          } as InternalAxiosRequestConfig;
+          const response = {
+            status: 404,
+            statusText: 'Not Found',
+            data: { success: false, status_code: 34 },
+            headers: {},
+            config,
+          } as AxiosResponse;
+          throw new Error('TMDb movie detail failed', {
+            cause: new AxiosError(
+              'not found',
+              undefined,
+              config,
+              undefined,
+              response
+            ),
+          });
+        }
+        return { id: movieId, vote_average: 8 } as never;
+      },
+      getTvShow: async () => {
+        throw new Error('unexpected TV lookup');
+      },
+    };
+    const negatives = new FreshPermanentAbsenceCache();
+    const server = app((rows, locale) =>
+      resolveFreshPresentationOutcomes(rows, locale, provider, negatives)
+    );
+    const get = (query = '') =>
+      request(server)
+        .get('/api/v1/fresh' + query)
+        .set('x-test-role', 'user');
+    const first = await get('?mediaType=movie');
+    assert.equal(first.status, 200, JSON.stringify(first.body));
+    assert.equal(first.body.totalResults, 24);
+    assert.equal(first.body.totalPages, 2);
+    assert.equal(lookups, 25);
+    const second = await get('?mediaType=movie&page=2');
+    assert.equal(second.status, 200);
+    assert.equal(second.body.results.length, 4);
+    assert.equal(lookups, 25, 'the accepted snapshot is reused across pages');
   });
   it('sorts complete metadata by rating/votes, known values first, with First Seen and typed identity ties', async () => {
     const metrics = new Map<string, Partial<FreshProviderPresentation>>([

@@ -5,7 +5,7 @@ import {
 import {
   freshPresentationKey,
   type FreshProviderPresentation,
-  type resolveFreshPagePresentation,
+  type resolveFreshPresentationOutcomes,
 } from '@server/lib/fresh/presentation';
 import type { FreshSort } from '@server/lib/fresh/types';
 import type { FreshSettings } from '@server/lib/settings';
@@ -82,7 +82,7 @@ export class FreshFilterSnapshots {
     population: Identity[],
     settings: FreshSettings,
     locale: string,
-    present: typeof resolveFreshPagePresentation
+    present: typeof resolveFreshPresentationOutcomes
   ): Promise<Snapshot> {
     if (population.length > FRESH_FILTER_MAX_ITEMS)
       throw new Error('fresh_filter_population_limit');
@@ -123,7 +123,7 @@ export class FreshFilterSnapshots {
     population: Identity[],
     settings: FreshSettings,
     locale: string,
-    present: typeof resolveFreshPagePresentation
+    present: typeof resolveFreshPresentationOutcomes
   ): Promise<Snapshot> {
     const started = this.now();
     const accepted = new Set<string>();
@@ -135,7 +135,11 @@ export class FreshFilterSnapshots {
       const metadata = await present(batch, locale);
       for (const item of batch) {
         const key = freshPresentationKey(item);
-        const value = metadata.get(key);
+        const value = metadata.presentations.get(key);
+        if (metadata.permanentlyUnavailable.has(key)) {
+          if (value) throw new Error('fresh_filter_metadata_conflict');
+          continue;
+        }
         if (!value || value.id !== item.tmdbId)
           throw new Error('fresh_filter_metadata_unavailable');
         presentations.set(key, value);
